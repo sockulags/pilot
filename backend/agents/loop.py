@@ -1,6 +1,6 @@
 import asyncio
 from typing import AsyncGenerator, Callable
-from agents.router import route_next_action, analyze_screenshot
+from agents.router import route_next_action, analyze_screenshot, vision_done_summary
 from tools import (
     screenshot, get_screen_size,
     click, type_text, scroll, move_mouse, key_press, hotkey,
@@ -40,7 +40,17 @@ async def run_agent_loop(
             emit(make_event("thinking", content=thinking))
 
         if tool == "done":
-            summary = args.get("summary", "Task completed")
+            if not abort_event.is_set():
+                emit(make_event("thinking", content="Tar en sista skärmbild för att bekräfta resultatet..."))
+                try:
+                    img = screenshot()
+                    emit(make_event("screenshot", image=img))
+                    summary = await vision_done_summary(task, img)
+                except Exception as e:
+                    summary = args.get("summary", "Task completed")
+                    emit(make_event("error", content=f"Vision error: {e}"))
+            else:
+                summary = args.get("summary", "Aborted")
             emit(make_event("done", summary=summary))
             return
 

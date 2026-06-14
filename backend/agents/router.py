@@ -84,6 +84,31 @@ def _parse_json(content: str) -> dict:
     return PARSE_ERROR_DEFAULT
 
 
+async def vision_done_summary(task: str, image_b64: str) -> str:
+    prompt = (
+        f"Baserat på denna skärmbild och uppgiften '{task}', "
+        "ge ett konkret och specifikt svar. "
+        "Lista exakt vad du ser, inte platshållare."
+    )
+    messages = [
+        {"role": "system", "content": "Du är en datorassistent som analyserar skärmbilder och ger konkreta svar."},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+            ],
+        },
+    ]
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            f"{OLLAMA_BASE_URL}/api/chat",
+            json={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
+        )
+        resp.raise_for_status()
+        return resp.json()["message"]["content"].strip()
+
+
 async def analyze_screenshot(task: str, image_b64: str, history: list[dict]) -> str:
     messages = [
         {
