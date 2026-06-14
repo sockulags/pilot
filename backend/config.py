@@ -10,6 +10,11 @@ OLLAMA_FALLBACK_MODEL = os.getenv("OLLAMA_FALLBACK_MODEL", "qwen3:14b")
 # defaults to false — the done-summary falls back to text_done_summary instead.
 OLLAMA_VISION_ENABLED = os.getenv("OLLAMA_VISION_ENABLED", "false").lower() == "true"
 
+# Path/name of the Claude CLI binary. On Windows the npm-installed wrapper is
+# a .cmd file that can't be exec'd directly — the backend handles this by
+# calling "cmd /c CLAUDE_CLI ..." on win32 automatically (see tools/codex.py).
+CLAUDE_CLI = os.getenv("CLAUDE_CLI", "claude")
+
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
 MCP_PORT = int(os.getenv("MCP_PORT", "3001"))
 

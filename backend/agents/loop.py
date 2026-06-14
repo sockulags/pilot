@@ -19,6 +19,7 @@ async def run_agent_loop(
     abort_event: asyncio.Event,
 ) -> None:
     history: list[dict] = []
+    failed_tools: set[str] = set()
     steps = 0
 
     emit(make_event("thinking", content=f"Starting task: {task}"))
@@ -27,7 +28,7 @@ async def run_agent_loop(
         steps += 1
 
         try:
-            decision = await route_next_action(task, history)
+            decision = await route_next_action(task, history, failed_tools)
         except Exception as e:
             emit(make_event("error", content=f"Router error: {e}"))
             break
@@ -73,6 +74,8 @@ async def run_agent_loop(
         except Exception as e:
             result = f"Error executing {tool}: {e}"
             emit(make_event("error", content=result))
+            # Mark the tool so the router won't retry it this session.
+            failed_tools.add(tool)
 
         history.append({"type": "action", "content": f"{tool}({args}) -> {result[:300]}"})
         emit(make_event("result", content=result[:500]))
