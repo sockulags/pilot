@@ -1,6 +1,6 @@
 import asyncio
 from typing import AsyncGenerator, Callable
-from agents.router import route_next_action, analyze_screenshot, vision_done_summary
+from agents.router import route_next_action, analyze_screenshot, vision_done_summary, text_done_summary
 from tools import (
     screenshot, get_screen_size,
     click, type_text, scroll, move_mouse, key_press, hotkey,
@@ -47,8 +47,13 @@ async def run_agent_loop(
                     emit(make_event("screenshot", image=img))
                     summary = await vision_done_summary(task, img)
                 except Exception as e:
-                    summary = args.get("summary", "Task completed")
                     emit(make_event("error", content=f"Vision error: {e}"))
+                    # Vision model unavailable or doesn't support images — fall
+                    # back to a text-only summary derived from the action history.
+                    try:
+                        summary = await text_done_summary(task, history)
+                    except Exception:
+                        summary = args.get("summary", "Task completed")
             else:
                 summary = args.get("summary", "Aborted")
             emit(make_event("done", summary=summary))
