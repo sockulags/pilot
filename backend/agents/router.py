@@ -34,7 +34,7 @@ If the task is complete, use: {{"tool": "done", "args": {{"summary": "What was a
 """
 
 
-async def route_next_action(task: str, history: list[dict]) -> dict:
+async def route_next_action(task: str, history: list[dict], failed_tools: set[str] | None = None) -> dict:
     messages = [{"role": "system", "content": ROUTER_SYSTEM}]
 
     context_parts = [f"Task: {task}"]
@@ -42,6 +42,11 @@ async def route_next_action(task: str, history: list[dict]) -> dict:
         context_parts.append("\nHistory of actions taken so far:")
         for item in history[-10:]:
             context_parts.append(f"- {item['type']}: {item['content'][:200]}")
+
+    if failed_tools:
+        context_parts.append(
+            f"\nUNAVAILABLE TOOLS (do not call these again, they will always fail): {', '.join(sorted(failed_tools))}"
+        )
 
     messages.append({"role": "user", "content": "\n".join(context_parts)})
 
