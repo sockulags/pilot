@@ -30,7 +30,7 @@ export default function TaskInput({ onRun, disabled }: Props) {
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={onKey}
         disabled={disabled}
-        placeholder="Beskriv vad agenten ska göra... (Enter for att kora)"
+        placeholder="Beskriv vad agenten ska göra... (Enter för att köra)"
         rows={3}
         style={{
           flex: 1,
@@ -51,17 +51,17 @@ export default function TaskInput({ onRun, disabled }: Props) {
         style={{
           alignSelf: "flex-end",
           padding: "0.625rem 1.25rem",
-          background: disabled ? "var(--border)" : "var(--accent)",
+          background: disabled || !value.trim() ? "var(--border)" : "var(--accent)",
           color: "var(--text)",
           border: "none",
           borderRadius: 8,
-          cursor: disabled ? "not-allowed" : "pointer",
+          cursor: disabled || !value.trim() ? "not-allowed" : "pointer",
           fontWeight: 600,
           fontSize: "0.9rem",
           whiteSpace: "nowrap",
         }}
       >
-        Kor
+        Kör
       </button>
     </div>
   );

@@ -1,5 +1,7 @@
 import json
 import logging
+import os
+import platform
 import re
 import httpx
 from config import OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_VISION_MODEL
@@ -10,6 +12,11 @@ PARSE_ERROR_DEFAULT = {"tool": "done", "args": {"summary": "parse error — agen
 
 TOOL_DESCRIPTIONS = """
 Available tools:
+- list_dir(path?): List files and directories. Prefer this before shell commands for directory listings.
+- read_file(path): Read a text file. Prefer this before shell commands for file contents.
+- find_file(name, root?): Find files by exact name under a directory. Use when a user names a file but cwd may be wrong.
+- list_windows(): List visible desktop windows.
+- focus_window(title): Focus a desktop window by partial title match.
 - screenshot(): Take a screenshot of the current screen. Use when you need to see what's on screen.
 - get_screen_size(): Get screen resolution.
 - click(x, y, button?): Click at coordinates. button is "left" (default), "right", or "middle".
@@ -24,8 +31,29 @@ Available tools:
 - done(summary): Mark the task as complete with a summary.
 """
 
+SAFETY_RULE = (
+    "Do not use click, type_text, scroll, move_mouse, key_press, or hotkey unless "
+    "the current screen observation clearly identifies the active window or target. "
+    "If visual context is unavailable, use run_command/open_app/run_codex or done "
+    "with a clear limitation instead."
+)
+
+COMMAND_RULES = (
+    "If a command result directly answers the user task, use done immediately. "
+    "If the user asks you to write or type text into an app, do not use done until "
+    "a type_text action has actually run. Opening the app alone is not enough. "
+    "Do not repeat the same command unless the previous output was missing, failed, "
+    "or introduced a specific new question. Prefer Windows cmd commands such as "
+    "dir, cd, type, where, and echo; do not start with Unix-only commands such as ls. "
+    "For ordinary file and window tasks, prefer list_dir/read_file/find_file/"
+    "list_windows/focus_window before run_command."
+)
+
 ROUTER_SYSTEM = f"""You are a computer automation agent. Given a task and context, decide the next action.
 {TOOL_DESCRIPTIONS}
+
+Safety rule: {SAFETY_RULE}
+Command rule: {COMMAND_RULES}
 
 Respond ONLY with valid JSON in this format:
 {{"tool": "tool_name", "args": {{"arg1": "value1"}}, "thinking": "Why I chose this"}}
@@ -34,21 +62,57 @@ If the task is complete, use: {{"tool": "done", "args": {{"summary": "What was a
 """
 
 
-async def route_next_action(task: str, history: list[dict], failed_tools: set[str] | None = None) -> dict:
-    messages = [{"role": "system", "content": ROUTER_SYSTEM}]
+def command_environment_context() -> str:
+    shell = "Windows cmd" if os.name == "nt" else "POSIX shell"
+    return (
+        "Command environment:\n"
+        f"- OS: {platform.system() or os.name}\n"
+        f"- Shell: {shell}\n"
+        f"- Current working directory: {os.getcwd()}\n"
+        f"- Rules: {COMMAND_RULES}"
+    )
 
+
+def build_router_messages(
+    task: str,
+    history: list[dict],
+    failed_tools: set[str] | None = None,
+    screen_observation: str | None = None,
+) -> list[dict]:
     context_parts = [f"Task: {task}"]
+    context_parts.append(f"\n{command_environment_context()}")
+
+    if screen_observation:
+        context_parts.append(f"\nCurrent screen observation:\n{screen_observation}")
+    else:
+        context_parts.append("\nCurrent screen observation:\nNo visual context is available.")
+
+    context_parts.append(f"\nSafety rule: {SAFETY_RULE}")
+    context_parts.append(f"\nCommand rule: {COMMAND_RULES}")
+
     if history:
         context_parts.append("\nHistory of actions taken so far:")
         for item in history[-10:]:
-            context_parts.append(f"- {item['type']}: {item['content'][:200]}")
+            context_parts.append(f"- {item['type']}: {item['content'][:1200]}")
 
     if failed_tools:
         context_parts.append(
             f"\nUNAVAILABLE TOOLS (do not call these again, they will always fail): {', '.join(sorted(failed_tools))}"
         )
 
-    messages.append({"role": "user", "content": "\n".join(context_parts)})
+    return [
+        {"role": "system", "content": ROUTER_SYSTEM},
+        {"role": "user", "content": "\n".join(context_parts)},
+    ]
+
+
+async def route_next_action(
+    task: str,
+    history: list[dict],
+    failed_tools: set[str] | None = None,
+    screen_observation: str | None = None,
+) -> dict:
+    messages = build_router_messages(task, history, failed_tools, screen_observation)
 
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
@@ -73,7 +137,7 @@ def _parse_json(content: str) -> dict:
         if marker in content:
             inner = content.split(marker)[1].split("```")[0].strip()
             try:
-                return json.loads(inner)
+                return _loads_router_json(inner)
             except json.JSONDecodeError:
                 pass
 
@@ -81,12 +145,22 @@ def _parse_json(content: str) -> dict:
     match = re.search(r"\{.*\}", content, re.DOTALL)
     if match:
         try:
-            return json.loads(match.group())
+            return _loads_router_json(match.group())
         except json.JSONDecodeError:
             pass
 
     logger.warning("Failed to parse router response: %r", content[:300])
     return PARSE_ERROR_DEFAULT
+
+
+def _loads_router_json(raw: str) -> dict:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        # Local Windows paths in model prose often appear as C:\Users\... inside
+        # JSON strings. Escape only backslashes that are not valid JSON escapes.
+        repaired = re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", raw)
+        return json.loads(repaired)
 
 
 async def vision_done_summary(task: str, image_b64: str) -> str:
@@ -172,7 +246,7 @@ async def analyze_screenshot(task: str, image_b64: str, history: list[dict]) -> 
         resp = await client.post(
             f"{OLLAMA_BASE_URL}/api/chat",
             json={
-                "model": OLLAMA_MODEL,
+                "model": OLLAMA_VISION_MODEL,
                 "messages": messages,
                 "stream": False,
             },
