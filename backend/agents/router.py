@@ -1,6 +1,12 @@
 import json
+import logging
+import re
 import httpx
 from config import OLLAMA_BASE_URL, OLLAMA_MODEL
+
+logger = logging.getLogger(__name__)
+
+PARSE_ERROR_DEFAULT = {"tool": "done", "args": {"summary": "parse error — agenten kunde inte tolka modellsvaret"}, "thinking": "parse error"}
 
 TOOL_DESCRIPTIONS = """
 Available tools:
@@ -53,13 +59,29 @@ async def route_next_action(task: str, history: list[dict]) -> dict:
         data = resp.json()
         content = data["message"]["content"].strip()
 
-    # Extract JSON from response (model may wrap it in markdown)
-    if "```json" in content:
-        content = content.split("```json")[1].split("```")[0].strip()
-    elif "```" in content:
-        content = content.split("```")[1].split("```")[0].strip()
+    return _parse_json(content)
 
-    return json.loads(content)
+
+def _parse_json(content: str) -> dict:
+    # 1. Markdown code block
+    for marker in ("```json", "```"):
+        if marker in content:
+            inner = content.split(marker)[1].split("```")[0].strip()
+            try:
+                return json.loads(inner)
+            except json.JSONDecodeError:
+                pass
+
+    # 2. Greedy regex: first { to last } — handles nested objects correctly
+    match = re.search(r"\{.*\}", content, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+
+    logger.warning("Failed to parse router response: %r", content[:300])
+    return PARSE_ERROR_DEFAULT
 
 
 async def analyze_screenshot(task: str, image_b64: str, history: list[dict]) -> str:

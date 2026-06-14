@@ -8,4 +8,4 @@ OLLAMA_FALLBACK_MODEL = os.getenv("OLLAMA_FALLBACK_MODEL", "qwen3:14b")
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
 MCP_PORT = int(os.getenv("MCP_PORT", "3001"))
 
-MAX_AGENT_STEPS = int(os.getenv("MAX_AGENT_STEPS", "20"))
+MAX_AGENT_STEPS = int(os.getenv("MAX_AGENT_STEPS", "50"))
