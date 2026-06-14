@@ -2,7 +2,7 @@ import json
 import logging
 import re
 import httpx
-from config import OLLAMA_BASE_URL, OLLAMA_MODEL
+from config import OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_VISION_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,13 @@ def _parse_json(content: str) -> dict:
 
 
 async def vision_done_summary(task: str, image_b64: str) -> str:
+    """Generate a completion summary using a vision model.
+
+    Uses Ollama's /api/chat image format: base64 strings in the top-level
+    ``images`` field of the message, NOT OpenAI's ``image_url`` content blocks.
+    Falls back to a text-only request if the vision call fails (e.g. because
+    the configured model does not support multimodal input).
+    """
     prompt = (
         f"Baserat på denna skärmbild och uppgiften '{task}', "
         "ge ett konkret och specifikt svar. "
@@ -92,18 +99,46 @@ async def vision_done_summary(task: str, image_b64: str) -> str:
     )
     messages = [
         {"role": "system", "content": "Du är en datorassistent som analyserar skärmbilder och ger konkreta svar."},
+        # Ollama image format: images is a top-level list of base64 strings on
+        # the message object, not nested inside the content array.
         {
             "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
-            ],
+            "content": prompt,
+            "images": [image_b64],
         },
     ]
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
             f"{OLLAMA_BASE_URL}/api/chat",
-            json={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
+            json={"model": OLLAMA_VISION_MODEL, "messages": messages, "stream": False},
+        )
+        resp.raise_for_status()
+        return resp.json()["message"]["content"].strip()
+
+
+async def text_done_summary(task: str, history: list[dict]) -> str:
+    """Generate a completion summary from the action history (no vision required).
+
+    Used as a fallback when the vision model is unavailable or returns an error.
+    """
+    history_text = (
+        "\n".join(f"- {item['content'][:200]}" for item in history[-15:])
+        if history
+        else "(no actions recorded)"
+    )
+    prompt = (
+        f"Task: {task}\n\n"
+        f"Actions taken:\n{history_text}\n\n"
+        "Write a concise one-paragraph summary of what was accomplished."
+    )
+    messages = [
+        {"role": "system", "content": "You are a computer automation assistant. Summarize what was accomplished based on the action log."},
+        {"role": "user", "content": prompt},
+    ]
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            f"{OLLAMA_BASE_URL}/api/chat",
+            json={"model": OLLAMA_MODEL, "messages": messages, "stream": False, "options": {"temperature": 0.1}},
         )
         resp.raise_for_status()
         return resp.json()["message"]["content"].strip()
@@ -121,12 +156,11 @@ async def analyze_screenshot(task: str, image_b64: str, history: list[dict]) -> 
     if history:
         context += f"\nLast action: {history[-1]['content'] if history else 'none'}"
 
+    # Ollama image format: base64 strings in top-level ``images`` field.
     messages.append({
         "role": "user",
-        "content": [
-            {"type": "text", "text": context},
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
-        ],
+        "content": context,
+        "images": [image_b64],
     })
 
     async with httpx.AsyncClient(timeout=120) as client:
