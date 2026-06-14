@@ -6,7 +6,7 @@ from tools import (
     click, type_text, scroll, move_mouse, key_press, hotkey,
     run_command_sync, open_app, run_codex,
 )
-from config import MAX_AGENT_STEPS
+from config import MAX_AGENT_STEPS, OLLAMA_VISION_ENABLED
 
 
 def make_event(type_: str, **kwargs) -> dict:
@@ -42,14 +42,21 @@ async def run_agent_loop(
         if tool == "done":
             if not abort_event.is_set():
                 emit(make_event("thinking", content="Tar en sista skärmbild för att bekräfta resultatet..."))
-                try:
-                    img = screenshot()
-                    emit(make_event("screenshot", image=img))
-                    summary = await vision_done_summary(task, img)
-                except Exception as e:
-                    emit(make_event("error", content=f"Vision error: {e}"))
-                    # Vision model unavailable or doesn't support images — fall
-                    # back to a text-only summary derived from the action history.
+                img = screenshot()
+                emit(make_event("screenshot", image=img))
+
+                if OLLAMA_VISION_ENABLED:
+                    # Only attempt vision when a multimodal model is configured.
+                    try:
+                        summary = await vision_done_summary(task, img)
+                    except Exception as e:
+                        emit(make_event("error", content=f"Vision error: {e}"))
+                        try:
+                            summary = await text_done_summary(task, history)
+                        except Exception:
+                            summary = args.get("summary", "Task completed")
+                else:
+                    # Vision disabled (default) — go straight to text summary.
                     try:
                         summary = await text_done_summary(task, history)
                     except Exception:
