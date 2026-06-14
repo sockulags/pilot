@@ -8,7 +8,6 @@ const ICONS: Record<string, string> = {
   action: "⚡",
   result: "✓",
   screenshot: "📸",
-  done: "✅",
   error: "❌",
 };
 
@@ -17,9 +16,30 @@ const COLORS: Record<string, string> = {
   action: "var(--accent)",
   result: "var(--green)",
   screenshot: "var(--blue)",
-  done: "var(--green)",
   error: "var(--red)",
 };
+
+function ResultCard({ event }: { event: LogEvent }) {
+  return (
+    <div style={{
+      background: "rgba(34, 197, 94, 0.08)",
+      border: "1px solid var(--green)",
+      borderRadius: 10,
+      padding: "0.875rem 1rem",
+      marginBottom: "0.75rem",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" }}>
+        <span style={{ fontSize: "1rem" }}>✅</span>
+        <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--green)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          Resultat
+        </span>
+      </div>
+      <p style={{ fontSize: "0.9rem", color: "var(--text)", whiteSpace: "pre-wrap", lineHeight: 1.6, margin: 0 }}>
+        {event.summary ?? "Klar"}
+      </p>
+    </div>
+  );
+}
 
 function EventRow({ event }: { event: LogEvent }) {
   const icon = ICONS[event.type] ?? "•";
@@ -29,8 +49,6 @@ function EventRow({ event }: { event: LogEvent }) {
   if (event.type === "action") {
     const argsStr = event.args ? " " + JSON.stringify(event.args) : "";
     text = `${event.tool}${argsStr}`;
-  } else if (event.type === "done") {
-    text = event.summary ?? "Done";
   } else {
     text = event.content ?? "";
   }
@@ -75,9 +93,15 @@ export default function ActionLog({ events }: Props) {
     );
   }
 
+  const doneEvents = events.filter((e) => e.type === "done");
+  const streamEvents = events.filter((e) => e.type !== "done");
+
   return (
     <div style={{ flex: 1, overflowY: "auto", paddingRight: "0.25rem" }}>
-      {events.map((e) => (
+      {doneEvents.length > 0 && (
+        <ResultCard event={doneEvents[doneEvents.length - 1]} />
+      )}
+      {streamEvents.map((e) => (
         <EventRow key={e.id} event={e} />
       ))}
       <div ref={bottomRef} />
