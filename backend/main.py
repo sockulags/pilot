@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import os
+from contextlib import asynccontextmanager
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -11,11 +12,24 @@ from fastapi.websockets import WebSocket
 
 from api.ws import websocket_endpoint
 from api.mcp import create_mcp_app
-from config import BACKEND_PORT, MCP_PORT
+from agents.vision import validate_vision_model
+from config import BACKEND_PORT, MCP_PORT, OLLAMA_VISION_ENABLED
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if not OLLAMA_VISION_ENABLED:
+        app.state.vision_status = {"ok": False, "message": "vision disabled"}
+    else:
+        ok, message = await validate_vision_model()
+        app.state.vision_status = {"ok": ok, "message": message}
+        print(message)
+    yield
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Pilot Backend")
+    app = FastAPI(title="Pilot Backend", lifespan=lifespan)
+    app.state.vision_status = {"ok": None, "message": "not checked"}
 
     app.add_middleware(
         CORSMiddleware,
@@ -27,7 +41,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health():
-        return {"status": "ok"}
+        return {"status": "ok", "vision": app.state.vision_status}
 
     @app.websocket("/ws")
     async def ws(websocket: WebSocket):

@@ -2,15 +2,15 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 import json
 import asyncio
-from tools import screenshot, get_screen_size, click, type_text, scroll, open_app
+from tools import (
+    screenshot, click, type_text, open_app,
+    list_dir, read_file, find_file, list_windows, focus_window,
+)
 from tools.system import run_command_sync
 
 
-def create_mcp_app() -> FastAPI:
-    app = FastAPI(title="Pilot MCP Server")
-
-    tools_manifest = {
-        "tools": [
+tools_manifest = {
+    "tools": [
             {
                 "name": "pilot_screenshot",
                 "description": "Take a screenshot of the current screen",
@@ -59,8 +59,53 @@ def create_mcp_app() -> FastAPI:
                     "required": ["name"],
                 },
             },
+            {
+                "name": "pilot_list_dir",
+                "description": "List files and directories",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": [],
+                },
+            },
+            {
+                "name": "pilot_read_file",
+                "description": "Read a text file",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            },
+            {
+                "name": "pilot_find_file",
+                "description": "Find files by exact name",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}, "root": {"type": "string"}},
+                    "required": ["name"],
+                },
+            },
+            {
+                "name": "pilot_list_windows",
+                "description": "List visible desktop windows",
+                "inputSchema": {"type": "object", "properties": {}, "required": []},
+            },
+            {
+                "name": "pilot_focus_window",
+                "description": "Focus a window by title",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"title": {"type": "string"}},
+                    "required": ["title"],
+                },
+            },
         ]
     }
+
+
+def create_mcp_app() -> FastAPI:
+    app = FastAPI(title="Pilot MCP Server")
 
     @app.get("/mcp")
     async def mcp_sse():
@@ -100,6 +145,26 @@ def create_mcp_app() -> FastAPI:
         elif tool == "pilot_open_app":
             result = open_app(args["name"])
             return {"content": [{"type": "text", "text": result}]}
+
+        elif tool == "pilot_list_dir":
+            result = list_dir(args.get("path"))
+            return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
+
+        elif tool == "pilot_read_file":
+            result = read_file(args["path"])
+            return {"content": [{"type": "text", "text": result["text"]}]}
+
+        elif tool == "pilot_find_file":
+            result = find_file(args["name"], args.get("root"))
+            return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
+
+        elif tool == "pilot_list_windows":
+            result = list_windows()
+            return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
+
+        elif tool == "pilot_focus_window":
+            result = focus_window(args["title"])
+            return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
 
         return {"error": f"Unknown tool: {tool}"}
 

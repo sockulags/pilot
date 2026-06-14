@@ -19,6 +19,23 @@ const COLORS: Record<string, string> = {
   error: "var(--red)",
 };
 
+function workflowText(events: LogEvent[]) {
+  return events
+    .map((event) => {
+      if (event.type === "action") {
+        return `[action] ${event.tool} ${event.args ? JSON.stringify(event.args) : ""}`.trim();
+      }
+      if (event.type === "done") {
+        return `[done] ${event.summary ?? ""}`;
+      }
+      if (event.type === "screenshot") {
+        return "[screenshot] <image>";
+      }
+      return `[${event.type}] ${event.content ?? ""}`;
+    })
+    .join("\n");
+}
+
 function ResultCard({ event }: { event: LogEvent }) {
   return (
     <div style={{
@@ -38,6 +55,40 @@ function ResultCard({ event }: { event: LogEvent }) {
         {event.summary ?? "Klar"}
       </p>
     </div>
+  );
+}
+
+function DetailsPanel({ events }: { events: LogEvent[] }) {
+  const copy = async () => {
+    await navigator.clipboard.writeText(workflowText(events));
+  };
+
+  return (
+    <details style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+      <summary style={{ cursor: "pointer", padding: "0.625rem 0.75rem", color: "var(--muted)", fontSize: "0.85rem", userSelect: "none" }}>
+        Detaljer ({events.length})
+      </summary>
+      <div style={{ padding: "0 0.75rem 0.75rem" }}>
+        <button
+          onClick={copy}
+          style={{
+            margin: "0.25rem 0 0.5rem",
+            padding: "0.35rem 0.65rem",
+            background: "var(--surface)",
+            color: "var(--text)",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            cursor: "pointer",
+            fontSize: "0.75rem",
+          }}
+        >
+          Kopiera workflow
+        </button>
+        {events.map((e) => (
+          <EventRow key={e.id} event={e} />
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -101,9 +152,7 @@ export default function ActionLog({ events }: Props) {
       {doneEvents.length > 0 && (
         <ResultCard event={doneEvents[doneEvents.length - 1]} />
       )}
-      {streamEvents.map((e) => (
-        <EventRow key={e.id} event={e} />
-      ))}
+      {streamEvents.length > 0 && <DetailsPanel events={streamEvents} />}
       <div ref={bottomRef} />
     </div>
   );
