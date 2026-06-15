@@ -153,6 +153,15 @@ CODEX_SANDBOX_MODE = os.getenv("CODEX_SANDBOX_MODE", "workspace-write")
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
 MCP_PORT = int(os.getenv("MCP_PORT", "3001"))
 
+# --- External MCP servers (browser control, etc.) ---------------------------
+# The coordinator acts as an MCP CLIENT to these and surfaces their tools
+# (namespaced mcp__<server>__<tool>). Heavy servers like a browser are opt-in so
+# the backend doesn't launch them on every start. Enable the Playwright browser
+# server with PILOT_MCP_BROWSER=true (needs Node/npx; npx fetches it on first
+# run). Override the launch command with PILOT_MCP_BROWSER_CMD.
+PILOT_MCP_BROWSER_ENABLED = os.getenv("PILOT_MCP_BROWSER", "false").lower() == "true"
+PILOT_MCP_BROWSER_CMD = os.getenv("PILOT_MCP_BROWSER_CMD", "npx @playwright/mcp@latest")
+
 # Optional shared secret. When set, WS clients must send a matching token in
 # their `hello` message. Empty = no auth (LAN behaviour). Defense-in-depth for
 # remote access; the Tailscale network is the primary boundary.

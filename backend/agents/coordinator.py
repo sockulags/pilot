@@ -41,11 +41,9 @@ from tools import registry
 
 logger = logging.getLogger(__name__)
 
-# OS/desktop tools the coordinator may drive (delegated to loop.execute_tool).
-# Sourced from the single registry so the allowlist and the menu can't drift.
-COORDINATOR_TOOLS = registry.coordinator_tool_names()
-
-_TOOL_MENU = registry.tool_menu()
+# The coordinator's tool allowlist and menu come straight from the registry,
+# read per turn (not frozen at import) so MCP tools registered at startup are
+# included: see registry.coordinator_tool_names() / registry.tool_menu().
 
 VALID_ACTIONS = {"consult", "perceive", "tool", "remember", "clarify", "answer"}
 
@@ -131,7 +129,7 @@ def _build_decision_context(
         parts.append(f"Conversation so far:\n{convo}\n")
     parts.append(f"User's latest message:\n{task}\n")
     parts.append(f"Specialist models you can consult:\n{_expert_menu(experts)}\n")
-    parts.append(f"OS/desktop tools:\n{_TOOL_MENU}\n")
+    parts.append(f"OS/desktop tools:\n{registry.tool_menu()}\n")
     if notes:
         parts.append("What you've gathered so far this turn:\n" + "\n".join(notes[-8:]))
     else:
@@ -425,7 +423,7 @@ async def run_coordinator(
         # action == "tool"
         tool = decision.get("tool", "")
         args = decision.get("args", {}) or {}
-        if tool not in COORDINATOR_TOOLS:
+        if tool not in registry.coordinator_tool_names():
             notes.append(f"(unknown tool {tool!r}; skipped)")
             continue
         block = unsafe_tool_block_reason(tool, task, last_observation)

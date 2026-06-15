@@ -431,6 +431,11 @@ async def execute_tool(tool: str, args: dict, emit: Callable[[dict], None]) -> s
     elif tool == "fetch_url":
         return await fetch_url(args["url"], args.get("max_chars", 4000))
 
+    elif tool.startswith(registry.EXTERNAL_PREFIX):
+        # A tool from an external MCP server (e.g. browser control).
+        from mcp_client import manager as mcp_manager
+        return await mcp_manager.call(tool, args)
+
     elif tool == "list_windows":
         result = list_windows()
         return "Windows:\n" + "\n".join(window["title"] for window in result["windows"])

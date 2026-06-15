@@ -15,6 +15,7 @@ from api.ws import websocket_endpoint
 from api.mcp import create_mcp_app
 from agents.vision import validate_vision_model
 from config import BACKEND_PORT, MCP_PORT, OLLAMA_VISION_ENABLED, FRONTEND_DIR
+from mcp_client import manager as mcp_manager, configs_from_env
 from scheduler import run_scheduler
 
 
@@ -26,6 +27,15 @@ async def lifespan(app: FastAPI):
         ok, message = await validate_vision_model()
         app.state.vision_status = {"ok": ok, "message": message}
         print(message)
+    # Connect to any enabled external MCP servers (e.g. browser control) and
+    # register their tools. Opt-in, so this is a no-op unless configured.
+    mcp_configs = configs_from_env()
+    if mcp_configs:
+        try:
+            specs = await mcp_manager.start(mcp_configs)
+            print(f"MCP: registered {len(specs)} external tool(s)")
+        except Exception as exc:  # noqa: BLE001
+            print(f"MCP startup failed: {exc}")
     # Background scheduler for recurring reminders / jobs (survives restarts via
     # the persisted jobs store; reconciles missed fires on startup).
     scheduler_task = asyncio.create_task(run_scheduler())
@@ -33,6 +43,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         scheduler_task.cancel()
+        await mcp_manager.stop()
 
 
 def create_app() -> FastAPI:
