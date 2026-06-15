@@ -1,7 +1,8 @@
 import asyncio
 import os
+from dataclasses import dataclass
 from typing import AsyncGenerator, Callable
-from agents.router import route_next_action, analyze_screenshot, vision_done_summary, text_done_summary
+from agents.router import route_next_action, analyze_screenshot, vision_done_summary
 from agents.perception import perceive_screen
 from agents.safety import unsafe_tool_block_reason
 from tools import (
@@ -28,11 +29,39 @@ def make_event(type_: str, **kwargs) -> dict:
     return {"type": type_, **kwargs}
 
 
+@dataclass
+class LoopOutcome:
+    """What the agent loop accomplished this turn.
+
+    The loop no longer owns the user-facing message; it returns this so the
+    shared conversational layer (orchestrator.compose_reply) can phrase the
+    reply. ``action_log`` grounds that reply; ``detail`` is a block reason or raw
+    output that directly answers the task.
+    """
+
+    status: str  # "done" | "blocked" | "aborted" | "max_steps" | "error"
+    action_log: str = ""
+    detail: str = ""
+
+
+def render_action_log(history: list[dict]) -> str:
+    """Render the agent's actions this turn as plain text grounding for the reply."""
+    items = [
+        item
+        for item in history
+        if item.get("type") in ("action", "blocked", "done_rejected")
+    ]
+    if not items:
+        return ""
+    return "\n".join(f"- {item['type']}: {str(item['content'])[:300]}" for item in items[-15:])
+
+
 async def run_agent_loop(
     task: str,
     emit: Callable[[dict], None],
     abort_event: asyncio.Event,
-) -> None:
+    conversation: list[dict] | None = None,
+) -> LoopOutcome:
     history: list[dict] = []
     failed_tools: set[str] = set()
     command_counts: dict[tuple[str, str], int] = {}
@@ -52,10 +81,11 @@ async def run_agent_loop(
                 history,
                 failed_tools,
                 screen_observation=screen_observation,
+                conversation=conversation,
             )
         except Exception as e:
             emit(make_event("error", content=f"Router error: {e}"))
-            break
+            return LoopOutcome("error", render_action_log(history), f"Router error: {e}")
 
         tool = decision.get("tool", "done")
         args = decision.get("args", {})
@@ -77,10 +107,11 @@ async def run_agent_loop(
                     history,
                     failed_tools,
                     screen_observation=screen_observation,
+                    conversation=conversation,
                 )
             except Exception as e:
                 emit(make_event("error", content=f"Router error: {e}"))
-                break
+                return LoopOutcome("error", render_action_log(history), f"Router error: {e}")
             tool = decision.get("tool", "done")
             args = decision.get("args", {})
             thinking = decision.get("thinking", "")
@@ -95,32 +126,21 @@ async def run_agent_loop(
                 await asyncio.sleep(0.3)
                 continue
 
-            if not abort_event.is_set():
-                if args.get("summary"):
-                    summary = args["summary"]
-                else:
-                    try:
-                        summary = await text_done_summary(task, history)
-                    except Exception:
-                        summary = "Task completed"
-            else:
-                summary = args.get("summary", "Aborted")
-            emit(make_event("done", summary=summary))
-            return
+            if abort_event.is_set():
+                return LoopOutcome("aborted", render_action_log(history))
+            return LoopOutcome("done", render_action_log(history), str(args.get("summary", "")))
 
         block_reason = unsafe_tool_block_reason(tool, task, screen_observation)
         if block_reason:
             emit(make_event("error", content=block_reason))
             history.append({"type": "blocked", "content": block_reason})
-            emit(make_event("done", summary=block_reason))
-            return
+            return LoopOutcome("blocked", render_action_log(history), block_reason)
 
         focus_block_reason = desktop_focus_block_reason(tool, desktop_target_hint)
         if focus_block_reason:
             emit(make_event("error", content=focus_block_reason))
             history.append({"type": "blocked", "content": focus_block_reason})
-            emit(make_event("done", summary=focus_block_reason))
-            return
+            return LoopOutcome("blocked", render_action_log(history), focus_block_reason)
 
         if tool == "run_command":
             command_key = normalize_command_key(args)
@@ -132,8 +152,7 @@ async def run_agent_loop(
                 )
                 emit(make_event("error", content=block_reason))
                 history.append({"type": "blocked", "content": block_reason})
-                emit(make_event("done", summary=block_reason))
-                return
+                return LoopOutcome("blocked", render_action_log(history), block_reason)
             command_counts[command_key] = command_counts.get(command_key, 0) + 1
 
         emit(make_event("action", tool=tool, args=args))
@@ -155,20 +174,20 @@ async def run_agent_loop(
         if not completion_summary:
             completion_summary = deterministic_completion_summary(tool, result)
         if completion_summary:
-            emit(make_event("done", summary=completion_summary))
-            return
+            return LoopOutcome("done", render_action_log(history), completion_summary)
 
         if tool in POST_ACTION_OBSERVE_TOOLS:
             last_observation = await perceive(task, history, emit)
 
         if abort_event.is_set():
-            emit(make_event("done", summary="Aborted by user"))
-            return
+            return LoopOutcome("aborted", render_action_log(history))
 
         await asyncio.sleep(0.3)
 
-    if not abort_event.is_set():
-        emit(make_event("done", summary=f"Reached max steps ({MAX_AGENT_STEPS})"))
+    return LoopOutcome(
+        "aborted" if abort_event.is_set() else "max_steps",
+        render_action_log(history),
+    )
 
 
 async def perceive(task: str, history: list[dict], emit: Callable[[dict], None]) -> str:

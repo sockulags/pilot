@@ -23,7 +23,7 @@ import os
 from fastapi import WebSocket, WebSocketDisconnect
 
 from agents.loop import run_agent_loop
-from agents.orchestrator import classify_turn, stream_chat
+from agents.orchestrator import classify_turn, compose_reply
 from config import PILOT_AUTH_TOKEN
 from projects import add_project, list_projects, path_for_id, remove_project
 from store import clear_session, load_session, save_session
@@ -66,18 +66,13 @@ async def websocket_endpoint(websocket: WebSocket):
         decision = await classify_turn(prior, text, project=project)
         route = decision["route"]
 
-        summary_holder = {"text": ""}
-
         def emit(event: dict):
-            tagged = {**event, "turn": turn, "route": route}
-            if event.get("type") == "done":
-                summary_holder["text"] = event.get("summary", "")
-            send(tagged)
+            send({**event, "turn": turn, "route": route})
 
         emit({"type": "turn_start", "route": route, "thinking": decision.get("thinking", "")})
 
         if route == "chat":
-            reply = await _stream_text(stream_chat(conversation, text), emit, abort)
+            reply = await _stream_text(compose_reply(conversation, None), emit, abort)
             conversation.append({"role": "assistant", "content": reply or "(no reply)"})
             emit({"type": "done"})
 
@@ -98,9 +93,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     run_codex, decision["prompt"], cwd, claude_session_id, emit, abort, conversation
                 )
 
-        else:  # computer — run_agent_loop emits its own terminal "done"
-            await run_agent_loop(decision["task"], emit, abort)
-            conversation.append({"role": "assistant", "content": summary_holder["text"] or "Done"})
+        else:  # computer — loop streams live activity; compose_reply phrases the reply
+            outcome = await run_agent_loop(decision["task"], emit, abort, prior)
+            reply = await _stream_text(compose_reply(conversation, outcome), emit, abort)
+            conversation.append(
+                {"role": "assistant", "content": reply or outcome.detail or "Klar"}
+            )
+            emit({"type": "done"})
 
         persist()
 
