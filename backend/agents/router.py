@@ -133,6 +133,7 @@ async def route_next_action(
     failed_tools: set[str] | None = None,
     screen_observation: str | None = None,
     conversation: list[dict] | None = None,
+    model: str | None = None,
 ) -> dict:
     messages = build_router_messages(
         task, history, failed_tools, screen_observation, conversation
@@ -142,7 +143,7 @@ async def route_next_action(
         resp = await client.post(
             f"{OLLAMA_BASE_URL}/api/chat",
             json={
-                "model": OLLAMA_MODEL,
+                "model": model or OLLAMA_MODEL,
                 "messages": messages,
                 "stream": False,
                 "options": {"temperature": 0.1},

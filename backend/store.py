@@ -6,7 +6,7 @@ often) or a backend restart can resume the same conversation.
 
 Stored shape: {"messages": [{"role", "content"}, ...], "turn": int,
 "cwd": str|None, "claude_session_id": str|None, "codex_session_id": str|None,
-"agent": "claude"|"codex"}
+"agent": "claude"|"codex", "model_mode": "auto"|<model id>}
 """
 
 import json
@@ -29,6 +29,7 @@ _EMPTY = {
     "claude_session_id": None,
     "codex_session_id": None,
     "agent": "claude",
+    "model_mode": "auto",
 }
 
 
@@ -54,6 +55,7 @@ def load_session(session_id: str) -> dict:
             "claude_session_id": data.get("claude_session_id"),
             "codex_session_id": data.get("codex_session_id"),
             "agent": data.get("agent", "claude"),
+            "model_mode": data.get("model_mode", "auto"),
         }
     except FileNotFoundError:
         return dict(_EMPTY)
@@ -70,6 +72,7 @@ def save_session(
     claude_session_id: str | None = None,
     codex_session_id: str | None = None,
     agent: str = "claude",
+    model_mode: str = "auto",
 ) -> None:
     if not is_valid_session_id(session_id):
         return
@@ -81,6 +84,7 @@ def save_session(
         "claude_session_id": claude_session_id,
         "codex_session_id": codex_session_id,
         "agent": agent,
+        "model_mode": model_mode,
     }
     try:
         # Atomic write: temp file in the same dir, then replace.

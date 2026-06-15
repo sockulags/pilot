@@ -8,6 +8,8 @@ Protocol (client -> server):
 - {"type": "add_project", "path": "..."}   add a project root
 - {"type": "remove_project", "id": "..."}  remove a project root
 - {"type": "select_project", "id": "..."}  set this conversation's project (cwd)
+- {"type": "select_agent", "agent": "..."}  set the code-route agent (claude|codex)
+- {"type": "select_model", "model_mode": ".."} pin the local model, or "auto"
 
 On "hello" the backend loads the persisted conversation (messages, turn, cwd,
 claude_session_id) for that session_id and replies with `history` + `projects`.
@@ -22,10 +24,16 @@ import os
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from agents.loop import run_agent_loop
+from agents.coordinator import run_coordinator
 from agents.orchestrator import classify_turn, compose_reply
 from codex_logs import summarize_codex_session
-from config import PILOT_AUTH_TOKEN
+from config import (
+    OLLAMA_MODEL,
+    OLLAMA_MODELS,
+    PILOT_AUTH_TOKEN,
+    is_known_model,
+    tools_capable_model,
+)
 from projects import add_project, list_projects, path_for_id, remove_project
 from store import clear_session, load_session, save_session
 from tools import run_codex, run_codex_cli
@@ -39,6 +47,7 @@ async def websocket_endpoint(websocket: WebSocket):
     claude_session_id: str | None = None
     codex_session_id: str | None = None
     agent: str = "claude"
+    model_mode: str = "auto"  # "auto" = orchestrator picks per turn; else a pinned model id
     current_abort = asyncio.Event()
     turn_task: asyncio.Task | None = None
     turn_counter = 0
@@ -50,31 +59,110 @@ async def websocket_endpoint(websocket: WebSocket):
         if session_id:
             save_session(
                 session_id, conversation, turn_counter, cwd,
-                claude_session_id, codex_session_id, agent,
+                claude_session_id, codex_session_id, agent, model_mode,
             )
 
+    def model_catalog() -> list[dict]:
+        return [
+            {"id": mid, "label": meta["label"], "hint": meta["hint"]}
+            for mid, meta in OLLAMA_MODELS.items()
+        ]
+
     async def send_projects():
-        await websocket.send_json(
-            {"type": "projects", "projects": list_projects(), "selected": cwd, "agent": agent}
-        )
+        await websocket.send_json({
+            "type": "projects",
+            "projects": list_projects(),
+            "selected": cwd,
+            "agent": agent,
+            "model_mode": model_mode,
+            "models": model_catalog(),
+        })
+
+    def resolve_model_token(token: str) -> str | None:
+        """Map a user-typed token to "auto", an exact id, or a unique prefix."""
+        token = token.strip().lower()
+        if not token or token == "auto":
+            return "auto"
+        if is_known_model(token):
+            return token
+        matches = [mid for mid in OLLAMA_MODELS if mid.lower().startswith(token)]
+        return matches[0] if len(matches) == 1 else None
+
+    async def _handle_model_command(text: str, turn: int):
+        nonlocal model_mode
+        arg = text.strip()[len("/model"):].strip()
+
+        def reply(msg: str):
+            send({"type": "turn_start", "turn": turn, "route": "chat", "thinking": "model command"})
+            send({"type": "assistant_delta", "turn": turn, "route": "chat", "content": msg})
+            send({"type": "done", "turn": turn, "route": "chat"})
+
+        if not arg:
+            current = "auto (väljer själv per fråga)" if model_mode == "auto" else model_mode
+            names = ", ".join(["auto", *OLLAMA_MODELS])
+            reply(f"Nuvarande modell: **{current}**.\nByt med `/model <id|auto>`. Val: {names}")
+            return
+
+        resolved = resolve_model_token(arg)
+        if resolved is None:
+            reply(f"Okänd modell {arg!r}. Val: {', '.join(['auto', *OLLAMA_MODELS])}")
+            return
+
+        model_mode = resolved
+        persist()
+        await send_projects()
+        label = "auto (väljer själv per fråga)" if resolved == "auto" else resolved
+        reply(f"Modell satt till **{label}**.")
 
     async def handle_message(text: str, turn: int, abort: asyncio.Event):
-        nonlocal claude_session_id, codex_session_id
+        nonlocal claude_session_id, codex_session_id, model_mode
+
+        # `/model <id|auto>` is a client-side control, not a turn for the brain.
+        if text.strip().lower().startswith("/model"):
+            await _handle_model_command(text, turn)
+            return
+
         prior = list(conversation)
         conversation.append({"role": "user", "content": text})
 
         project = os.path.basename(cwd.rstrip("\\/")) if cwd else None
-        decision = await classify_turn(prior, text, project=project)
+        decision = await classify_turn(prior, text, project=project, model_mode=model_mode)
         route = decision["route"]
+        # The coordinator (front brain) is fast gemma4 in auto mode; a pin makes
+        # the chosen model the lead. It consults installed experts as needed.
+        coordinator_model = OLLAMA_MODEL if model_mode == "auto" else tools_capable_model(decision.get("model"))
 
         def emit(event: dict):
             send({**event, "turn": turn, "route": route})
 
-        emit({"type": "turn_start", "route": route, "thinking": decision.get("thinking", "")})
+        emit({
+            "type": "turn_start",
+            "route": route,
+            "thinking": decision.get("thinking", ""),
+            "model": coordinator_model,
+        })
 
-        if route == "chat":
-            reply = await _stream_text(compose_reply(conversation, None), emit, abort)
-            conversation.append({"role": "assistant", "content": reply or "(no reply)"})
+        if route in ("chat", "computer"):
+            # Both run through the in-turn coordinator: gemma4 (or the pinned
+            # model) auto-orchestrates over the installed experts, perception and
+            # OS tools, then compose_reply synthesises the final answer — grounded
+            # in what was gathered, or plain conversational when nothing was.
+            if cwd:
+                emit({"type": "context", "content": f"Working directory: {cwd}"})
+            intent = (
+                "The user wants you to do something on this computer or find something out; "
+                "act or consult when it helps."
+                if route == "computer"
+                else "The user's message looks conversational; consult an expert or use a "
+                "tool only when it clearly improves the answer, otherwise just answer."
+            )
+            outcome = await run_coordinator(
+                text, emit, abort, prior, project_cwd=cwd,
+                coordinator_model=coordinator_model, intent_hint=intent,
+            )
+            grounding = outcome if outcome.action_log else None
+            reply = await _stream_text(compose_reply(conversation, grounding, coordinator_model), emit, abort)
+            conversation.append({"role": "assistant", "content": reply or outcome.detail or "Klar"})
             emit({"type": "done"})
 
         elif route == "code":
@@ -103,16 +191,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     run_codex, decision["prompt"], cwd, claude_session_id, emit, abort, conversation
                 )
 
-        else:  # computer — loop streams live activity; compose_reply phrases the reply
-            if cwd:
-                emit({"type": "context", "content": f"Working directory: {cwd}"})
-            outcome = await run_agent_loop(decision["task"], emit, abort, prior, project_cwd=cwd)
-            reply = await _stream_text(compose_reply(conversation, outcome), emit, abort)
-            conversation.append(
-                {"role": "assistant", "content": reply or outcome.detail or "Klar"}
-            )
-            emit({"type": "done"})
-
         persist()
 
     try:
@@ -134,6 +212,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 claude_session_id = stored.get("claude_session_id")
                 codex_session_id = stored.get("codex_session_id")
                 agent = stored.get("agent", "claude")
+                model_mode = stored.get("model_mode", "auto")
                 await websocket.send_json(
                     {"type": "history", "messages": conversation, "turn": turn_counter}
                 )
@@ -187,6 +266,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 new_agent = msg.get("agent")
                 if new_agent in ("claude", "codex"):
                     agent = new_agent
+                    persist()
+                await send_projects()
+
+            elif msg_type == "select_model":
+                requested = str(msg.get("model_mode", "auto"))
+                if requested == "auto" or is_known_model(requested):
+                    model_mode = requested
                     persist()
                 await send_projects()
 

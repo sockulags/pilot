@@ -19,7 +19,13 @@ from typing import AsyncGenerator
 import httpx
 
 from agents.json_utils import extract_json_object
-from config import OLLAMA_BASE_URL, OLLAMA_MODEL
+from config import (
+    OLLAMA_BASE_URL,
+    OLLAMA_MODEL,
+    OLLAMA_MODELS,
+    OLLAMA_ROUTER_MODEL,
+    resolve_answer_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +54,10 @@ Given the conversation so far and the latest user message, decide how to handle 
 
 Prefer "chat" when unsure. Only choose "computer" or "code" when the user clearly wants an action taken. When a project folder is active, lean toward "code" for anything about that project's files or code.
 
+When a model menu is provided in the context, also pick the local model best suited to ANSWER this message and put its exact id in a "model" field. Match the message to the model's described strength; if unsure pick the first one.
+
 Respond ONLY with valid JSON, no prose:
-{"route": "chat" | "computer" | "code", "task": "<only for computer>", "prompt": "<only for code>", "thinking": "<short reason>"}"""
+{"route": "chat" | "computer" | "code", "task": "<only for computer>", "prompt": "<only for code>", "model": "<model id from the menu, if one was given>", "thinking": "<short reason>"}"""
 
 CHAT_SYSTEM = (
     "You are Pilot, a helpful local assistant running on the user's computer. "
@@ -62,17 +70,25 @@ CHAT_SYSTEM = (
 )
 
 REPLY_SYSTEM = (
-    "You are Pilot, a helpful local assistant on the user's computer. You just "
-    "acted on the user's machine on their behalf. Reply to the user in THEIR "
-    "language (they often write Swedish), conversationally and concisely — as a "
-    "real answer, not a status report. Ground every claim in the activity log "
-    "below; never invent results that aren't shown there. If something failed or "
-    "looks wrong, say so honestly and suggest the fix."
+    "You are Pilot, a helpful local assistant on the user's computer. To answer "
+    "this turn you gathered help — consulting specialist models, looking at the "
+    "screen, and/or running tools. Reply to the user in THEIR language (they "
+    "often write Swedish), conversationally and concisely — as a real answer, not "
+    "a status report. Ground every claim in the activity log below (including any "
+    "expert answers); never invent results that aren't shown there. If something "
+    "failed or looks wrong, say so honestly and suggest the fix."
 )
 
 
 def _recent(conversation: list[dict], limit: int = 10) -> list[dict]:
     return conversation[-limit:] if conversation else []
+
+
+def _model_menu() -> str:
+    """Render the selectable models as a labelled menu for the classifier."""
+    return "\n".join(
+        f'- "{mid}": {meta["hint"]}' for mid, meta in OLLAMA_MODELS.items()
+    )
 
 
 def _conversation_text(conversation: list[dict]) -> str:
@@ -87,17 +103,28 @@ def _conversation_text(conversation: list[dict]) -> str:
 
 
 async def classify_turn(
-    conversation: list[dict], user_message: str, project: str | None = None
+    conversation: list[dict],
+    user_message: str,
+    project: str | None = None,
+    model_mode: str = "auto",
 ) -> dict:
     """Decide how to handle the latest user turn. Returns a route dict.
 
     ``conversation`` is the history BEFORE the latest user message (list of
     {"role", "content"}). ``user_message`` is the latest user text. ``project``
     is the name of the active project folder, if one is selected — it biases
-    code-related requests toward the "code" route.
+    code-related requests toward the "code" route. ``model_mode`` is "auto"
+    (the classifier picks the answering model) or a pinned model id; the result
+    always carries a resolved ``model`` for the answering step.
+
+    Classification itself always runs on OLLAMA_ROUTER_MODEL (fast, tools-capable)
+    regardless of which model ends up answering.
     """
+    auto = model_mode == "auto"
+
     forced = route_project_bound_message(user_message, project)
     if forced:
+        forced["model"] = resolve_answer_model(model_mode, None)
         return forced
 
     project_line = (
@@ -106,8 +133,13 @@ async def classify_turn(
         if project
         else "\n\nNo project folder is selected."
     )
+    model_line = (
+        f"\n\nModel menu — pick the best \"model\" id to answer this message:\n{_model_menu()}"
+        if auto
+        else ""
+    )
     context = (
-        f"Conversation so far:\n{_conversation_text(conversation)}{project_line}\n\n"
+        f"Conversation so far:\n{_conversation_text(conversation)}{project_line}{model_line}\n\n"
         f"Latest user message:\n{user_message}"
     )
     messages = [
@@ -120,7 +152,7 @@ async def classify_turn(
             resp = await client.post(
                 f"{OLLAMA_BASE_URL}/api/chat",
                 json={
-                    "model": OLLAMA_MODEL,
+                    "model": OLLAMA_ROUTER_MODEL,
                     "messages": messages,
                     "stream": False,
                     "options": {"temperature": 0.1},
@@ -130,10 +162,21 @@ async def classify_turn(
             content = resp.json()["message"]["content"].strip()
     except Exception as exc:
         logger.warning("classify_turn request failed: %s", exc)
-        return dict(ROUTE_DEFAULT)
+        decision = dict(ROUTE_DEFAULT)
+        decision["model"] = resolve_answer_model(model_mode, None)
+        return decision
 
     decision = extract_json_object(content, ROUTE_DEFAULT)
-    return _normalize_decision(decision, user_message)
+    normalized = _normalize_decision(decision, user_message, model_mode)
+
+    # The code route delegates to an external CLI in a project folder. Without a
+    # project selected it dead-ends, so a coding *question* with no project is
+    # answered locally instead — the coordinator can consult the coder model.
+    if normalized["route"] == "code" and not project:
+        normalized["route"] = "chat"
+        normalized.pop("prompt", None)
+        normalized["thinking"] = "coding question with no active project — answering locally"
+    return normalized
 
 
 def route_project_bound_message(user_message: str, project: str | None) -> dict | None:
@@ -151,12 +194,17 @@ def route_project_bound_message(user_message: str, project: str | None) -> dict 
     }
 
 
-def _normalize_decision(decision: dict, user_message: str) -> dict:
+def _normalize_decision(decision: dict, user_message: str, model_mode: str = "auto") -> dict:
     route = str(decision.get("route", "chat")).strip().lower()
     if route not in VALID_ROUTES:
         route = "chat"
 
-    normalized: dict = {"route": route, "thinking": decision.get("thinking", "")}
+    normalized: dict = {
+        "route": route,
+        "thinking": decision.get("thinking", ""),
+        # Pin wins when set; otherwise honour the classifier's suggestion.
+        "model": resolve_answer_model(model_mode, decision.get("model")),
+    }
     if route == "computer":
         # Fall back to the raw user message if the model didn't extract a task.
         normalized["task"] = str(decision.get("task") or user_message).strip()
@@ -165,13 +213,15 @@ def _normalize_decision(decision: dict, user_message: str) -> dict:
     return normalized
 
 
-async def _stream_ollama_chat(messages: list[dict]) -> AsyncGenerator[str, None]:
+async def _stream_ollama_chat(
+    messages: list[dict], model: str | None = None
+) -> AsyncGenerator[str, None]:
     """Stream content chunks from Ollama's /api/chat for the given messages."""
     async with httpx.AsyncClient(timeout=180) as client:
         async with client.stream(
             "POST",
             f"{OLLAMA_BASE_URL}/api/chat",
-            json={"model": OLLAMA_MODEL, "messages": messages, "stream": True},
+            json={"model": model or OLLAMA_MODEL, "messages": messages, "stream": True},
         ) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
@@ -200,11 +250,12 @@ def _build_reply_messages(conversation: list[dict], outcome=None) -> list[dict]:
         messages.append({
             "role": "user",
             "content": (
-                "Aktivitetslogg för det jag (assistenten) just gjorde på datorn "
-                f"denna tur:\n{outcome.action_log or '(inga åtgärder registrerades)'}\n\n"
+                "Underlag jag (assistenten) samlade denna tur (expertsvar, "
+                "skärmobservationer, verktygsresultat):\n"
+                f"{outcome.action_log or '(inget registrerades)'}\n\n"
                 f"Status: {outcome.status}\n\n"
-                "Svara nu användaren på deras språk utifrån detta. Hitta inte på "
-                "resultat som inte syns i loggen."
+                "Väv ihop detta till ett svar på användarens språk. Hitta inte på "
+                "resultat som inte syns ovan."
             ),
         })
     return messages
@@ -217,19 +268,21 @@ def _fallback_reply(outcome, exc: Exception) -> str:
 
 
 async def compose_reply(
-    conversation: list[dict], outcome=None
+    conversation: list[dict], outcome=None, model: str | None = None
 ) -> AsyncGenerator[str, None]:
     """Stream the user-facing assistant reply — the single output layer.
 
     ``conversation`` should already include the latest user message as the last
     entry. ``outcome`` is None for the chat route, or a LoopOutcome for the
-    computer route (its activity log grounds the reply). On model failure a
-    fallback built from the outcome is yielded so the message is never lost.
+    computer route (its activity log grounds the reply). ``model`` is the local
+    model chosen for this turn (auto-picked or pinned); falls back to
+    OLLAMA_MODEL. On model failure a fallback built from the outcome is yielded
+    so the message is never lost.
     """
     messages = _build_reply_messages(conversation, outcome)
     yielded = False
     try:
-        async for piece in _stream_ollama_chat(messages):
+        async for piece in _stream_ollama_chat(messages, model):
             yielded = True
             yield piece
     except Exception as exc:

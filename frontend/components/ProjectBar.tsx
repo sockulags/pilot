@@ -1,16 +1,19 @@
 "use client";
 
 import { useState, CSSProperties } from "react";
-import type { Project, Agent } from "@/app/page";
+import type { Project, Agent, ModelOption } from "@/app/page";
 
 interface Props {
   projects: Project[];
   selected: string | null; // selected project path (cwd)
   agent: Agent;
+  modelMode: string; // "auto" or a pinned model id
+  models: ModelOption[];
   onSelect: (id: string) => void;
   onAdd: (path: string) => void;
   onRemove: (id: string) => void;
   onSelectAgent: (a: Agent) => void;
+  onSelectModel: (mode: string) => void;
 }
 
 const AGENTS: { id: Agent; label: string }[] = [
@@ -38,7 +41,7 @@ const field: CSSProperties = {
   fontSize: "0.8rem",
 };
 
-export default function ProjectBar({ projects, selected, agent, onSelect, onAdd, onRemove, onSelectAgent }: Props) {
+export default function ProjectBar({ projects, selected, agent, modelMode, models, onSelect, onAdd, onRemove, onSelectAgent, onSelectModel }: Props) {
   const [adding, setAdding] = useState(false);
   const [path, setPath] = useState("");
   const selectedProj = projects.find((p) => p.path === selected) ?? null;
@@ -110,7 +113,24 @@ export default function ProjectBar({ projects, selected, agent, onSelect, onAdd,
         </span>
       )}
 
-      <span style={{ marginLeft: "auto", display: "flex", gap: "0.25rem", alignItems: "center" }}>
+      <span style={{ marginLeft: "auto", display: "flex", gap: "0.35rem", alignItems: "center" }}>
+        <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>Modell:</span>
+        <select
+          value={modelMode}
+          onChange={(e) => onSelectModel(e.target.value)}
+          title="Auto = Pilot väljer bästa lokala modell per fråga. Annars låses modellen."
+          style={{ ...field, maxWidth: 200 }}
+        >
+          <option value="auto">Auto (väljer själv)</option>
+          {models.map((m) => (
+            <option key={m.id} value={m.id} title={m.hint}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </span>
+
+      <span style={{ display: "flex", gap: "0.25rem", alignItems: "center" }}>
         <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>Agent:</span>
         {AGENTS.map((a) => (
           <button
