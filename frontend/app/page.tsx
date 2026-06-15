@@ -10,6 +10,9 @@ export type Route = "chat" | "computer" | "code";
 
 export type Project = { id: string; name: string; path: string };
 
+// A selectable local model offered by the backend (plus the "auto" pseudo-mode).
+export type ModelOption = { id: string; label: string; hint: string };
+
 // Raw event coming over the WebSocket from the backend.
 export type ServerEvent = {
   type:
@@ -20,6 +23,8 @@ export type ServerEvent = {
     | "thinking"
     | "context"
     | "action"
+    | "consult"
+    | "expert_delta"
     | "codex_trace"
     | "result"
     | "screenshot"
@@ -39,6 +44,9 @@ export type ServerEvent = {
   selected?: string | null;
   agent?: Agent;
   trace?: CodexTrace;
+  model?: string; // turn_start: the local model that answers this turn
+  model_mode?: string; // projects: "auto" or a pinned model id
+  models?: ModelOption[]; // projects: selectable model catalog
 };
 
 export type Agent = "claude" | "codex";
@@ -80,6 +88,7 @@ export type TranscriptItem =
       id: number;
       turn: number;
       route?: Route;
+      model?: string; // local model that answered this turn (auto-picked or pinned)
       text: string; // streamed reply (chat / code)
       events: TurnEvent[]; // thinking / action / result / screenshot / error
       summary?: string; // final result (computer / code)
@@ -139,6 +148,8 @@ export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [agent, setAgent] = useState<Agent>("claude");
+  const [modelMode, setModelMode] = useState<string>("auto");
+  const [models, setModels] = useState<ModelOption[]>([]);
   const [running, _setRunning] = useState(false);
   const [wsStatus, setWsStatus] = useState<WsStatus>("disconnected");
   const wsRef = useRef<WebSocket | null>(null);
@@ -203,6 +214,7 @@ export default function Home() {
       switch (ev.type) {
         case "turn_start":
           updated.route = ev.route;
+          if (ev.model) updated.model = ev.model;
           if (ev.thinking) updated.events.push({ id: idRef.current++, type: "thinking", content: ev.thinking });
           break;
         case "assistant_delta":
@@ -227,6 +239,21 @@ export default function Home() {
         case "action":
           updated.events.push({ id: idRef.current++, type: "action", tool: ev.tool, args: ev.args });
           break;
+        case "consult":
+          // Header row for an expert hand-off, then a buffer the expert streams into.
+          updated.events.push({ id: idRef.current++, type: "consult", tool: ev.model, content: ev.content });
+          updated.events.push({ id: idRef.current++, type: "expert", tool: ev.model, content: "" });
+          break;
+        case "expert_delta": {
+          const evs = updated.events;
+          const last = evs[evs.length - 1];
+          if (last && last.type === "expert" && last.tool === ev.model) {
+            evs[evs.length - 1] = { ...last, content: (last.content ?? "") + (ev.content ?? "") };
+          } else {
+            evs.push({ id: idRef.current++, type: "expert", tool: ev.model, content: ev.content });
+          }
+          break;
+        }
         default: // thinking | result | error
           updated.events.push({ id: idRef.current++, type: ev.type, content: ev.content });
       }
@@ -283,6 +310,8 @@ export default function Home() {
           setProjects(msg.projects ?? []);
           setSelectedProject(msg.selected ?? null);
           if (msg.agent) setAgent(msg.agent);
+          if (msg.model_mode) setModelMode(msg.model_mode);
+          if (msg.models) setModels(msg.models);
           return;
         }
         if (msg.type === "done" || msg.type === "error") setRunning(false);
@@ -343,8 +372,9 @@ export default function Home() {
       const selected = projects.find((p) => p.path === selectedProject);
       if (selected) ws.send(JSON.stringify({ type: "select_project", id: selected.id }));
       ws.send(JSON.stringify({ type: "select_agent", agent }));
+      ws.send(JSON.stringify({ type: "select_model", model_mode: modelMode }));
     }
-  }, [agent, projects, selectedProject, setRunning]);
+  }, [agent, modelMode, projects, selectedProject, setRunning]);
 
   const selectProject = useCallback((id: string) => {
     wsRef.current?.send(JSON.stringify({ type: "select_project", id }));
@@ -357,6 +387,9 @@ export default function Home() {
   }, []);
   const selectAgent = useCallback((a: Agent) => {
     wsRef.current?.send(JSON.stringify({ type: "select_agent", agent: a }));
+  }, []);
+  const selectModel = useCallback((mode: string) => {
+    wsRef.current?.send(JSON.stringify({ type: "select_model", model_mode: mode }));
   }, []);
 
   return (
@@ -383,10 +416,13 @@ export default function Home() {
         projects={projects}
         selected={selectedProject}
         agent={agent}
+        modelMode={modelMode}
+        models={models}
         onSelect={selectProject}
         onAdd={addProject}
         onRemove={removeProject}
         onSelectAgent={selectAgent}
+        onSelectModel={selectModel}
       />
 
       <Transcript items={transcript} />

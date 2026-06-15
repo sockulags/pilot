@@ -7,6 +7,8 @@ const ICONS: Record<string, string> = {
   thinking: "💭",
   context: "📁",
   action: "⚡",
+  consult: "🔀",
+  expert: "🧠",
   codex_trace: "⌨",
   result: "✓",
   screenshot: "📸",
@@ -17,6 +19,8 @@ const COLORS: Record<string, string> = {
   thinking: "var(--muted)",
   context: "var(--muted)",
   action: "var(--accent)",
+  consult: "var(--blue)",
+  expert: "var(--text)",
   codex_trace: "var(--accent)",
   result: "var(--green)",
   screenshot: "var(--blue)",
@@ -66,6 +70,29 @@ function RouteBadge({ route }: { route?: Route }) {
   );
 }
 
+function ModelChip({ model }: { model?: string }) {
+  if (!model) return null;
+  // Strip the ":latest"/":14b" tag for a compact label; keep full id on hover.
+  const short = model.split(":")[0];
+  return (
+    <span
+      title={`Svarade med ${model}`}
+      style={{
+        fontSize: "0.62rem",
+        fontWeight: 600,
+        color: "var(--muted)",
+        border: "1px solid var(--border)",
+        borderRadius: 5,
+        padding: "0.05rem 0.35rem",
+        marginLeft: "0.4rem",
+        verticalAlign: "middle",
+      }}
+    >
+      🧠 {short}
+    </span>
+  );
+}
+
 function ResultCard({ summary }: { summary: string }) {
   return (
     <div style={{
@@ -94,13 +121,18 @@ function EventRow({ event }: { event: TurnEvent }) {
   const text = event.type === "action"
     ? `${event.tool ?? ""}${event.args ? " " + JSON.stringify(event.args) : ""}`
     : event.content ?? "";
+  // consult/expert rows carry the model name in `tool` — surface it as the label.
+  const label =
+    event.type === "consult" ? `frågar ${event.tool ?? "expert"}`
+    : event.type === "expert" ? (event.tool ?? "expert")
+    : event.type;
 
   return (
     <div style={{ display: "flex", gap: "0.5rem", padding: "0.375rem 0", borderBottom: "1px solid var(--border)", alignItems: "flex-start" }}>
       <span style={{ fontSize: "0.85rem", flexShrink: 0, marginTop: 1 }}>{icon}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ fontSize: "0.7rem", color: "var(--muted)", marginRight: "0.5rem", textTransform: "uppercase", fontWeight: 600 }}>
-          {event.type}
+        <span style={{ fontSize: "0.7rem", color: event.type === "expert" ? "var(--blue)" : "var(--muted)", marginRight: "0.5rem", textTransform: "uppercase", fontWeight: 600 }}>
+          {label}
         </span>
         {event.type === "screenshot" && event.image ? (
           <img
@@ -126,6 +158,19 @@ function DetailsPanel({ events }: { events: TurnEvent[] }) {
         {events.map((e) => <EventRow key={e.id} event={e} />)}
       </div>
     </details>
+  );
+}
+
+// While a turn is still running, show the work live (open) so the user sees the
+// coordinator consulting experts / acting. Once done it collapses to DetailsPanel.
+function LivePanel({ events }: { events: TurnEvent[] }) {
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 8, marginTop: "0.5rem", padding: "0 0.7rem" }}>
+      <div style={{ padding: "0.4rem 0 0.1rem", color: "var(--muted)", fontSize: "0.72rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+        Arbetar…
+      </div>
+      {events.map((e) => <EventRow key={e.id} event={e} />)}
+    </div>
   );
 }
 
@@ -170,6 +215,7 @@ function AssistantTurn({ item }: { item: Extract<TranscriptItem, { kind: "assist
   return (
     <div style={{ marginBottom: "1rem" }}>
       <RouteBadge route={item.route} />
+      <ModelChip model={item.model} />
       {item.text && (
         <div style={{
           background: "var(--surface)",
@@ -194,7 +240,7 @@ function AssistantTurn({ item }: { item: Extract<TranscriptItem, { kind: "assist
           CWD: {item.cwd}
         </div>
       )}
-      {item.events.length > 0 && <DetailsPanel events={item.events} />}
+      {item.events.length > 0 && (item.done ? <DetailsPanel events={item.events} /> : <LivePanel events={item.events} />)}
       {item.codexTrace && <CodexEvidence trace={item.codexTrace} />}
       {showResult && <ResultCard summary={item.summary!} />}
     </div>

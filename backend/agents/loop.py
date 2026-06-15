@@ -63,6 +63,7 @@ async def run_agent_loop(
     abort_event: asyncio.Event,
     conversation: list[dict] | None = None,
     project_cwd: str | None = None,
+    model: str | None = None,
 ) -> LoopOutcome:
     history: list[dict] = []
     failed_tools: set[str] = set()
@@ -84,6 +85,7 @@ async def run_agent_loop(
                 failed_tools,
                 screen_observation=screen_observation,
                 conversation=conversation,
+                model=model,
             )
         except Exception as e:
             emit(make_event("error", content=f"Router error: {e}"))
@@ -110,6 +112,7 @@ async def run_agent_loop(
                     failed_tools,
                     screen_observation=screen_observation,
                     conversation=conversation,
+                    model=model,
                 )
             except Exception as e:
                 emit(make_event("error", content=f"Router error: {e}"))

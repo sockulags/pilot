@@ -24,6 +24,68 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma4:latest")
 OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "gemma4:latest")
 OLLAMA_FALLBACK_MODEL = os.getenv("OLLAMA_FALLBACK_MODEL", "qwen3:14b")
 
+# --- Local model registry (dynamic per-turn model selection) ----------------
+# The orchestrator picks the best local model for each turn ("auto"), or the
+# user pins one via the UI toggle / `/model <id>`. Each entry carries a hint the
+# auto-picker shows the classifier, and a `tools` flag: only tools-capable
+# models may drive the JSON tool router (the computer route). deepseek-r1 is a
+# reasoning model with NO tool support, so it is chat/reasoning only.
+OLLAMA_MODELS: dict[str, dict] = {
+    "gemma4:latest": {
+        "label": "Gemma 4",
+        "hint": "Snabb allmän chatt, vardagsfrågor och korta svar",
+        "tools": True,
+    },
+    "qwen3:14b": {
+        "label": "Qwen3 14B",
+        "hint": "Starkt allmänt resonemang och flerstegsuppgifter",
+        "tools": True,
+    },
+    "deepseek-r1:14b": {
+        "label": "DeepSeek-R1 14B",
+        "hint": "Djupt resonemang, matematik och klurig analys",
+        "tools": False,
+    },
+    "qwen2.5-coder:14b": {
+        "label": "Qwen2.5 Coder",
+        "hint": "Kod, teknik och programmeringsfrågor",
+        "tools": True,
+    },
+}
+
+# The orchestrator's own classification step always runs on this model — it must
+# be fast and tools-capable, never the user's pinned answering model.
+OLLAMA_ROUTER_MODEL = os.getenv("OLLAMA_ROUTER_MODEL", OLLAMA_MODEL)
+
+
+def is_known_model(model: str | None) -> bool:
+    return bool(model) and model in OLLAMA_MODELS
+
+
+def tools_capable_model(model: str | None) -> str:
+    """Return `model` if it's a known tools-capable model, else OLLAMA_MODEL.
+
+    Guards the computer route's JSON tool router from being handed a model that
+    can't emit tool calls (e.g. deepseek-r1).
+    """
+    if model and OLLAMA_MODELS.get(model, {}).get("tools"):
+        return model
+    return OLLAMA_MODEL
+
+
+def resolve_answer_model(model_mode: str | None, suggested: str | None) -> str:
+    """Resolve which model answers a turn.
+
+    ``model_mode`` is "auto" or a pinned model id. In auto mode the classifier's
+    ``suggested`` model wins (when known); otherwise the pin wins. Falls back to
+    OLLAMA_MODEL when nothing is valid.
+    """
+    if model_mode and model_mode != "auto" and is_known_model(model_mode):
+        return model_mode
+    if is_known_model(suggested):
+        return suggested  # type: ignore[return-value]
+    return OLLAMA_MODEL
+
 # Set to "true" only when OLLAMA_VISION_MODEL is actually a multimodal model
 # (e.g. llava, llama3.2-vision, minicpm-v). gemma4 is text-only, so this
 # defaults to false — the done-summary falls back to text_done_summary instead.
@@ -65,6 +127,10 @@ FRONTEND_DIR = os.getenv(
 )
 
 MAX_AGENT_STEPS = int(os.getenv("MAX_AGENT_STEPS", "50"))
+
+# Max steps the in-turn coordinator (agents/coordinator.py) takes before it must
+# answer — bounds how many expert consultations / tool calls one turn can chain.
+COORDINATOR_MAX_STEPS = int(os.getenv("COORDINATOR_MAX_STEPS", "6"))
 
 # OS-grounded perception (Set-of-Marks): enumerate interactive UI elements via
 # Windows UI Automation so the agent clicks known element centers instead of
