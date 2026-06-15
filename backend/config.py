@@ -38,6 +38,15 @@ MEMORY_FILE = os.getenv(
 MEMORY_TOP_K = int(os.getenv("MEMORY_TOP_K", "4"))
 MEMORY_MIN_SCORE = float(os.getenv("MEMORY_MIN_SCORE", "0.62"))
 
+# --- Scheduled jobs (recurring reminders / background tasks) ----------------
+# Persistent job store + how often the scheduler loop wakes to check for due
+# jobs. 20s is plenty given schedules have minute granularity. The file lives
+# under backend/data/ (gitignored), mirroring the session and memory stores.
+JOBS_FILE = os.getenv(
+    "JOBS_FILE", os.path.join(os.path.dirname(__file__), "data", "jobs.json")
+)
+JOBS_TICK_SECONDS = int(os.getenv("JOBS_TICK_SECONDS", "20"))
+
 # --- Local model registry (dynamic per-turn model selection) ----------------
 # The orchestrator picks the best local model for each turn ("auto"), or the
 # user pins one via the UI toggle / `/model <id>`. Each entry carries a hint the
