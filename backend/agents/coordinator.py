@@ -26,6 +26,7 @@ from typing import Callable
 import httpx
 
 from agents import loop as agent_loop
+from agents.gateway import refine_query
 from agents.json_utils import extract_json_object
 from agents.loop import LoopOutcome, make_event
 from agents.safety import unsafe_tool_block_reason
@@ -67,7 +68,7 @@ _TOOL_MENU = (
     "act on the screen (perceive first)"
 )
 
-VALID_ACTIONS = {"consult", "perceive", "tool", "remember", "answer"}
+VALID_ACTIONS = {"consult", "perceive", "tool", "remember", "clarify", "answer"}
 
 
 def _system_prompt(intent_hint: str) -> str:
@@ -75,6 +76,9 @@ def _system_prompt(intent_hint: str) -> str:
         "You are the coordinator — the front brain of a local assistant. You answer "
         "the user yourself, but you can call on help when it genuinely improves the "
         "answer. Work step by step. Pick ONE next action each step:\n\n"
+        '- "clarify": the request is too vague or ambiguous to act on well — ask the '
+        'user ONE short question (give "question" in the user\'s language) instead of '
+        "guessing or starting work. Use sparingly, only when truly unclear.\n"
         '- "consult": hand the user\'s request to a specialist model (give "model"). The '
         "user's request is forwarded automatically — you only choose WHO. Use for parts "
         "outside your strength: code, hard math/reasoning.\n"
@@ -90,9 +94,9 @@ def _system_prompt(intent_hint: str) -> str:
         "Be economical: for a simple question, choose \"answer\" immediately — do not "
         "consult or act when it adds nothing. Never consult the same model twice. "
         f"{intent_hint}\n\n"
-        'Respond ONLY with JSON: {"action": "consult|perceive|tool|remember|answer", '
-        '"model": "<expert id>", "tool": "<name>", "args": {...}, "text": "<fact to '
-        'remember>", "thinking": "<short reason>"}'
+        'Respond ONLY with JSON: {"action": "clarify|consult|perceive|tool|remember|'
+        'answer", "question": "<for clarify>", "model": "<expert id>", "tool": "<name>", '
+        '"args": {...}, "text": "<fact to remember>", "thinking": "<short reason>"}'
     )
 
 ANSWER_DEFAULT = {"action": "answer", "thinking": "defaulting to answer"}
@@ -175,18 +179,19 @@ async def _decide_step(
 async def _consult_expert(
     model: str,
     task: str,
+    refined: str,
     conversation: list[dict] | None,
     emit: Callable[[dict], None],
     abort: asyncio.Event,
 ) -> str:
     """Stream a specialist model's answer to the user's request.
 
-    The expert answers the user's VERBATIM request — the small coordinator only
-    chooses which expert to call, it does NOT re-author the task (an 8B model
-    paraphrases unreliably, and the expert would then follow the drifted wording
-    onto the wrong errand). Recent conversation is included for context. The
-    expert's tokens stream as ``expert_delta`` events so the user watches the
-    hand-off live. Returns the full answer.
+    The expert gets the gateway-``refined`` English instruction (clearer, and
+    local experts reason better in English) PLUS the user's verbatim words, which
+    stay authoritative if the two ever conflict — a guard against any refinement
+    drift. Recent conversation is included for context. The expert's tokens
+    stream as ``expert_delta`` events so the user watches the hand-off live.
+    Returns the full answer.
     """
     context = ""
     if conversation:
@@ -195,6 +200,9 @@ async def _consult_expert(
             for m in conversation[-4:]
         )
         context = f"Recent conversation for context:\n{recent}\n\n"
+    request = f"Request:\n{refined}"
+    if refined.strip() != task.strip():
+        request += f"\n\nUser's original words (authoritative if they conflict):\n{task}"
     messages = [
         {
             "role": "system",
@@ -204,7 +212,7 @@ async def _consult_expert(
                 "language."
             ),
         },
-        {"role": "user", "content": f"{context}User's request:\n{task}"},
+        {"role": "user", "content": f"{context}{request}"},
     ]
     parts: list[str] = []
     try:
@@ -251,6 +259,7 @@ async def run_coordinator(
     history: list[dict] = []  # for perceive() + desktop-tool safety gating
     last_observation = ""
     consulted: set[str] = set()
+    refined: str | None = None  # English-pivot instruction, computed lazily on first consult
     steps = 0
 
     while steps < COORDINATOR_MAX_STEPS and not abort.is_set():
@@ -272,6 +281,13 @@ async def run_coordinator(
         if action == "answer":
             return LoopOutcome("done", _render_notes(notes))
 
+        if action == "clarify":
+            question = str(decision.get("question") or "").strip()
+            if question:
+                return LoopOutcome("needs_input", _render_notes(notes), question)
+            # No question produced — fall through to answering rather than stalling.
+            return LoopOutcome("done", _render_notes(notes))
+
         if action == "consult":
             model = decision.get("model", "")
             if model not in experts:
@@ -281,9 +297,12 @@ async def run_coordinator(
                 notes.append(f"(already consulted {model}; not repeating)")
                 continue
             consulted.add(model)
-            # Show the real request, not the coordinator's (possibly drifted) paraphrase.
-            emit(make_event("consult", model=model, content=task))
-            answer = await _consult_expert(model, task, conversation, emit, abort)
+            # Refine/translate the request once per turn for the expert (English
+            # pivot); the verbatim task stays authoritative inside _consult_expert.
+            if refined is None:
+                refined = await refine_query(conversation, task)
+            emit(make_event("consult", model=model, content=refined))
+            answer = await _consult_expert(model, task, refined, conversation, emit, abort)
             notes.append(f"{model} answered: {answer[:1200]}")
             continue
 

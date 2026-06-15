@@ -25,6 +25,7 @@ import os
 from fastapi import WebSocket, WebSocketDisconnect
 
 from agents.coordinator import run_coordinator
+from agents.gateway import refine_query
 from agents.orchestrator import classify_turn, compose_reply
 from codex_logs import summarize_codex_session
 from config import (
@@ -164,12 +165,19 @@ async def websocket_endpoint(websocket: WebSocket):
                 coordinator_model=coordinator_model, intent_hint=intent,
                 memories=memories, session_id=session_id,
             )
-            grounding = outcome if outcome.action_log else None
-            reply = await _stream_text(
-                compose_reply(conversation, grounding, coordinator_model, memories), emit, abort
-            )
-            conversation.append({"role": "assistant", "content": reply or outcome.detail or "Klar"})
-            emit({"type": "done"})
+            if outcome.status == "needs_input":
+                # The coordinator judged the request too vague — its clarifying
+                # question IS the reply; no synthesis, no orchestration ran.
+                emit({"type": "assistant_delta", "content": outcome.detail})
+                conversation.append({"role": "assistant", "content": outcome.detail})
+                emit({"type": "done"})
+            else:
+                grounding = outcome if outcome.action_log else None
+                reply = await _stream_text(
+                    compose_reply(conversation, grounding, coordinator_model, memories), emit, abort
+                )
+                conversation.append({"role": "assistant", "content": reply or outcome.detail or "Klar"})
+                emit({"type": "done"})
 
         elif route == "code":
             if not cwd:
@@ -177,25 +185,25 @@ async def websocket_endpoint(websocket: WebSocket):
                 emit({"type": "assistant_delta", "content": msg})
                 conversation.append({"role": "assistant", "content": msg})
                 emit({"type": "done"})
-            elif agent == "codex":
-                emit({"type": "thinking", "content": f"Codex i {cwd}..."})
-                emit({"type": "context", "content": f"Working directory: {cwd}"})
-                codex_session_id = await _run_code_turn(
-                    run_codex_cli,
-                    decision["prompt"],
-                    cwd,
-                    codex_session_id,
-                    emit,
-                    abort,
-                    conversation,
-                    trace_provider=summarize_codex_session,
-                )
             else:
-                emit({"type": "thinking", "content": f"Claude Code i {cwd}..."})
-                emit({"type": "context", "content": f"Working directory: {cwd}"})
-                claude_session_id = await _run_code_turn(
-                    run_codex, decision["prompt"], cwd, claude_session_id, emit, abort, conversation
+                # Refine/translate the instruction (English pivot) before the
+                # external agent; keep the user's verbatim words alongside.
+                code_prompt = _with_refined_prompt(
+                    await refine_query(prior, decision["prompt"]), decision["prompt"]
                 )
+                if agent == "codex":
+                    emit({"type": "thinking", "content": f"Codex i {cwd}..."})
+                    emit({"type": "context", "content": f"Working directory: {cwd}"})
+                    codex_session_id = await _run_code_turn(
+                        run_codex_cli, code_prompt, cwd, codex_session_id,
+                        emit, abort, conversation, trace_provider=summarize_codex_session,
+                    )
+                else:
+                    emit({"type": "thinking", "content": f"Claude Code i {cwd}..."})
+                    emit({"type": "context", "content": f"Working directory: {cwd}"})
+                    claude_session_id = await _run_code_turn(
+                        run_codex, code_prompt, cwd, claude_session_id, emit, abort, conversation
+                    )
 
         persist()
 
@@ -286,6 +294,17 @@ async def websocket_endpoint(websocket: WebSocket):
         current_abort.set()
         if turn_task and not turn_task.done():
             turn_task.cancel()
+
+
+def _with_refined_prompt(refined: str, original: str) -> str:
+    """Combine the gateway-refined instruction with the user's verbatim request.
+
+    The code agent gets the clearer (English) instruction but keeps the original
+    so it can fall back to the user's exact words if refinement drifted.
+    """
+    if refined.strip() == original.strip():
+        return original
+    return f"{refined}\n\n(User's original request: {original})"
 
 
 async def _run_code_turn(

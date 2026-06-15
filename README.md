@@ -76,6 +76,27 @@ substituted automatically.
 `COORDINATOR_MAX_STEPS` (default 6) bounds how many consults/tool calls one turn
 may chain.
 
+## Language gateway (clarify + refine)
+
+Before the coordinator hands work to another model, two things happen:
+
+- **Clarify** — if the request is too vague to act on well, the coordinator asks
+  **one** question back instead of guessing or looping. This rides on the
+  coordinator's existing decision step (`clarify` action), so it costs no extra
+  model call.
+- **Refine + English pivot** — when handing off to an expert model or the code
+  agent, the request is rewritten into one clear **English** instruction
+  (`agents/gateway.py`), since local models reason/code better in English. The
+  user's verbatim words are kept alongside, and the final reply is still written
+  in the user's language.
+
+This role needs a model strong at the user's language. `gemma4:8b` mistranslates
+Swedish badly (it turned "vänd en sträng" into "watering a vine"); `gemma4:12b`
+and `qwen3:14b` get it right — so `OLLAMA_GATEWAY_MODEL` defaults to `gemma4:12b`
+and falls open to the verbatim request if that model isn't installed (safe — no
+corruption). Point it at a dedicated language model (llama3.1, gpt-oss, …) once
+pulled, or set `GATEWAY_REFINE_ENABLED=false` to skip refinement entirely.
+
 ## Long-term memory
 
 Pilot remembers durable facts across sessions with a small semantic store
