@@ -4,7 +4,8 @@ One JSON file per session_id under SESSIONS_DIR. The conversation is the source
 of truth on the backend, so a reconnecting client (mobile drops the WebSocket
 often) or a backend restart can resume the same conversation.
 
-Stored shape: {"messages": [{"role", "content"}, ...], "turn": int}
+Stored shape: {"messages": [{"role", "content"}, ...], "turn": int,
+"cwd": str|None, "claude_session_id": str|None}
 """
 
 import json
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Accept only safe session ids (uuid-ish) so the id can't escape SESSIONS_DIR.
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
-_EMPTY = {"messages": [], "turn": 0}
+_EMPTY = {"messages": [], "turn": 0, "cwd": None, "claude_session_id": None}
 
 
 def is_valid_session_id(session_id: str) -> bool:
@@ -41,6 +42,8 @@ def load_session(session_id: str) -> dict:
         return {
             "messages": list(data.get("messages", [])),
             "turn": int(data.get("turn", 0)),
+            "cwd": data.get("cwd"),
+            "claude_session_id": data.get("claude_session_id"),
         }
     except FileNotFoundError:
         return dict(_EMPTY)
@@ -49,11 +52,22 @@ def load_session(session_id: str) -> dict:
         return dict(_EMPTY)
 
 
-def save_session(session_id: str, messages: list[dict], turn: int) -> None:
+def save_session(
+    session_id: str,
+    messages: list[dict],
+    turn: int,
+    cwd: str | None = None,
+    claude_session_id: str | None = None,
+) -> None:
     if not is_valid_session_id(session_id):
         return
     os.makedirs(SESSIONS_DIR, exist_ok=True)
-    payload = {"messages": messages, "turn": turn}
+    payload = {
+        "messages": messages,
+        "turn": turn,
+        "cwd": cwd,
+        "claude_session_id": claude_session_id,
+    }
     try:
         # Atomic write: temp file in the same dir, then replace.
         fd, tmp = tempfile.mkstemp(dir=SESSIONS_DIR, suffix=".tmp")

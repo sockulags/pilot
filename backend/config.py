@@ -10,6 +10,15 @@ SESSIONS_DIR = os.getenv(
     os.path.join(os.path.dirname(__file__), "data", "sessions"),
 )
 
+# File holding the configured list of project roots for the `code` route.
+PROJECTS_FILE = os.getenv(
+    "PROJECTS_FILE",
+    os.path.join(os.path.dirname(__file__), "data", "projects.json"),
+)
+
+# Optional semicolon-separated project roots to seed PROJECTS_FILE on first run.
+PILOT_PROJECT_ROOTS = os.getenv("PILOT_PROJECT_ROOTS", "")
+
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma4:latest")
 OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "gemma4:latest")
@@ -20,10 +29,15 @@ OLLAMA_FALLBACK_MODEL = os.getenv("OLLAMA_FALLBACK_MODEL", "qwen3:14b")
 # defaults to false — the done-summary falls back to text_done_summary instead.
 OLLAMA_VISION_ENABLED = os.getenv("OLLAMA_VISION_ENABLED", "false").lower() == "true"
 
-# Path/name of the Claude CLI binary. On Windows the npm-installed wrapper is
-# a .cmd file that can't be exec'd directly — the backend handles this by
-# calling "cmd /c CLAUDE_CLI ..." on win32 automatically (see tools/codex.py).
+# Path/name of the Claude CLI binary. tools/codex.py resolves this: an absolute
+# path wins, then PATH, then the Claude desktop app's bundled CLI (Windows MSIX).
+# On win32 a .cmd/.bat wrapper is invoked via "cmd /c" automatically.
 CLAUDE_CLI = os.getenv("CLAUDE_CLI", "claude")
+
+# Permission mode for headless Claude Code runs (the `code` route). Print mode
+# cannot prompt, so this is fixed up front. "acceptEdits" auto-accepts file
+# edits; other ops follow normal rules. See `claude --help` for valid modes.
+CLAUDE_PERMISSION_MODE = os.getenv("CLAUDE_PERMISSION_MODE", "acceptEdits")
 
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
 MCP_PORT = int(os.getenv("MCP_PORT", "3001"))

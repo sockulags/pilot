@@ -32,10 +32,10 @@ CLASSIFY_SYSTEM = """You are the orchestrator for a local AI assistant. The assi
 Given the conversation so far and the latest user message, decide how to handle the latest message. Choose exactly one route:
 
 - "chat": Answer conversationally yourself. Use for questions, greetings, explanations, brainstorming — anything that does NOT require acting on the computer or editing/running code in a project.
-- "computer": The user wants something DONE on this computer right now (open/focus an app, click a button, type into a field, take a screenshot, run a command, list/read files). Provide a "task" field: a concrete one-sentence goal for the automation agent.
-- "code": The user wants to work on a software project — write, change, explain, or run code in a codebase, or continue a coding task. Provide a "prompt" field: the instruction to pass to the coding agent.
+- "computer": The user wants to control the computer's GUI or run a quick one-off command — open/focus an app, click a button, type into a window, take a screenshot, run a single shell command, or inspect a file/folder ad hoc. NOT for working on a software project.
+- "code": The user wants to work on a software project — create, edit, explain, refactor, run, fix, or continue code or files (including docs like README) in a project. Provide a "prompt" field: the instruction to pass to the coding agent.
 
-Prefer "chat" when unsure. Only choose "computer" or "code" when the user clearly wants an action taken.
+Prefer "chat" when unsure. Only choose "computer" or "code" when the user clearly wants an action taken. When a project folder is active, lean toward "code" for anything about that project's files or code.
 
 Respond ONLY with valid JSON, no prose:
 {"route": "chat" | "computer" | "code", "task": "<only for computer>", "prompt": "<only for code>", "thinking": "<short reason>"}"""
@@ -63,14 +63,24 @@ def _conversation_text(conversation: list[dict]) -> str:
     return "\n".join(lines)
 
 
-async def classify_turn(conversation: list[dict], user_message: str) -> dict:
+async def classify_turn(
+    conversation: list[dict], user_message: str, project: str | None = None
+) -> dict:
     """Decide how to handle the latest user turn. Returns a route dict.
 
     ``conversation`` is the history BEFORE the latest user message (list of
-    {"role", "content"}). ``user_message`` is the latest user text.
+    {"role", "content"}). ``user_message`` is the latest user text. ``project``
+    is the name of the active project folder, if one is selected — it biases
+    code-related requests toward the "code" route.
     """
+    project_line = (
+        f"\n\nActive project folder: {project!r}. If the latest message is about working on "
+        "this project's code or files, choose \"code\"."
+        if project
+        else "\n\nNo project folder is selected."
+    )
     context = (
-        f"Conversation so far:\n{_conversation_text(conversation)}\n\n"
+        f"Conversation so far:\n{_conversation_text(conversation)}{project_line}\n\n"
         f"Latest user message:\n{user_message}"
     )
     messages = [

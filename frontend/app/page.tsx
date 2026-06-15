@@ -4,13 +4,17 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import ChatInput from "@/components/TaskInput";
 import Transcript from "@/components/ActionLog";
 import AbortButton from "@/components/AbortButton";
+import ProjectBar from "@/components/ProjectBar";
 
 export type Route = "chat" | "computer" | "code";
+
+export type Project = { id: string; name: string; path: string };
 
 // Raw event coming over the WebSocket from the backend.
 export type ServerEvent = {
   type:
     | "history"
+    | "projects"
     | "turn_start"
     | "assistant_delta"
     | "thinking"
@@ -29,6 +33,8 @@ export type ServerEvent = {
   summary?: string;
   thinking?: string;
   messages?: { role: string; content: string }[];
+  projects?: Project[];
+  selected?: string | null;
 };
 
 // A single activity row inside an assistant turn's details panel.
@@ -90,6 +96,8 @@ function makeSessionId(): string {
 
 export default function Home() {
   const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [running, _setRunning] = useState(false);
   const [wsStatus, setWsStatus] = useState<WsStatus>("disconnected");
   const wsRef = useRef<WebSocket | null>(null);
@@ -197,6 +205,11 @@ export default function Home() {
           }
           return;
         }
+        if (msg.type === "projects") {
+          setProjects(msg.projects ?? []);
+          setSelectedProject(msg.selected ?? null);
+          return;
+        }
         if (msg.type === "done" || msg.type === "error") setRunning(false);
         applyEvent(msg);
       };
@@ -246,6 +259,16 @@ export default function Home() {
     setRunning(false);
   }, [setRunning]);
 
+  const selectProject = useCallback((id: string) => {
+    wsRef.current?.send(JSON.stringify({ type: "select_project", id }));
+  }, []);
+  const addProject = useCallback((path: string) => {
+    wsRef.current?.send(JSON.stringify({ type: "add_project", path }));
+  }, []);
+  const removeProject = useCallback((id: string) => {
+    wsRef.current?.send(JSON.stringify({ type: "remove_project", id }));
+  }, []);
+
   return (
     <main style={{ display: "flex", flexDirection: "column", height: "100dvh", padding: "1rem", gap: "0.75rem", maxWidth: 800, margin: "0 auto" }}>
       <header style={{ paddingBottom: "0.5rem", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -265,6 +288,14 @@ export default function Home() {
           </span>
         </div>
       </header>
+
+      <ProjectBar
+        projects={projects}
+        selected={selectedProject}
+        onSelect={selectProject}
+        onAdd={addProject}
+        onRemove={removeProject}
+      />
 
       <Transcript items={transcript} />
 

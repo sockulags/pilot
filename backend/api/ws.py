@@ -5,24 +5,26 @@ Protocol (client -> server):
 - {"type": "message", "text": "..."}      start a new turn
 - {"type": "abort"}                        abort the in-flight turn
 - {"type": "reset"}                        clear the conversation (and its store)
+- {"type": "add_project", "path": "..."}   add a project root
+- {"type": "remove_project", "id": "..."}  remove a project root
+- {"type": "select_project", "id": "..."}  set this conversation's project (cwd)
 
-On "hello" the backend loads the persisted conversation for that session_id and
-replies with {"type":"history", "messages":[...], "turn": N} so a reconnecting
-client (mobile drops the socket often) or a restarted backend resumes context.
-The conversation is saved to disk after every turn.
-
-Each turn is classified by agents/orchestrator.classify_turn into one of three
-routes (chat / code / computer) and executed accordingly. Every server event
-carries a "turn" id (and "route") so the UI can group a turn's activity.
+On "hello" the backend loads the persisted conversation (messages, turn, cwd,
+claude_session_id) for that session_id and replies with `history` + `projects`.
+Conversations are saved after every turn so a reconnecting client (mobile drops
+the socket often) or a restarted backend resumes context — including which
+project the `code` route runs in and the Claude Code session to resume.
 """
 
 import asyncio
 import json
+import os
 
 from fastapi import WebSocket, WebSocketDisconnect
 
 from agents.loop import run_agent_loop
 from agents.orchestrator import classify_turn, stream_chat
+from projects import add_project, list_projects, path_for_id, remove_project
 from store import clear_session, load_session, save_session
 from tools import run_codex
 
@@ -31,6 +33,8 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     conversation: list[dict] = []
     session_id: str | None = None
+    cwd: str | None = None
+    claude_session_id: str | None = None
     current_abort = asyncio.Event()
     turn_task: asyncio.Task | None = None
     turn_counter = 0
@@ -40,14 +44,18 @@ async def websocket_endpoint(websocket: WebSocket):
 
     def persist():
         if session_id:
-            save_session(session_id, conversation, turn_counter)
+            save_session(session_id, conversation, turn_counter, cwd, claude_session_id)
+
+    async def send_projects():
+        await websocket.send_json({"type": "projects", "projects": list_projects(), "selected": cwd})
 
     async def handle_message(text: str, turn: int, abort: asyncio.Event):
-        # Classify against history BEFORE this user message, then record it.
+        nonlocal claude_session_id
         prior = list(conversation)
         conversation.append({"role": "user", "content": text})
 
-        decision = await classify_turn(prior, text)
+        project = os.path.basename(cwd.rstrip("\\/")) if cwd else None
+        decision = await classify_turn(prior, text, project=project)
         route = decision["route"]
 
         summary_holder = {"text": ""}
@@ -66,10 +74,15 @@ async def websocket_endpoint(websocket: WebSocket):
             emit({"type": "done"})
 
         elif route == "code":
-            emit({"type": "thinking", "content": "Lämnar över till Claude Code..."})
-            reply = await _stream_text(run_codex(decision["prompt"]), emit, abort)
-            conversation.append({"role": "assistant", "content": reply or "(no output)"})
-            emit({"type": "done", "summary": "Claude Code klar"})
+            if not cwd:
+                msg = "Välj en projektmapp först (dropdown ovanför inmatningen)."
+                emit({"type": "assistant_delta", "content": msg})
+                conversation.append({"role": "assistant", "content": msg})
+                emit({"type": "done"})
+            else:
+                claude_session_id = await _run_code_turn(
+                    decision["prompt"], cwd, claude_session_id, emit, abort, conversation
+                )
 
         else:  # computer — run_agent_loop emits its own terminal "done"
             await run_agent_loop(decision["task"], emit, abort)
@@ -85,12 +98,15 @@ async def websocket_endpoint(websocket: WebSocket):
 
             if msg_type == "hello":
                 session_id = msg.get("session_id") or None
-                stored = load_session(session_id) if session_id else {"messages": [], "turn": 0}
+                stored = load_session(session_id) if session_id else dict(load_session(""))
                 conversation = list(stored["messages"])
                 turn_counter = stored["turn"]
+                cwd = stored.get("cwd")
+                claude_session_id = stored.get("claude_session_id")
                 await websocket.send_json(
                     {"type": "history", "messages": conversation, "turn": turn_counter}
                 )
+                await send_projects()
 
             elif msg_type == "message":
                 if turn_task and not turn_task.done():
@@ -110,14 +126,65 @@ async def websocket_endpoint(websocket: WebSocket):
                 current_abort.set()
                 conversation = []
                 turn_counter = 0
+                claude_session_id = None  # keep cwd; new Claude session next code turn
                 if session_id:
                     clear_session(session_id)
+                    persist()
                 await websocket.send_json({"type": "reset_ok"})
+
+            elif msg_type == "add_project":
+                _projects, error = add_project(msg.get("path", ""))
+                if error:
+                    await websocket.send_json({"type": "error", "content": error})
+                await send_projects()
+
+            elif msg_type == "remove_project":
+                remove_project(msg.get("id", ""))
+                await send_projects()
+
+            elif msg_type == "select_project":
+                new_cwd = path_for_id(msg.get("id", ""))
+                if new_cwd != cwd:
+                    cwd = new_cwd
+                    claude_session_id = None  # switching project starts a fresh Claude session
+                    persist()
+                await send_projects()
 
     except WebSocketDisconnect:
         current_abort.set()
         if turn_task and not turn_task.done():
             turn_task.cancel()
+
+
+async def _run_code_turn(prompt, cwd, resume_id, emit, abort, conversation) -> str | None:
+    """Drive Claude Code for one turn. Returns the (possibly new) claude session id."""
+    emit({"type": "thinking", "content": f"Claude Code i {cwd}..."})
+    parts: list[str] = []
+    result_text: str | None = None
+    error_text: str | None = None
+    session_id = resume_id
+
+    async for ev in run_codex(prompt, cwd=cwd, resume_session_id=resume_id):
+        if abort.is_set():
+            break
+        etype = ev.get("type")
+        if etype == "text":
+            parts.append(ev["text"])
+            emit({"type": "assistant_delta", "content": ev["text"]})
+        elif etype == "tool":
+            emit({"type": "action", "tool": ev.get("name", "tool"), "args": ev.get("input", {})})
+        elif etype == "session":
+            session_id = ev["id"]
+        elif etype == "result":
+            result_text = ev.get("text", "")
+        elif etype == "error":
+            error_text = ev.get("text", "")
+            emit({"type": "error", "content": error_text})
+
+    reply = "".join(parts).strip() or result_text or error_text or "(no output)"
+    conversation.append({"role": "assistant", "content": reply})
+    emit({"type": "done", "summary": f"Fel: {error_text}" if error_text else "Claude Code klar"})
+    return session_id
 
 
 async def _stream_text(source, emit, abort: asyncio.Event) -> str:
