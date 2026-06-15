@@ -6,102 +6,13 @@ from tools import (
     screenshot, click, type_text, open_app,
     list_dir, read_file, find_file, list_windows, focus_window,
 )
+from tools import registry
 from tools.system import run_command_sync
 
 
-tools_manifest = {
-    "tools": [
-            {
-                "name": "pilot_screenshot",
-                "description": "Take a screenshot of the current screen",
-                "inputSchema": {"type": "object", "properties": {}, "required": []},
-            },
-            {
-                "name": "pilot_click",
-                "description": "Click at screen coordinates",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "x": {"type": "integer"},
-                        "y": {"type": "integer"},
-                        "button": {"type": "string", "default": "left"},
-                    },
-                    "required": ["x", "y"],
-                },
-            },
-            {
-                "name": "pilot_type",
-                "description": "Type text using the keyboard",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {"text": {"type": "string"}},
-                    "required": ["text"],
-                },
-            },
-            {
-                "name": "pilot_run_command",
-                "description": "Run a shell command and return output",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "cmd": {"type": "string"},
-                        "cwd": {"type": "string"},
-                    },
-                    "required": ["cmd"],
-                },
-            },
-            {
-                "name": "pilot_open_app",
-                "description": "Open an application by name or path",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {"name": {"type": "string"}},
-                    "required": ["name"],
-                },
-            },
-            {
-                "name": "pilot_list_dir",
-                "description": "List files and directories",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {"path": {"type": "string"}},
-                    "required": [],
-                },
-            },
-            {
-                "name": "pilot_read_file",
-                "description": "Read a text file",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {"path": {"type": "string"}},
-                    "required": ["path"],
-                },
-            },
-            {
-                "name": "pilot_find_file",
-                "description": "Find files by exact name",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {"name": {"type": "string"}, "root": {"type": "string"}},
-                    "required": ["name"],
-                },
-            },
-            {
-                "name": "pilot_list_windows",
-                "description": "List visible desktop windows",
-                "inputSchema": {"type": "object", "properties": {}, "required": []},
-            },
-            {
-                "name": "pilot_focus_window",
-                "description": "Focus a window by title",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {"title": {"type": "string"}},
-                    "required": ["title"],
-                },
-            },
-        ]
-    }
+# Generated from the single tool registry (tools/registry.py) so this server's
+# manifest can't drift from the tools the assistant actually has.
+tools_manifest = registry.mcp_manifest()
 
 
 def create_mcp_app() -> FastAPI:

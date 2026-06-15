@@ -37,36 +37,15 @@ from config import (
     OLLAMA_MODELS,
 )
 from memory import save_memory
+from tools import registry
 
 logger = logging.getLogger(__name__)
 
 # OS/desktop tools the coordinator may drive (delegated to loop.execute_tool).
-COORDINATOR_TOOLS = {
-    "run_command",
-    "read_file",
-    "list_dir",
-    "find_file",
-    "list_windows",
-    "focus_window",
-    "screenshot",
-    "get_screen_size",
-    "open_app",
-    "click_element",
-    "click",
-    "type_text",
-    "key_press",
-    "hotkey",
-    "scroll",
-}
+# Sourced from the single registry so the allowlist and the menu can't drift.
+COORDINATOR_TOOLS = registry.coordinator_tool_names()
 
-_TOOL_MENU = (
-    "- run_command(cmd, cwd?): run a shell command\n"
-    "- read_file(path) / list_dir(path?) / find_file(name, root?): inspect files\n"
-    "- list_windows() / focus_window(title): desktop windows\n"
-    "- open_app(name): open an application\n"
-    "- click_element(element_id) / type_text(text) / key_press(key) / hotkey(keys): "
-    "act on the screen (perceive first)"
-)
+_TOOL_MENU = registry.tool_menu()
 
 VALID_ACTIONS = {"consult", "perceive", "tool", "remember", "clarify", "answer"}
 
@@ -92,8 +71,12 @@ def _system_prompt(intent_hint: str) -> str:
         "language-sensitive). Do NOT save trivia or one-off task wording.\n"
         '- "answer": you have everything needed; stop and let the final answer be written.\n\n'
         "Be economical: for a simple question, choose \"answer\" immediately — do not "
-        "consult or act when it adds nothing. Never consult the same model twice. "
-        f"{intent_hint}\n\n"
+        "consult or act when it adds nothing. Never consult the same model twice.\n"
+        "If the user asks what you can do or to list your tools, you DO have the tools "
+        "and specialist models listed below — describe them; never claim you have none. "
+        "Never claim to have run a tool, searched, or navigated unless you actually "
+        "took that action this turn; do not invent a 'technical error' to excuse not "
+        f"acting — either act, or answer honestly.\n{intent_hint}\n\n"
         'Respond ONLY with JSON: {"action": "clarify|consult|perceive|tool|remember|'
         'answer", "question": "<for clarify>", "model": "<expert id>", "tool": "<name>", '
         '"args": {...}, "text": "<fact to remember>", "thinking": "<short reason>"}'
