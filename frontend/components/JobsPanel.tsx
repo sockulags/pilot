@@ -6,7 +6,7 @@ import type { Job, JobSchedule } from "@/app/page";
 interface Props {
   jobs: Job[];
   onClose: () => void;
-  onAdd: (payload: string, schedule: JobSchedule, title: string) => void;
+  onAdd: (payload: string, schedule: JobSchedule, title: string, kind: string) => void;
   onPause: (id: string) => void;
   onResume: (id: string) => void;
   onDelete: (id: string) => void;
@@ -48,6 +48,7 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
   const [time, setTime] = useState("09:00");
   const [weekdays, setWeekdays] = useState<number[]>([]);
   const [date, setDate] = useState(todayStr());
+  const [kind, setKind] = useState<"reminder" | "task">("reminder");
   const [payload, setPayload] = useState("");
 
   const toggleDay = (d: number) =>
@@ -70,7 +71,7 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
     const text = payload.trim();
     const schedule = buildSchedule();
     if (!text || !schedule) return;
-    onAdd(text, schedule, text.slice(0, 60));
+    onAdd(text, schedule, text.slice(0, 60), kind);
     setPayload("");
   };
 
@@ -115,7 +116,7 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
                   {j.title}
                 </div>
                 <div style={{ color: "var(--muted)", fontSize: "0.72rem" }}>
-                  {j.summary} · nästa {j.next_run_label}
+                  {j.kind === "task" ? "uppgift · " : ""}{j.summary} · nästa {j.next_run_label}
                   {!j.enabled && " · pausad"}
                 </div>
               </div>
@@ -136,6 +137,24 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
         {/* New job form */}
         <div style={{ borderTop: "1px solid var(--border)", paddingTop: "0.8rem", display: "flex", flexDirection: "column", gap: "0.55rem" }}>
           <span style={{ color: "var(--muted)", fontSize: "0.8rem", fontWeight: 600 }}>Nytt jobb</span>
+
+          <div style={{ display: "flex", gap: "0.3rem", alignItems: "center" }}>
+            {([["reminder", "Påminnelse"], ["task", "Uppgift (kör Pilot)"]] as const).map(([k, label]) => (
+              <button
+                key={k}
+                onClick={() => setKind(k)}
+                title={k === "task" ? "Pilot utför instruktionen på schemat och levererar resultatet" : "Levererar texten som en påminnelse"}
+                style={{
+                  ...btn,
+                  ...(kind === k
+                    ? { color: "var(--text)", borderColor: "var(--accent)", background: "rgba(99,102,241,0.12)" }
+                    : {}),
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
 
           <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignItems: "center" }}>
             <select value={stype} onChange={(e) => setStype(e.target.value as SType)} style={field}>
@@ -194,7 +213,7 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
               value={payload}
               onChange={(e) => setPayload(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } }}
-              placeholder="Påminnelsetext…"
+              placeholder={kind === "task" ? "Instruktion till Pilot…" : "Påminnelsetext…"}
               style={{ ...field, flex: 1 }}
             />
             <button

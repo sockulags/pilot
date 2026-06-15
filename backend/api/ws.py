@@ -43,7 +43,6 @@ from jobs import (
     describe_schedule,
     list_jobs,
     parse_job_command,
-    reminder_content,
     set_enabled,
 )
 from memory import format_for_prompt, search_memories
@@ -70,20 +69,19 @@ async def websocket_endpoint(websocket: WebSocket):
     def send(event: dict):
         asyncio.create_task(websocket.send_json(event))
 
-    def deliver_job(job: dict):
-        """Push a fired job to this client as a standalone assistant turn.
+    def deliver_turn(content: str, title: str = ""):
+        """Push a fired job's finished message to this client as its own turn.
 
         Called by the scheduler (outside any user turn) via the connection
         registry. No awaits, so it runs atomically relative to an in-flight turn
         — it updates *this* connection's conversation + persists, which avoids a
-        racing turn's persist() clobbering the reminder.
+        racing turn's persist() clobbering the message.
         """
         nonlocal turn_counter
         turn_counter += 1
         t = turn_counter
-        content = reminder_content(job)
         send({"type": "turn_start", "turn": t, "route": "chat",
-              "thinking": f"Schemalagt: {job.get('title', '')}", "model": OLLAMA_MODEL})
+              "thinking": f"Schemalagt: {title}", "model": OLLAMA_MODEL})
         send({"type": "assistant_delta", "turn": t, "route": "chat", "content": content})
         send({"type": "done", "turn": t, "route": "chat"})
         conversation.append({"role": "assistant", "content": content})
@@ -176,10 +174,12 @@ async def websocket_endpoint(websocket: WebSocket):
             job = create_job(
                 session_id=session_id, title=spec["title"],
                 payload=spec["payload"], schedule=spec["schedule"],
+                kind=spec.get("kind", "reminder"),
             )
             await send_jobs()
+            kind_label = "uppgift" if job["kind"] == "task" else "påminnelse"
             reply(
-                f"Jobb skapat: **{job['title']}** — {describe_schedule(job['schedule'])}. "
+                f"Jobb skapat ({kind_label}): **{job['title']}** — {describe_schedule(job['schedule'])}. "
                 f"Nästa körning {_fmt_next(job['next_run'])}. Id `{job['id']}`."
             )
 
@@ -344,10 +344,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 # (Re-)register this connection so the scheduler can push fired
                 # jobs to it. Move the registration if the session id changed.
                 if registered_session and registered_session != session_id:
-                    unregister(registered_session, deliver_job)
+                    unregister(registered_session, deliver_turn)
                     registered_session = None
                 if session_id:
-                    register(session_id, deliver_job)
+                    register(session_id, deliver_turn)
                     registered_session = session_id
                 await websocket.send_json(
                     {"type": "history", "messages": conversation, "turn": turn_counter}
@@ -424,12 +424,14 @@ async def websocket_endpoint(websocket: WebSocket):
                 if session_id:
                     schedule = msg.get("schedule") or {}
                     payload = str(msg.get("payload", "")).strip()
+                    kind = "task" if msg.get("kind") == "task" else "reminder"
                     if schedule.get("type") and payload:
                         create_job(
                             session_id=session_id,
                             title=str(msg.get("title") or payload)[:60],
                             payload=payload,
                             schedule=schedule,
+                            kind=kind,
                         )
                 await send_jobs()
 
@@ -446,7 +448,7 @@ async def websocket_endpoint(websocket: WebSocket):
         if turn_task and not turn_task.done():
             turn_task.cancel()
         if registered_session:
-            unregister(registered_session, deliver_job)
+            unregister(registered_session, deliver_turn)
 
 
 def _fmt_next(ts: float | None) -> str:

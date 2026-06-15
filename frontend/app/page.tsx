@@ -434,8 +434,8 @@ export default function Home() {
   const selectRoute = useCallback((mode: string) => {
     wsRef.current?.send(JSON.stringify({ type: "select_route", route_mode: mode }));
   }, []);
-  const addJob = useCallback((payload: string, schedule: JobSchedule, title: string) => {
-    wsRef.current?.send(JSON.stringify({ type: "add_job", payload, schedule, title }));
+  const addJob = useCallback((payload: string, schedule: JobSchedule, title: string, kind: string) => {
+    wsRef.current?.send(JSON.stringify({ type: "add_job", payload, schedule, title, kind }));
   }, []);
   const pauseJob = useCallback((id: string) => {
     wsRef.current?.send(JSON.stringify({ type: "pause_job", id }));
