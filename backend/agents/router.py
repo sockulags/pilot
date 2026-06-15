@@ -74,13 +74,33 @@ def command_environment_context() -> str:
     )
 
 
+def _conversation_block(conversation: list[dict] | None) -> str | None:
+    """Render recent user/assistant turns as plain text for cross-turn context."""
+    if not conversation:
+        return None
+    lines = []
+    for msg in conversation[-8:]:
+        role = msg.get("role", "user")
+        content = str(msg.get("content", ""))[:800]
+        lines.append(f"{role}: {content}")
+    return "\n".join(lines)
+
+
 def build_router_messages(
     task: str,
     history: list[dict],
     failed_tools: set[str] | None = None,
     screen_observation: str | None = None,
+    conversation: list[dict] | None = None,
 ) -> list[dict]:
-    context_parts = [f"Task: {task}"]
+    context_parts = []
+    conversation_block = _conversation_block(conversation)
+    if conversation_block:
+        context_parts.append(
+            "Conversation so far (for context — the Task line below is what to do "
+            f"now):\n{conversation_block}\n"
+        )
+    context_parts.append(f"Task: {task}")
     context_parts.append(f"\n{command_environment_context()}")
 
     if screen_observation:
@@ -112,8 +132,11 @@ async def route_next_action(
     history: list[dict],
     failed_tools: set[str] | None = None,
     screen_observation: str | None = None,
+    conversation: list[dict] | None = None,
 ) -> dict:
-    messages = build_router_messages(task, history, failed_tools, screen_observation)
+    messages = build_router_messages(
+        task, history, failed_tools, screen_observation, conversation
+    )
 
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
@@ -159,34 +182,6 @@ async def vision_done_summary(task: str, image_b64: str) -> str:
         resp = await client.post(
             f"{OLLAMA_BASE_URL}/api/chat",
             json={"model": OLLAMA_VISION_MODEL, "messages": messages, "stream": False},
-        )
-        resp.raise_for_status()
-        return resp.json()["message"]["content"].strip()
-
-
-async def text_done_summary(task: str, history: list[dict]) -> str:
-    """Generate a completion summary from the action history (no vision required).
-
-    Used as a fallback when the vision model is unavailable or returns an error.
-    """
-    history_text = (
-        "\n".join(f"- {item['content'][:200]}" for item in history[-15:])
-        if history
-        else "(no actions recorded)"
-    )
-    prompt = (
-        f"Task: {task}\n\n"
-        f"Actions taken:\n{history_text}\n\n"
-        "Write a concise one-paragraph summary of what was accomplished."
-    )
-    messages = [
-        {"role": "system", "content": "You are a computer automation assistant. Summarize what was accomplished based on the action log."},
-        {"role": "user", "content": prompt},
-    ]
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
-            f"{OLLAMA_BASE_URL}/api/chat",
-            json={"model": OLLAMA_MODEL, "messages": messages, "stream": False, "options": {"temperature": 0.1}},
         )
         resp.raise_for_status()
         return resp.json()["message"]["content"].strip()

@@ -47,6 +47,15 @@ CHAT_SYSTEM = (
     "(they often write Swedish)."
 )
 
+REPLY_SYSTEM = (
+    "You are Pilot, a helpful local assistant on the user's computer. You just "
+    "acted on the user's machine on their behalf. Reply to the user in THEIR "
+    "language (they often write Swedish), conversationally and concisely — as a "
+    "real answer, not a status report. Ground every claim in the activity log "
+    "below; never invent results that aren't shown there. If something failed or "
+    "looks wrong, say so honestly and suggest the fix."
+)
+
 
 def _recent(conversation: list[dict], limit: int = 10) -> list[dict]:
     return conversation[-limit:] if conversation else []
@@ -123,35 +132,74 @@ def _normalize_decision(decision: dict, user_message: str) -> dict:
     return normalized
 
 
-async def stream_chat(
-    conversation: list[dict], user_message: str
-) -> AsyncGenerator[str, None]:
-    """Stream a conversational reply from Ollama, yielding text chunks.
+async def _stream_ollama_chat(messages: list[dict]) -> AsyncGenerator[str, None]:
+    """Stream content chunks from Ollama's /api/chat for the given messages."""
+    async with httpx.AsyncClient(timeout=180) as client:
+        async with client.stream(
+            "POST",
+            f"{OLLAMA_BASE_URL}/api/chat",
+            json={"model": OLLAMA_MODEL, "messages": messages, "stream": True},
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.strip():
+                    continue
+                chunk = extract_json_object(line, {})
+                piece = chunk.get("message", {}).get("content", "")
+                if piece:
+                    yield piece
 
-    ``conversation`` should already include the latest user message as the last
-    entry (role "user").
+
+def _build_reply_messages(conversation: list[dict], outcome=None) -> list[dict]:
+    """Messages for the shared conversational layer.
+
+    With ``outcome=None`` this is a plain chat reply. With an ``outcome`` (a
+    LoopOutcome from the computer route) the activity log is appended as a final
+    user turn so the model answers grounded in what was actually done.
     """
-    messages = [{"role": "system", "content": CHAT_SYSTEM}]
+    system = CHAT_SYSTEM if outcome is None else REPLY_SYSTEM
+    messages = [{"role": "system", "content": system}]
     messages.extend(
         {"role": m.get("role", "user"), "content": str(m.get("content", ""))}
         for m in _recent(conversation, limit=20)
     )
+    if outcome is not None:
+        messages.append({
+            "role": "user",
+            "content": (
+                "Aktivitetslogg för det jag (assistenten) just gjorde på datorn "
+                f"denna tur:\n{outcome.action_log or '(inga åtgärder registrerades)'}\n\n"
+                f"Status: {outcome.status}\n\n"
+                "Svara nu användaren på deras språk utifrån detta. Hitta inte på "
+                "resultat som inte syns i loggen."
+            ),
+        })
+    return messages
 
+
+def _fallback_reply(outcome, exc: Exception) -> str:
+    if outcome is None:
+        return f"[chat error: {exc}]"
+    return outcome.detail or outcome.action_log or "Klart."
+
+
+async def compose_reply(
+    conversation: list[dict], outcome=None
+) -> AsyncGenerator[str, None]:
+    """Stream the user-facing assistant reply — the single output layer.
+
+    ``conversation`` should already include the latest user message as the last
+    entry. ``outcome`` is None for the chat route, or a LoopOutcome for the
+    computer route (its activity log grounds the reply). On model failure a
+    fallback built from the outcome is yielded so the message is never lost.
+    """
+    messages = _build_reply_messages(conversation, outcome)
+    yielded = False
     try:
-        async with httpx.AsyncClient(timeout=180) as client:
-            async with client.stream(
-                "POST",
-                f"{OLLAMA_BASE_URL}/api/chat",
-                json={"model": OLLAMA_MODEL, "messages": messages, "stream": True},
-            ) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line.strip():
-                        continue
-                    chunk = extract_json_object(line, {})
-                    piece = chunk.get("message", {}).get("content", "")
-                    if piece:
-                        yield piece
+        async for piece in _stream_ollama_chat(messages):
+            yielded = True
+            yield piece
     except Exception as exc:
-        logger.warning("stream_chat request failed: %s", exc)
-        yield f"[chat error: {exc}]"
+        logger.warning("compose_reply request failed: %s", exc)
+        if not yielded:
+            yield _fallback_reply(outcome, exc)
