@@ -11,17 +11,22 @@ class RegistryDerivationTests(unittest.TestCase):
     """The registry is the single source of truth: the views it generates must
     match the behaviour the rest of the system previously hard-coded."""
 
-    def test_coordinator_allowlist_matches_prior_set(self):
+    def test_coordinator_allowlist(self):
         self.assertEqual(
             {
+                # OS core (Fas A)
                 "run_command", "read_file", "list_dir", "find_file", "list_windows",
                 "focus_window", "screenshot", "get_screen_size", "open_app",
                 "click_element", "click", "type_text", "key_press", "hotkey", "scroll",
+                # New tools (Fas C)
+                "search_files", "github_issues", "github_prs", "github_repo",
+                "web_search", "fetch_url",
             },
             registry.coordinator_tool_names(),
         )
 
-    def test_loop_behaviour_sets_match_prior(self):
+    def test_loop_behaviour_sets(self):
+        # Streaming / desktop / observe sets are unchanged by the Fas C tools.
         self.assertEqual({"run_command", "run_codex"}, registry.streaming_tool_names())
         self.assertEqual(
             {"click_element", "click", "type_text", "scroll", "move_mouse", "key_press", "hotkey"},
@@ -31,8 +36,13 @@ class RegistryDerivationTests(unittest.TestCase):
             registry.desktop_tool_names() | {"open_app"},
             registry.observe_after_tool_names(),
         )
+        # The new read-only tools are deterministic (their result answers directly).
         self.assertEqual(
-            {"list_dir", "read_file", "find_file", "list_windows", "focus_window"},
+            {
+                "list_dir", "read_file", "find_file", "list_windows", "focus_window",
+                "search_files", "github_issues", "github_prs", "github_repo",
+                "web_search", "fetch_url",
+            },
             registry.deterministic_tool_names(),
         )
 
