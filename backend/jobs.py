@@ -350,9 +350,15 @@ def parse_job_command(arg: str) -> dict:
 
     def _create(payload: str, schedule: dict) -> dict:
         payload = payload.strip()
+        # "task: <instruction>" runs the coordinator on a schedule; otherwise the
+        # text is delivered verbatim as a reminder.
+        kind = "reminder"
+        if payload.lower().startswith("task:"):
+            kind = "task"
+            payload = payload[len("task:"):].strip()
         if not payload:
             return {"action": "error", "message": "Ange en text för jobbet."}
-        return {"action": "create", "title": payload[:60], "payload": payload, "schedule": schedule}
+        return {"action": "create", "kind": kind, "title": payload[:60], "payload": payload, "schedule": schedule}
 
     if head == "every":
         d = rest.split(None, 1)

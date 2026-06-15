@@ -21,15 +21,18 @@ from typing import Callable
 
 logger = logging.getLogger(__name__)
 
-# session_id -> set of deliver callables (one per live connection to that session).
-_hooks: dict[str, set[Callable[[dict], None]]] = {}
+# A deliver hook posts a finished assistant message (content, title) to a client.
+DeliverHook = Callable[[str, str], None]
+
+# session_id -> set of deliver hooks (one per live connection to that session).
+_hooks: dict[str, set[DeliverHook]] = {}
 
 
-def register(session_id: str, deliver: Callable[[dict], None]) -> None:
+def register(session_id: str, deliver: DeliverHook) -> None:
     _hooks.setdefault(session_id, set()).add(deliver)
 
 
-def unregister(session_id: str, deliver: Callable[[dict], None]) -> None:
+def unregister(session_id: str, deliver: DeliverHook) -> None:
     hooks = _hooks.get(session_id)
     if not hooks:
         return
@@ -38,8 +41,8 @@ def unregister(session_id: str, deliver: Callable[[dict], None]) -> None:
         _hooks.pop(session_id, None)
 
 
-def deliver_to_session(session_id: str | None, job: dict) -> bool:
-    """Deliver ``job`` to every live connection for ``session_id``.
+def deliver_to_session(session_id: str | None, content: str, title: str = "") -> bool:
+    """Deliver a finished assistant message to every live connection for a session.
 
     Returns True if at least one connection received it (so the scheduler knows
     whether it still needs to persist the message for an offline client).
@@ -49,7 +52,7 @@ def deliver_to_session(session_id: str | None, job: dict) -> bool:
     delivered = False
     for hook in list(_hooks.get(session_id, ())):
         try:
-            hook(job)
+            hook(content, title)
             delivered = True
         except Exception as exc:  # one bad connection must not stop the others
             logger.warning("job delivery hook failed: %s", exc)
