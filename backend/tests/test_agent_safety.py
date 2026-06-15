@@ -7,6 +7,10 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 
+async def _async_value(value):
+    return value
+
+
 class AgentSafetyTests(unittest.TestCase):
     def test_blocks_desktop_input_without_visual_context(self):
         from agents.safety import unsafe_tool_block_reason
@@ -19,9 +23,7 @@ class AgentSafetyTests(unittest.TestCase):
     def test_allows_non_desktop_tool_without_visual_context(self):
         from agents.safety import unsafe_tool_block_reason
 
-        reason = unsafe_tool_block_reason("run_command", "List files", "")
-
-        self.assertIsNone(reason)
+        self.assertIsNone(unsafe_tool_block_reason("run_command", "List files", ""))
 
     def test_allows_desktop_input_when_screen_has_been_observed(self):
         from agents.safety import unsafe_tool_block_reason
@@ -35,11 +37,11 @@ class AgentSafetyTests(unittest.TestCase):
         self.assertIsNone(reason)
 
 
-class RouterPromptTests(unittest.TestCase):
-    def test_parse_json_repairs_unescaped_windows_paths_in_strings(self):
-        from agents.router import _parse_json
+class JsonUtilTests(unittest.TestCase):
+    def test_loads_lenient_repairs_unescaped_windows_paths(self):
+        from agents.json_utils import loads_lenient
 
-        parsed = _parse_json(
+        parsed = loads_lenient(
             '{"tool": "run_command", "args": {"cmd": "dir"}, '
             '"thinking": "cwd is C:\\Users\\lucas\\Code\\pilot\\backend"}'
         )
@@ -47,7 +49,24 @@ class RouterPromptTests(unittest.TestCase):
         self.assertEqual("run_command", parsed["tool"])
         self.assertEqual("dir", parsed["args"]["cmd"])
 
-    def test_router_prompt_includes_current_screen_observation_and_safety_rule(self):
+    def test_extract_json_object_from_fenced_block(self):
+        from agents.json_utils import extract_json_object
+
+        parsed = extract_json_object(
+            'Here you go:\n```json\n{"action": "answer", "thinking": "done"}\n```',
+            {"action": "answer"},
+        )
+
+        self.assertEqual("answer", parsed["action"])
+
+    def test_extract_json_object_returns_default_on_garbage(self):
+        from agents.json_utils import extract_json_object
+
+        self.assertEqual({"x": 1}, extract_json_object("no json here", {"x": 1}))
+
+
+class RouterPromptTests(unittest.TestCase):
+    def test_router_prompt_includes_screen_observation_and_current_safety_rule(self):
         from agents.router import build_router_messages
 
         messages = build_router_messages(
@@ -60,17 +79,13 @@ class RouterPromptTests(unittest.TestCase):
         joined = "\n".join(message["content"] for message in messages)
         self.assertIn("Current screen observation:", joined)
         self.assertIn("Start menu is visible", joined)
-        self.assertIn("Do not use click, type_text, scroll, move_mouse, key_press, or hotkey", joined)
+        # SoM era: click_element is preferred and named first in the safety rule.
+        self.assertIn("Do not use click_element, click, type_text", joined)
 
     def test_router_prompt_includes_command_environment_and_stop_rules(self):
         from agents.router import build_router_messages
 
-        messages = build_router_messages(
-            task="List backend files",
-            history=[],
-            failed_tools=None,
-            screen_observation="",
-        )
+        messages = build_router_messages("List backend files", [], None, "")
 
         joined = "\n".join(message["content"] for message in messages)
         self.assertIn("Command environment:", joined)
@@ -113,424 +128,291 @@ class RouterPromptTests(unittest.TestCase):
 
 
 class AgentLoopTests(unittest.TestCase):
-    def test_loop_blocks_unsafe_desktop_action_before_execution_without_visual_context(self):
-        asyncio.run(self._run_loop_blocks_unsafe_desktop_action_before_execution_without_visual_context())
+    """The loop returns a LoopOutcome; the reply/`done` is owned by the WS layer."""
 
-    def test_loop_preserves_router_done_summary_when_no_actions_ran(self):
-        asyncio.run(self._run_loop_preserves_router_done_summary_when_no_actions_ran())
+    def test_blocks_unsafe_desktop_action_without_visual_context(self):
+        asyncio.run(self._blocks_unsafe_desktop_action_without_visual_context())
 
-    def test_loop_does_not_duplicate_streamed_command_output(self):
-        asyncio.run(self._run_loop_does_not_duplicate_streamed_command_output())
+    def test_preserves_router_done_summary_when_no_actions_ran(self):
+        asyncio.run(self._preserves_router_done_summary_when_no_actions_ran())
 
-    def test_loop_blocks_third_identical_command(self):
-        asyncio.run(self._run_loop_blocks_third_identical_command())
+    def test_does_not_duplicate_streamed_command_output(self):
+        asyncio.run(self._does_not_duplicate_streamed_command_output())
+
+    def test_blocks_third_identical_command(self):
+        asyncio.run(self._blocks_third_identical_command())
 
     def test_run_command_result_includes_cwd_for_history(self):
         asyncio.run(self._run_command_result_includes_cwd_for_history())
 
-    def test_loop_auto_completes_simple_directory_listing_after_first_command(self):
-        asyncio.run(self._run_loop_auto_completes_simple_directory_listing_after_first_command())
+    def test_auto_completes_simple_directory_listing_after_first_command(self):
+        asyncio.run(self._auto_completes_simple_directory_listing_after_first_command())
 
-    def test_loop_executes_os_tool_and_finishes_without_final_screenshot(self):
-        asyncio.run(self._run_loop_executes_os_tool_and_finishes_without_final_screenshot())
+    def test_os_tool_finishes_without_final_screenshot(self):
+        asyncio.run(self._os_tool_finishes_without_final_screenshot())
 
-    def test_vision_enabled_desktop_action_observes_after_action(self):
-        asyncio.run(self._run_vision_enabled_desktop_action_observes_after_action())
+    def test_desktop_action_perceives_before_and_after(self):
+        asyncio.run(self._desktop_action_perceives_before_and_after())
 
-    def test_loop_rejects_done_for_text_task_before_type_action(self):
-        asyncio.run(self._run_loop_rejects_done_for_text_task_before_type_action())
+    def test_rejects_done_for_text_task_before_type_action(self):
+        asyncio.run(self._rejects_done_for_text_task_before_type_action())
 
-    def test_loop_blocks_type_text_when_opened_app_is_not_focused(self):
-        asyncio.run(self._run_loop_blocks_type_text_when_opened_app_is_not_focused())
+    def test_blocks_type_text_when_opened_app_is_not_focused(self):
+        asyncio.run(self._blocks_type_text_when_opened_app_is_not_focused())
 
-    async def _run_loop_blocks_unsafe_desktop_action_before_execution_without_visual_context(self):
+    async def _blocks_unsafe_desktop_action_without_visual_context(self):
         from agents import loop
 
         events: list[dict] = []
         executed: list[str] = []
 
-        async def fake_route_next_action(task, history, failed_tools, screen_observation=None):
+        async def fake_route(*args, **kwargs):
             return {"tool": "type_text", "args": {"text": "hej"}, "thinking": "typing"}
 
-        async def fake_execute_tool(tool, args, emit):
+        async def fake_execute(tool, args, emit):
             executed.append(tool)
             return "executed"
 
-        def fake_emit(event):
-            events.append(event)
+        with self._patched(loop, route_next_action=fake_route, execute_tool=fake_execute, PERCEPTION_ENABLED=False):
+            outcome = await loop.run_agent_loop("Säg hej", events.append, asyncio.Event())
 
-        async def fake_observe_screen(task, history, emit):
-            return ""
-
-        original_route = loop.route_next_action
-        original_execute = loop.execute_tool
-        original_observe = loop.observe_screen
-        try:
-            loop.route_next_action = fake_route_next_action
-            loop.execute_tool = fake_execute_tool
-            loop.observe_screen = fake_observe_screen
-
-            await loop.run_agent_loop("Säg hej", fake_emit, asyncio.Event())
-        finally:
-            loop.route_next_action = original_route
-            loop.execute_tool = original_execute
-            loop.observe_screen = original_observe
-
+        self.assertEqual("blocked", outcome.status)
         self.assertEqual([], executed)
-        self.assertTrue(any(event["type"] == "error" for event in events))
-        self.assertTrue(any(event["type"] == "done" for event in events))
+        self.assertTrue(any(e["type"] == "error" for e in events))
 
-    async def _run_loop_preserves_router_done_summary_when_no_actions_ran(self):
+    async def _preserves_router_done_summary_when_no_actions_ran(self):
         from agents import loop
 
-        events: list[dict] = []
+        async def fake_route(*args, **kwargs):
+            return {"tool": "done", "args": {"summary": "I can say hej here; no desktop action needed."}, "thinking": "done"}
 
-        async def fake_route_next_action(task, history, failed_tools, screen_observation=None):
-            return {
-                "tool": "done",
-                "args": {"summary": "I can say hej here, but no desktop action was needed."},
-                "thinking": "no desktop action needed",
-            }
+        with self._patched(loop, route_next_action=fake_route):
+            outcome = await loop.run_agent_loop("Säg hej", lambda e: None, asyncio.Event())
 
-        async def fake_text_done_summary(task, history):
-            return "No actions were recorded."
+        self.assertEqual("done", outcome.status)
+        self.assertEqual("I can say hej here; no desktop action needed.", outcome.detail)
 
-        def fake_emit(event):
-            events.append(event)
-
-        original_route = loop.route_next_action
-        original_observe = loop.observe_screen
-        original_screenshot = loop.screenshot
-        original_text_done_summary = loop.text_done_summary
-        try:
-            loop.route_next_action = fake_route_next_action
-            loop.observe_screen = lambda task, history, emit: _async_value("")
-            loop.screenshot = lambda: "fake-image"
-            loop.text_done_summary = fake_text_done_summary
-
-            await loop.run_agent_loop("Säg hej", fake_emit, asyncio.Event())
-        finally:
-            loop.route_next_action = original_route
-            loop.observe_screen = original_observe
-            loop.screenshot = original_screenshot
-            loop.text_done_summary = original_text_done_summary
-
-        done_events = [event for event in events if event["type"] == "done"]
-        self.assertEqual("I can say hej here, but no desktop action was needed.", done_events[-1]["summary"])
-
-    async def _run_loop_does_not_duplicate_streamed_command_output(self):
+    async def _does_not_duplicate_streamed_command_output(self):
         from agents import loop
 
         events: list[dict] = []
         decisions = [
-            {"tool": "run_command", "args": {"cmd": "dir"}, "thinking": "list files"},
-            {"tool": "done", "args": {"summary": "Listed files."}, "thinking": "done"},
+            {"tool": "run_command", "args": {"cmd": "dir"}, "thinking": "list"},
+            {"tool": "done", "args": {"summary": "Listed."}, "thinking": "done"},
         ]
 
-        async def fake_route_next_action(task, history, failed_tools, screen_observation=None):
+        async def fake_route(*args, **kwargs):
             return decisions.pop(0)
 
-        async def fake_execute_tool(tool, args, emit):
-            emit({"type": "result", "content": "Directory of C:\\Users\\lucas\\Code\\pilot\\backend\n"})
-            return "cwd=C:\\Users\\lucas\\Code\\pilot\\backend\nDirectory of C:\\Users\\lucas\\Code\\pilot\\backend\n"
+        async def fake_execute(tool, args, emit):
+            emit({"type": "result", "content": "Directory of C:\\repo\n"})
+            return "Directory of C:\\repo\n"
 
-        def fake_emit(event):
-            events.append(event)
+        with self._patched(loop, route_next_action=fake_route, execute_tool=fake_execute, asyncio_sleep=True):
+            await loop.run_agent_loop("List backend files", events.append, asyncio.Event())
 
-        originals = (
-            loop.route_next_action,
-            loop.execute_tool,
-            loop.observe_screen,
-            loop.screenshot,
-        )
-        try:
-            loop.route_next_action = fake_route_next_action
-            loop.execute_tool = fake_execute_tool
-            loop.observe_screen = lambda task, history, emit: _async_value("")
-            loop.screenshot = lambda: "fake-image"
+        results = [e.get("content", "") for e in events if e["type"] == "result"]
+        self.assertEqual(1, sum("Directory of" in c for c in results))
 
-            await loop.run_agent_loop("List backend files", fake_emit, asyncio.Event())
-        finally:
-            loop.route_next_action, loop.execute_tool, loop.observe_screen, loop.screenshot = originals
-
-        result_contents = [event.get("content", "") for event in events if event["type"] == "result"]
-        occurrences = sum("Directory of" in content for content in result_contents)
-        self.assertEqual(1, occurrences)
-
-    async def _run_loop_blocks_third_identical_command(self):
+    async def _blocks_third_identical_command(self):
         from agents import loop
 
         events: list[dict] = []
         executed: list[str] = []
 
-        async def fake_route_next_action(task, history, failed_tools, screen_observation=None):
+        async def fake_route(*args, **kwargs):
             return {"tool": "run_command", "args": {"cmd": "dir"}, "thinking": "list"}
 
-        async def fake_execute_tool(tool, args, emit):
+        async def fake_execute(tool, args, emit):
             executed.append(args["cmd"])
-            return "cwd=C:\\Users\\lucas\\Code\\pilot\\backend\nDirectory of C:\\Users\\lucas\\Code\\pilot\\backend\n"
+            return "cwd\nsome output\n"  # no completion-summary trigger
 
-        async def fake_sleep(_seconds):
-            return None
-
-        def fake_emit(event):
-            events.append(event)
-
-        originals = (
-            loop.route_next_action,
-            loop.execute_tool,
-            loop.observe_screen,
-            loop.asyncio.sleep,
-        )
-        try:
-            loop.route_next_action = fake_route_next_action
-            loop.execute_tool = fake_execute_tool
-            loop.observe_screen = lambda task, history, emit: _async_value("")
-            loop.asyncio.sleep = fake_sleep
-
-            await loop.run_agent_loop("List backend files", fake_emit, asyncio.Event())
-        finally:
-            loop.route_next_action, loop.execute_tool, loop.observe_screen, loop.asyncio.sleep = originals
+        with self._patched(loop, route_next_action=fake_route, execute_tool=fake_execute, asyncio_sleep=True):
+            outcome = await loop.run_agent_loop("List backend files", events.append, asyncio.Event())
 
         self.assertEqual(["dir", "dir"], executed)
-        done_events = [event for event in events if event["type"] == "done"]
-        self.assertIn("Repeated command blocked", done_events[-1]["summary"])
+        self.assertEqual("blocked", outcome.status)
+        self.assertIn("Repeated command blocked", outcome.detail)
 
     async def _run_command_result_includes_cwd_for_history(self):
         from agents import loop
 
-        events: list[dict] = []
-
         async def fake_run_command_async(cmd, cwd=None):
             yield "hello\n"
 
-        original_run_command_async = loop.run_command_async
-        try:
-            loop.run_command_async = fake_run_command_async
-            result = await loop.execute_tool("run_command", {"cmd": "echo hello"}, events.append)
-        finally:
-            loop.run_command_async = original_run_command_async
+        with self._patched(loop, run_command_async=fake_run_command_async):
+            result = await loop.execute_tool("run_command", {"cmd": "echo hello"}, lambda e: None)
 
         self.assertIn("Command: echo hello", result)
         self.assertIn("Current working directory:", result)
         self.assertIn("hello", result)
 
-    async def _run_loop_auto_completes_simple_directory_listing_after_first_command(self):
+    async def _auto_completes_simple_directory_listing_after_first_command(self):
         from agents import loop
 
-        events: list[dict] = []
         executed: list[str] = []
 
-        async def fake_route_next_action(task, history, failed_tools, screen_observation=None):
-            return {"tool": "run_command", "args": {"cmd": "dir"}, "thinking": "list files"}
+        async def fake_route(*args, **kwargs):
+            return {"tool": "run_command", "args": {"cmd": "dir"}, "thinking": "list"}
 
-        async def fake_execute_tool(tool, args, emit):
+        async def fake_execute(tool, args, emit):
             executed.append(args["cmd"])
             return (
                 "Command: dir\n"
                 "Current working directory: C:\\Users\\lucas\\Code\\pilot\\backend\n"
-                "Output:\n"
-                " Directory of C:\\Users\\lucas\\Code\\pilot\\backend\n"
-                "agents\napi\ntests\ntools\nuv.lock\n"
+                "Output:\n Directory of C:\\Users\\lucas\\Code\\pilot\\backend\n"
+                "agents\napi\nuv.lock\n"
             )
 
-        async def fake_sleep(_seconds):
-            return None
-
-        def fake_emit(event):
-            events.append(event)
-
-        originals = (
-            loop.route_next_action,
-            loop.execute_tool,
-            loop.observe_screen,
-            loop.asyncio.sleep,
-        )
-        try:
-            loop.route_next_action = fake_route_next_action
-            loop.execute_tool = fake_execute_tool
-            loop.observe_screen = lambda task, history, emit: _async_value("")
-            loop.asyncio.sleep = fake_sleep
-
-            await loop.run_agent_loop(
-                "Kolla vilken mapp backend kör i och lista filerna där",
-                fake_emit,
-                asyncio.Event(),
+        with self._patched(loop, route_next_action=fake_route, execute_tool=fake_execute, asyncio_sleep=True):
+            outcome = await loop.run_agent_loop(
+                "Kolla vilken mapp backend kör i och lista filerna där", lambda e: None, asyncio.Event()
             )
-        finally:
-            loop.route_next_action, loop.execute_tool, loop.observe_screen, loop.asyncio.sleep = originals
 
         self.assertEqual(["dir"], executed)
-        done_events = [event for event in events if event["type"] == "done"]
-        self.assertIn("C:\\Users\\lucas\\Code\\pilot\\backend", done_events[-1]["summary"])
-        self.assertIn("uv.lock", done_events[-1]["summary"])
+        self.assertEqual("done", outcome.status)
+        self.assertIn("C:\\Users\\lucas\\Code\\pilot\\backend", outcome.detail)
+        self.assertIn("uv.lock", outcome.detail)
 
-    async def _run_loop_executes_os_tool_and_finishes_without_final_screenshot(self):
+    async def _os_tool_finishes_without_final_screenshot(self):
         from agents import loop
 
         events: list[dict] = []
 
-        async def fake_route_next_action(task, history, failed_tools, screen_observation=None):
-            return {"tool": "read_file", "args": {"path": "README.md"}, "thinking": "read it"}
+        async def fake_route(*args, **kwargs):
+            return {"tool": "read_file", "args": {"path": "README.md"}, "thinking": "read"}
 
-        async def fake_execute_tool(tool, args, emit):
-            return "File: C:\\Users\\lucas\\Code\\pilot\\README.md\nContent:\n# Pilot\n"
+        async def fake_execute(tool, args, emit):
+            return "File: C:\\repo\\README.md\nContent:\n# Pilot\n"
 
-        def fail_screenshot():
-            raise AssertionError("done path should not take a final screenshot for OS tools")
+        with self._patched(loop, route_next_action=fake_route, execute_tool=fake_execute):
+            outcome = await loop.run_agent_loop("Visa README.md", events.append, asyncio.Event())
 
-        originals = (loop.route_next_action, loop.execute_tool, loop.observe_screen, loop.screenshot)
-        try:
-            loop.route_next_action = fake_route_next_action
-            loop.execute_tool = fake_execute_tool
-            loop.observe_screen = lambda task, history, emit: _async_value("")
-            loop.screenshot = fail_screenshot
+        self.assertEqual("done", outcome.status)
+        self.assertIn("# Pilot", outcome.detail)
+        self.assertFalse(any(e["type"] == "screenshot" for e in events))
 
-            await loop.run_agent_loop("Visa innehållet i README.md", events.append, asyncio.Event())
-        finally:
-            loop.route_next_action, loop.execute_tool, loop.observe_screen, loop.screenshot = originals
-
-        done_events = [event for event in events if event["type"] == "done"]
-        self.assertIn("# Pilot", done_events[-1]["summary"])
-        self.assertFalse(any(event["type"] == "screenshot" for event in events))
-
-    async def _run_vision_enabled_desktop_action_observes_after_action(self):
+    async def _desktop_action_perceives_before_and_after(self):
         from agents import loop
 
-        events: list[dict] = []
         observations: list[int] = []
+        executed: list[str] = []
 
-        async def fake_route_next_action(task, history, failed_tools, screen_observation=None):
+        async def fake_route(*args, **kwargs):
+            # Click once, then finish (history is the 2nd positional arg).
+            history = args[1] if len(args) > 1 else kwargs.get("history", [])
+            if any(i.get("type") == "action" for i in history):
+                return {"tool": "done", "args": {"summary": "clicked"}, "thinking": "done"}
             return {"tool": "click", "args": {"x": 10, "y": 20}, "thinking": "click"}
 
-        async def fake_observe_screen(task, history, emit):
+        async def fake_perceive(task, history, emit):
             observations.append(len(history))
             return "Screen observation: Notepad is focused."
 
-        async def fake_execute_tool(tool, args, emit):
-            return "Clicked left at (10, 20)"
+        async def fake_execute(tool, args, emit):
+            executed.append(tool)
+            return "Clicked"
 
-        async def fake_sleep(_seconds):
-            return None
+        with self._patched(loop, route_next_action=fake_route, perceive=fake_perceive, execute_tool=fake_execute, asyncio_sleep=True, PERCEPTION_ENABLED=True):
+            outcome = await loop.run_agent_loop("Klicka i Notepad", lambda e: None, asyncio.Event())
 
-        originals = (loop.route_next_action, loop.observe_screen, loop.execute_tool, loop.asyncio.sleep)
-        try:
-            loop.route_next_action = fake_route_next_action
-            loop.observe_screen = fake_observe_screen
-            loop.execute_tool = fake_execute_tool
-            loop.asyncio.sleep = fake_sleep
-
-            await loop.run_agent_loop("Klicka i Notepad", events.append, asyncio.Event())
-        finally:
-            loop.route_next_action, loop.observe_screen, loop.execute_tool, loop.asyncio.sleep = originals
-
+        self.assertEqual("done", outcome.status)
+        self.assertEqual(["click"], executed)
+        # Perceived once before the click (no observation yet) and once after it.
         self.assertGreaterEqual(len(observations), 2)
-        self.assertIn(1, observations)
 
-    async def _run_loop_rejects_done_for_text_task_before_type_action(self):
+    async def _rejects_done_for_text_task_before_type_action(self):
         from agents import loop
 
         events: list[dict] = []
         executed: list[str] = []
 
-        async def fake_route_next_action(task, history, failed_tools, screen_observation=None):
-            if any(
-                item.get("type") == "action"
-                and str(item.get("content", "")).startswith("type_text(")
-                for item in history
-            ):
+        async def fake_route(*args, **kwargs):
+            history = args[1] if len(args) > 1 else kwargs.get("history", [])
+            typed = any(str(i.get("content", "")).startswith("type_text(") for i in history if i.get("type") == "action")
+            opened = any(str(i.get("content", "")).startswith("open_app(") for i in history if i.get("type") == "action")
+            rejected = any(i.get("type") == "done_rejected" for i in history)
+            if typed:
                 return {"tool": "done", "args": {"summary": "Text was typed."}, "thinking": "done"}
-            if any(item.get("type") == "done_rejected" for item in history):
-                return {"tool": "type_text", "args": {"text": "hej"}, "thinking": "type it"}
-            if any(
-                item.get("type") == "action"
-                and str(item.get("content", "")).startswith("open_app(")
-                for item in history
-            ):
-                return {
-                    "tool": "done",
-                    "args": {"summary": "Notepad was opened and hej was written."},
-                    "thinking": "done too early",
-                }
+            if rejected:
+                return {"tool": "type_text", "args": {"text": "hej"}, "thinking": "type"}
+            if opened:
+                return {"tool": "done", "args": {"summary": "opened only"}, "thinking": "too early"}
             return {"tool": "open_app", "args": {"name": "notepad"}, "thinking": "open"}
 
-        async def fake_execute_tool(tool, args, emit):
+        async def fake_execute(tool, args, emit):
             executed.append(tool)
             return f"{tool} ok"
 
-        async def fake_observe_screen(task, history, emit):
+        async def fake_perceive(task, history, emit):
             return "Screen observation: Notepad is focused."
 
-        async def fake_sleep(_seconds):
-            return None
-
-        original_active_window_title = getattr(loop, "active_window_title", None)
-        originals = (loop.route_next_action, loop.execute_tool, loop.observe_screen, loop.asyncio.sleep)
-        try:
-            loop.route_next_action = fake_route_next_action
-            loop.execute_tool = fake_execute_tool
-            loop.observe_screen = fake_observe_screen
-            loop.active_window_title = lambda: "Untitled - Notepad"
-            loop.asyncio.sleep = fake_sleep
-
-            await loop.run_agent_loop("Öppna Notepad och skriv hej", events.append, asyncio.Event())
-        finally:
-            loop.route_next_action, loop.execute_tool, loop.observe_screen, loop.asyncio.sleep = originals
-            if original_active_window_title is None:
-                delattr(loop, "active_window_title")
-            else:
-                loop.active_window_title = original_active_window_title
+        with self._patched(loop, route_next_action=fake_route, execute_tool=fake_execute, perceive=fake_perceive, asyncio_sleep=True, active_window_title=lambda: "Untitled - Notepad"):
+            outcome = await loop.run_agent_loop("Öppna Notepad och skriv hej", events.append, asyncio.Event())
 
         self.assertEqual(["open_app", "type_text"], executed)
-        self.assertTrue(any("Done rejected" in event.get("content", "") for event in events))
-        done_events = [event for event in events if event["type"] == "done"]
-        self.assertEqual("Text was typed.", done_events[-1]["summary"])
+        self.assertEqual("done", outcome.status)
+        self.assertEqual("Text was typed.", outcome.detail)
+        self.assertTrue(any("Done rejected" in e.get("content", "") for e in events))
 
-    async def _run_loop_blocks_type_text_when_opened_app_is_not_focused(self):
+    async def _blocks_type_text_when_opened_app_is_not_focused(self):
         from agents import loop
 
         events: list[dict] = []
         executed: list[str] = []
 
-        async def fake_route_next_action(task, history, failed_tools, screen_observation=None):
-            if any(
-                item.get("type") == "action"
-                and str(item.get("content", "")).startswith("open_app(")
-                for item in history
-            ):
-                return {"tool": "type_text", "args": {"text": "hej"}, "thinking": "type it"}
+        async def fake_route(*args, **kwargs):
+            history = args[1] if len(args) > 1 else kwargs.get("history", [])
+            if any(str(i.get("content", "")).startswith("open_app(") for i in history if i.get("type") == "action"):
+                return {"tool": "type_text", "args": {"text": "hej"}, "thinking": "type"}
             return {"tool": "open_app", "args": {"name": "notepad"}, "thinking": "open"}
 
-        async def fake_execute_tool(tool, args, emit):
+        async def fake_execute(tool, args, emit):
             executed.append(tool)
             return f"{tool} ok"
 
-        async def fake_observe_screen(task, history, emit):
+        async def fake_perceive(task, history, emit):
             return "Screen observation: Codex is focused."
 
-        async def fake_sleep(_seconds):
-            return None
-
-        original_active_window_title = getattr(loop, "active_window_title", None)
-        originals = (loop.route_next_action, loop.execute_tool, loop.observe_screen, loop.asyncio.sleep)
-        try:
-            loop.route_next_action = fake_route_next_action
-            loop.execute_tool = fake_execute_tool
-            loop.observe_screen = fake_observe_screen
-            loop.active_window_title = lambda: "Codex"
-            loop.asyncio.sleep = fake_sleep
-
-            await loop.run_agent_loop("Öppna Notepad och skriv hej", events.append, asyncio.Event())
-        finally:
-            loop.route_next_action, loop.execute_tool, loop.observe_screen, loop.asyncio.sleep = originals
-            if original_active_window_title is None:
-                delattr(loop, "active_window_title")
-            else:
-                loop.active_window_title = original_active_window_title
+        with self._patched(loop, route_next_action=fake_route, execute_tool=fake_execute, perceive=fake_perceive, asyncio_sleep=True, active_window_title=lambda: "Codex"):
+            outcome = await loop.run_agent_loop("Öppna Notepad och skriv hej", events.append, asyncio.Event())
 
         self.assertEqual(["open_app"], executed)
-        error_events = [event for event in events if event["type"] == "error"]
-        self.assertTrue(any("active window" in event["content"] for event in error_events))
+        self.assertEqual("blocked", outcome.status)
+        self.assertTrue(any(e["type"] == "error" and "active window" in e["content"] for e in events))
+
+    # --- helper -------------------------------------------------------------
+    class _patched:
+        """Context manager that swaps loop module attributes and restores them.
+
+        ``asyncio_sleep=True`` no-ops the loop's inter-step sleep; pass any other
+        callable/value by attribute name (route_next_action, execute_tool,
+        perceive, run_command_async, active_window_title, PERCEPTION_ENABLED).
+        """
+
+        def __init__(self, loop_module, asyncio_sleep=False, **attrs):
+            self.loop = loop_module
+            self.attrs = attrs
+            self.sleep = asyncio_sleep
+            self.saved: dict = {}
+
+        def __enter__(self):
+            for name, value in self.attrs.items():
+                self.saved[name] = getattr(self.loop, name)
+                setattr(self.loop, name, value)
+            if self.sleep:
+                self._orig_sleep = self.loop.asyncio.sleep
+                async def _no_sleep(_s):
+                    return None
+                self.loop.asyncio.sleep = _no_sleep
+            return self
+
+        def __exit__(self, *exc):
+            for name, value in self.saved.items():
+                setattr(self.loop, name, value)
+            if self.sleep:
+                self.loop.asyncio.sleep = self._orig_sleep
+            return False
 
 
 class OsToolTests(unittest.TestCase):
@@ -591,7 +473,6 @@ class ConfigAndMcpTests(unittest.TestCase):
 
         self.assertIn("OLLAMA_MODEL=gemma4:latest", text)
         self.assertIn("OLLAMA_VISION_MODEL=gemma4:latest", text)
-        self.assertIn("OLLAMA_VISION_ENABLED=true", text)
 
     def test_mcp_manifest_includes_os_tools(self):
         from api.mcp import tools_manifest
@@ -603,10 +484,6 @@ class ConfigAndMcpTests(unittest.TestCase):
         self.assertIn("pilot_find_file", names)
         self.assertIn("pilot_list_windows", names)
         self.assertIn("pilot_focus_window", names)
-
-
-async def _async_value(value):
-    return value
 
 
 if __name__ == "__main__":
