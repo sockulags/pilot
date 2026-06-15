@@ -71,6 +71,22 @@ OLLAMA_MODELS: dict[str, dict] = {
 # be fast and tools-capable, never the user's pinned answering model.
 OLLAMA_ROUTER_MODEL = os.getenv("OLLAMA_ROUTER_MODEL", OLLAMA_MODEL)
 
+# Gateway role: refines/translates a request into a clean English instruction
+# before it is handed to a specialist model or the code agent (local models
+# reason and code better in English; the user-facing reply is still composed in
+# the user's language). The clarity gate ("ask instead of guessing when vague")
+# rides on the coordinator's decision step, so it costs nothing extra —
+# refinement is the only added call, and only fires on an actual hand-off
+# (expert consult / code), never on trivial chat.
+#
+# This role NEEDS a model that is strong at the user's language: gemma4:8b
+# mistranslates Swedish badly ("vänd en sträng" -> "watering a vine"), whereas
+# gemma4:12b and qwen3:14b translate it faithfully. Defaults to gemma4:12b; if
+# it's not installed, refine_query fails open to the verbatim request (safe, no
+# corruption). Point this at llama3.1/gpt-oss/etc. once pulled.
+OLLAMA_GATEWAY_MODEL = os.getenv("OLLAMA_GATEWAY_MODEL", "gemma4:12b")
+GATEWAY_REFINE_ENABLED = os.getenv("GATEWAY_REFINE_ENABLED", "true").lower() == "true"
+
 
 def is_known_model(model: str | None) -> bool:
     return bool(model) and model in OLLAMA_MODELS

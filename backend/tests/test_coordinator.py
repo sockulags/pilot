@@ -22,6 +22,9 @@ class CoordinatorTests(unittest.TestCase):
     def test_remember_action_saves_memory(self):
         asyncio.run(self._remember_action_saves_memory())
 
+    def test_clarify_action_returns_needs_input_with_question(self):
+        asyncio.run(self._clarify_action_returns_needs_input())
+
     def _experts(self):
         return {
             "qwen2.5-coder:14b": {"label": "Coder", "hint": "code", "tools": True},
@@ -46,10 +49,10 @@ class CoordinatorTests(unittest.TestCase):
         from agents import coordinator
 
         events: list[dict] = []
-        consulted: list[str] = []
+        consulted: list[tuple] = []
 
-        async def fake_consult(model, task, conversation, emit, abort):
-            consulted.append(model)
+        async def fake_consult(model, task, refined, conversation, emit, abort):
+            consulted.append((model, refined))
             return "def reverse(s): return s[::-1]"
 
         decisions = [
@@ -57,13 +60,15 @@ class CoordinatorTests(unittest.TestCase):
             {"action": "answer", "thinking": "have it"},
         ]
         with mock.patch.object(coordinator, "available_expert_models", new=_av(self._experts())), \
+             mock.patch.object(coordinator, "refine_query", new=_av("Write a Python function that reverses a string")), \
              mock.patch.object(coordinator, "_consult_expert", new=fake_consult), \
              mock.patch.object(coordinator, "_decide_step", new=_seq(decisions)):
             outcome = await coordinator.run_coordinator(
                 "Vänd en sträng i Python", events.append, asyncio.Event(), coordinator_model="gemma4:latest"
             )
 
-        self.assertEqual(["qwen2.5-coder:14b"], consulted)
+        # Consulted the coder with the gateway-refined (English) instruction.
+        self.assertEqual([("qwen2.5-coder:14b", "Write a Python function that reverses a string")], consulted)
         self.assertEqual("done", outcome.status)
         self.assertIn("s[::-1]", outcome.action_log)
         self.assertTrue(any(e["type"] == "consult" and e["model"] == "qwen2.5-coder:14b" for e in events))
@@ -73,7 +78,7 @@ class CoordinatorTests(unittest.TestCase):
 
         called: list[str] = []
 
-        async def fake_consult(model, task, conversation, emit, abort):
+        async def fake_consult(model, task, refined, conversation, emit, abort):
             called.append(model)
             return "should not happen"
 
@@ -117,6 +122,19 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual([("Jag heter Lucas.", "fact", "sess-1")], saved)
         self.assertEqual("done", outcome.status)
         self.assertTrue(any(e["type"] == "memory" for e in events))
+
+    async def _clarify_action_returns_needs_input(self):
+        from agents import coordinator
+
+        decisions = [{"action": "clarify", "question": "Vilken fil menar du?", "thinking": "vague"}]
+        with mock.patch.object(coordinator, "available_expert_models", new=_av(self._experts())), \
+             mock.patch.object(coordinator, "_decide_step", new=_seq(decisions)):
+            outcome = await coordinator.run_coordinator(
+                "fixa den", lambda e: None, asyncio.Event(), coordinator_model="gemma4:latest"
+            )
+
+        self.assertEqual("needs_input", outcome.status)
+        self.assertEqual("Vilken fil menar du?", outcome.detail)
 
 
 def _av(value):
