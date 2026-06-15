@@ -2,17 +2,18 @@ import asyncio
 import os
 from typing import AsyncGenerator, Callable
 from agents.router import route_next_action, analyze_screenshot, vision_done_summary, text_done_summary
+from agents.perception import perceive_screen
 from agents.safety import unsafe_tool_block_reason
 from tools import (
     screenshot, get_screen_size,
-    click, type_text, scroll, move_mouse, key_press, hotkey,
+    click, click_element, type_text, scroll, move_mouse, key_press, hotkey,
     run_command_sync, open_app, run_codex,
     active_window_title, list_dir, read_file, find_file, list_windows, focus_window,
 )
-from config import MAX_AGENT_STEPS, OLLAMA_VISION_ENABLED
+from config import MAX_AGENT_STEPS, OLLAMA_VISION_ENABLED, PERCEPTION_ENABLED
 
 STREAMING_TOOLS = {"run_command", "run_codex"}
-DESKTOP_TOOLS = {"click", "type_text", "scroll", "move_mouse", "key_press", "hotkey"}
+DESKTOP_TOOLS = {"click_element", "click", "type_text", "scroll", "move_mouse", "key_press", "hotkey"}
 POST_ACTION_OBSERVE_TOOLS = DESKTOP_TOOLS | {"open_app"}
 DETERMINISTIC_TOOLS = {
     "list_dir",
@@ -36,13 +37,14 @@ async def run_agent_loop(
     failed_tools: set[str] = set()
     command_counts: dict[tuple[str, str], int] = {}
     desktop_target_hint = ""
+    last_observation = ""  # persists the latest screen perception across steps
     steps = 0
 
     emit(make_event("thinking", content=f"Starting task: {task}"))
 
     while steps < MAX_AGENT_STEPS and not abort_event.is_set():
         steps += 1
-        screen_observation = ""
+        screen_observation = last_observation
 
         try:
             decision = await route_next_action(
@@ -62,8 +64,13 @@ async def run_agent_loop(
         if thinking:
             emit(make_event("thinking", content=thinking))
 
-        if tool in DESKTOP_TOOLS and not screen_observation and OLLAMA_VISION_ENABLED:
-            screen_observation = await observe_screen(task, history, emit)
+        # A desktop action was chosen but we haven't looked at the screen yet:
+        # perceive (elements + optional vision), then re-route so the model can
+        # pick the right click_element id. Runs without a vision model — the
+        # element list alone is enough.
+        if tool in DESKTOP_TOOLS and not screen_observation and PERCEPTION_ENABLED:
+            screen_observation = await perceive(task, history, emit)
+            last_observation = screen_observation
             try:
                 decision = await route_next_action(
                     task,
@@ -152,7 +159,7 @@ async def run_agent_loop(
             return
 
         if tool in POST_ACTION_OBSERVE_TOOLS:
-            await observe_screen(task, history, emit)
+            last_observation = await perceive(task, history, emit)
 
         if abort_event.is_set():
             emit(make_event("done", summary="Aborted by user"))
@@ -164,20 +171,34 @@ async def run_agent_loop(
         emit(make_event("done", summary=f"Reached max steps ({MAX_AGENT_STEPS})"))
 
 
-async def observe_screen(task: str, history: list[dict], emit: Callable[[dict], None]) -> str:
-    if not OLLAMA_VISION_ENABLED:
+async def perceive(task: str, history: list[dict], emit: Callable[[dict], None]) -> str:
+    """Observe the screen as a Set-of-Marks: enumerate interactive elements, draw
+    numbered marks, and return a text observation the router can act on.
+
+    Works without a vision model — the element list is plain text. When
+    OLLAMA_VISION_ENABLED is set, a visual description from the annotated image is
+    appended. Returns "" only if perception is disabled or fails.
+    """
+    if not PERCEPTION_ENABLED:
         return ""
 
     try:
-        emit(make_event("thinking", content="Tar en skärmbild för att observera skärmen..."))
-        img = screenshot()
-        emit(make_event("screenshot", image=img))
-        observation = await analyze_screenshot(task, img, history)
+        emit(make_event("thinking", content="Observerar skärmen (element + bild)..."))
+        # UIA traversal + PIL annotation are blocking; run off the event loop.
+        annotated, _elements, observation = await asyncio.to_thread(perceive_screen)
+        emit(make_event("screenshot", image=annotated))
+
+        if OLLAMA_VISION_ENABLED:
+            try:
+                description = await analyze_screenshot(task, annotated, history)
+                observation = f"{observation}\n\nVisual description:\n{description}"
+            except Exception:
+                pass
+
         history.append({"type": "screen_observation", "content": observation})
-        emit(make_event("thinking", content=f"Skärm: {observation}"))
         return observation
     except Exception as e:
-        emit(make_event("error", content=f"Screen observation error: {e}"))
+        emit(make_event("error", content=f"Perception error: {e}"))
         return ""
 
 
@@ -282,6 +303,9 @@ async def execute_tool(tool: str, args: dict, emit: Callable[[dict], None]) -> s
 
     elif tool == "click":
         return click(args["x"], args["y"], args.get("button", "left"))
+
+    elif tool == "click_element":
+        return click_element(args["element_id"], args.get("button", "left"))
 
     elif tool == "type_text":
         return type_text(args["text"], args.get("interval", 0.02))

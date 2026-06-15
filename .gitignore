@@ -7,11 +7,15 @@ backend/.python-version
 *.pyc
 *.pyo
 
+# Persisted chat sessions
+backend/data/
+
 # Node
 frontend/node_modules/
 frontend/.next/
 frontend/.pnpm-store/
 frontend/.env.local
+*.tsbuildinfo
 
 # General
 .DS_Store

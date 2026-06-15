@@ -1,5 +1,6 @@
 UNSAFE_DESKTOP_TOOLS = {
     "click",
+    "click_element",
     "type_text",
     "scroll",
     "move_mouse",
