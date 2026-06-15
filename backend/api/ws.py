@@ -21,6 +21,7 @@ project the `code` route runs in and the Claude Code session to resume.
 import asyncio
 import json
 import os
+from datetime import datetime
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -34,6 +35,16 @@ from config import (
     PILOT_AUTH_TOKEN,
     is_known_model,
     tools_capable_model,
+)
+from connections import register, unregister
+from jobs import (
+    create_job,
+    delete_job,
+    describe_schedule,
+    list_jobs,
+    parse_job_command,
+    reminder_content,
+    set_enabled,
 )
 from memory import format_for_prompt, search_memories
 from projects import add_project, list_projects, path_for_id, remove_project
@@ -54,9 +65,29 @@ async def websocket_endpoint(websocket: WebSocket):
     current_abort = asyncio.Event()
     turn_task: asyncio.Task | None = None
     turn_counter = 0
+    registered_session: str | None = None  # which session this conn is registered under
 
     def send(event: dict):
         asyncio.create_task(websocket.send_json(event))
+
+    def deliver_job(job: dict):
+        """Push a fired job to this client as a standalone assistant turn.
+
+        Called by the scheduler (outside any user turn) via the connection
+        registry. No awaits, so it runs atomically relative to an in-flight turn
+        — it updates *this* connection's conversation + persists, which avoids a
+        racing turn's persist() clobbering the reminder.
+        """
+        nonlocal turn_counter
+        turn_counter += 1
+        t = turn_counter
+        content = reminder_content(job)
+        send({"type": "turn_start", "turn": t, "route": "chat",
+              "thinking": f"Schemalagt: {job.get('title', '')}", "model": OLLAMA_MODEL})
+        send({"type": "assistant_delta", "turn": t, "route": "chat", "content": content})
+        send({"type": "done", "turn": t, "route": "chat"})
+        conversation.append({"role": "assistant", "content": content})
+        persist()
 
     def persist():
         if session_id:
@@ -81,6 +112,76 @@ async def websocket_endpoint(websocket: WebSocket):
             "models": model_catalog(),
             "route_mode": route_mode,
         })
+
+    async def send_jobs():
+        # Each job carries a ready-made Swedish schedule summary so the UI (and
+        # the /job list reply) need not re-derive it.
+        jobs = [
+            {**j, "summary": describe_schedule(j["schedule"]), "next_run_label": _fmt_next(j["next_run"])}
+            for j in list_jobs(session_id)
+        ]
+        await websocket.send_json({"type": "jobs", "jobs": jobs})
+
+    def _format_job_list() -> str:
+        jobs = list_jobs(session_id)
+        if not jobs:
+            return (
+                "Inga schemalagda jobb. Skapa t.ex.:\n"
+                "- `/job daily 09:00 <text>`\n"
+                "- `/job every 10m <text>`\n"
+                "- `/job mon,fri 08:00 <text>`\n"
+                "- `/job once 2026-06-20 09:00 <text>`"
+            )
+        lines = ["**Schemalagda jobb:**"]
+        for j in jobs:
+            status = "" if j["enabled"] else " _(pausad)_"
+            lines.append(
+                f"- `{j['id']}` {j['title']} — {describe_schedule(j['schedule'])}, "
+                f"nästa {_fmt_next(j['next_run'])}{status}"
+            )
+        lines.append("\nHantera: `/job pause <id>`, `/job resume <id>`, `/job delete <id>`.")
+        return "\n".join(lines)
+
+    async def _handle_job_command(text: str, turn: int):
+        arg = text.strip()[len("/job"):].strip()
+        spec = parse_job_command(arg)
+
+        def reply(msg: str):
+            send({"type": "turn_start", "turn": turn, "route": "chat", "thinking": "job command"})
+            send({"type": "assistant_delta", "turn": turn, "route": "chat", "content": msg})
+            send({"type": "done", "turn": turn, "route": "chat"})
+
+        action = spec["action"]
+        if action == "error":
+            reply(spec["message"])
+        elif action == "list":
+            reply(_format_job_list())
+        elif action in ("pause", "resume", "delete"):
+            jid = spec["id"]
+            if action == "delete":
+                ok = delete_job(jid)
+                msg = f"Jobb `{jid}` borttaget." if ok else f"Hittade inget jobb `{jid}`."
+            else:
+                job = set_enabled(jid, action == "resume")
+                if job is None:
+                    msg = f"Hittade inget jobb `{jid}`."
+                else:
+                    msg = f"Jobb `{jid}` {'återupptaget' if action == 'resume' else 'pausat'}."
+            await send_jobs()
+            reply(msg)
+        elif action == "create":
+            if not session_id:
+                reply("Ingen aktiv session — kan inte skapa jobb.")
+                return
+            job = create_job(
+                session_id=session_id, title=spec["title"],
+                payload=spec["payload"], schedule=spec["schedule"],
+            )
+            await send_jobs()
+            reply(
+                f"Jobb skapat: **{job['title']}** — {describe_schedule(job['schedule'])}. "
+                f"Nästa körning {_fmt_next(job['next_run'])}. Id `{job['id']}`."
+            )
 
     def resolve_model_token(token: str) -> str | None:
         """Map a user-typed token to "auto", an exact id, or a unique prefix."""
@@ -124,6 +225,11 @@ async def websocket_endpoint(websocket: WebSocket):
         # `/model <id|auto>` is a client-side control, not a turn for the brain.
         if text.strip().lower().startswith("/model"):
             await _handle_model_command(text, turn)
+            return
+
+        # `/job ...` manages scheduled jobs — also a control, not a brain turn.
+        if text.strip().lower().startswith("/job"):
+            await _handle_job_command(text, turn)
             return
 
         prior = list(conversation)
@@ -235,10 +341,19 @@ async def websocket_endpoint(websocket: WebSocket):
                 agent = stored.get("agent", "claude")
                 model_mode = stored.get("model_mode", "auto")
                 route_mode = stored.get("route_mode", "auto")
+                # (Re-)register this connection so the scheduler can push fired
+                # jobs to it. Move the registration if the session id changed.
+                if registered_session and registered_session != session_id:
+                    unregister(registered_session, deliver_job)
+                    registered_session = None
+                if session_id:
+                    register(session_id, deliver_job)
+                    registered_session = session_id
                 await websocket.send_json(
                     {"type": "history", "messages": conversation, "turn": turn_counter}
                 )
                 await send_projects()
+                await send_jobs()
 
             elif msg_type == "message":
                 if turn_task and not turn_task.done():
@@ -305,10 +420,40 @@ async def websocket_endpoint(websocket: WebSocket):
                     persist()
                 await send_projects()
 
+            elif msg_type == "add_job":
+                if session_id:
+                    schedule = msg.get("schedule") or {}
+                    payload = str(msg.get("payload", "")).strip()
+                    if schedule.get("type") and payload:
+                        create_job(
+                            session_id=session_id,
+                            title=str(msg.get("title") or payload)[:60],
+                            payload=payload,
+                            schedule=schedule,
+                        )
+                await send_jobs()
+
+            elif msg_type in ("pause_job", "resume_job"):
+                set_enabled(str(msg.get("id", "")), msg_type == "resume_job")
+                await send_jobs()
+
+            elif msg_type == "delete_job":
+                delete_job(str(msg.get("id", "")))
+                await send_jobs()
+
     except WebSocketDisconnect:
         current_abort.set()
         if turn_task and not turn_task.done():
             turn_task.cancel()
+        if registered_session:
+            unregister(registered_session, deliver_job)
+
+
+def _fmt_next(ts: float | None) -> str:
+    """Format a next-run epoch as local 'YYYY-MM-DD HH:MM' (or em dash)."""
+    if ts is None:
+        return "—"
+    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
 
 
 def _with_refined_prompt(refined: str, original: str) -> str:
