@@ -11,6 +11,7 @@ from tools import (
     click, click_element, type_text, scroll, move_mouse, key_press, hotkey,
     run_command_sync, open_app, run_codex,
     active_window_title, list_dir, read_file, find_file, list_windows, focus_window,
+    search_files, github_issues, github_prs, github_repo, web_search, fetch_url,
 )
 from tools import registry
 from config import MAX_AGENT_STEPS, OLLAMA_VISION_ENABLED, PERCEPTION_ENABLED
@@ -397,6 +398,38 @@ async def execute_tool(tool: str, args: dict, emit: Callable[[dict], None]) -> s
     elif tool == "find_file":
         result = find_file(args["name"], args.get("root"))
         return "Matches:\n" + "\n".join(result["matches"])
+
+    elif tool == "search_files":
+        result = await asyncio.to_thread(
+            search_files, args["query"], args.get("root"), args.get("limit", 40)
+        )
+        if not result["matches"]:
+            return f"No files matching {args['query']!r} under {result['root']}."
+        lines = [f"Matches for {args['query']!r} under {result['root']}:"]
+        for m in result["matches"]:
+            lines.append(f"{m['modified']}  {m['size']:>10} B  {m['path']}")
+        if result.get("truncated"):
+            lines.append("(more matches omitted)")
+        return "\n".join(lines)
+
+    elif tool == "github_issues":
+        return await asyncio.to_thread(
+            github_issues, args["repo"], args.get("state", "open")
+        )
+
+    elif tool == "github_prs":
+        return await asyncio.to_thread(
+            github_prs, args["repo"], args.get("state", "open")
+        )
+
+    elif tool == "github_repo":
+        return await asyncio.to_thread(github_repo, args["repo"])
+
+    elif tool == "web_search":
+        return await web_search(args["query"], args.get("max_results", 5))
+
+    elif tool == "fetch_url":
+        return await fetch_url(args["url"], args.get("max_chars", 4000))
 
     elif tool == "list_windows":
         result = list_windows()

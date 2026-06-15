@@ -5,6 +5,9 @@ from .system import run_command, run_command_sync, open_app
 from .codex import run_codex
 from .codex_cli import run_codex_cli
 from .os_tools import active_window_title, list_dir, read_file, find_file, list_windows, focus_window
+from .search import search_files
+from .github import github_issues, github_prs, github_repo
+from .web import web_search, fetch_url
 
 __all__ = [
     "screenshot",
@@ -26,4 +29,10 @@ __all__ = [
     "find_file",
     "list_windows",
     "focus_window",
+    "search_files",
+    "github_issues",
+    "github_prs",
+    "github_repo",
+    "web_search",
+    "fetch_url",
 ]

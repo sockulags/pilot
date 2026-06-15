@@ -261,6 +261,96 @@ REGISTRY: tuple[ToolSpec, ...] = (
         observe_after=True,  # was in POST_ACTION_OBSERVE_TOOLS (a desktop action)
         coordinator=False,  # not exposed to the coordinator (matches prior allowlist)
     ),
+    # --- File search ---------------------------------------------------------
+    ToolSpec(
+        name="search_files",
+        summary="Search for files by name under a folder",
+        description="search_files(query, root?, limit?): substring/glob search for "
+        "files, returning each hit's path, size and last-modified time",
+        when_to_use="To locate a user's file (e.g. a CV in Downloads) and see when it "
+        "last changed. Defaults to the home directory; pass root='Downloads' or a path "
+        "to narrow it. Prefer this over find_file for anything outside the project.",
+        params={
+            "query": {"type": "string", "description": "Name substring or glob (e.g. cv, *.pdf)"},
+            "root": {"type": "string", "description": "Folder to search (name or path, optional)"},
+            "limit": {"type": "integer", "description": "Max matches (optional)"},
+        },
+        required=("query",),
+        category="files",
+        deterministic=True,
+    ),
+    # --- GitHub (gh CLI) -----------------------------------------------------
+    ToolSpec(
+        name="github_issues",
+        summary="List a repo's GitHub issues",
+        description="github_issues(repo, state?): list issues (open/closed/all) with a "
+        "short description of each",
+        when_to_use="When the user asks about issues in a GitHub repo. Pass repo as "
+        "'owner/name' (e.g. 'sockulags/cv_builder'). Works without the code agent.",
+        params={
+            "repo": {"type": "string", "description": "owner/name or bare name"},
+            "state": {"type": "string", "description": "open|closed|all (default open)"},
+        },
+        required=("repo",),
+        category="github",
+        deterministic=True,
+    ),
+    ToolSpec(
+        name="github_prs",
+        summary="List a repo's pull requests",
+        description="github_prs(repo, state?): list pull requests with a short "
+        "description of each",
+        when_to_use="When the user asks about pull requests in a GitHub repo. Pass repo "
+        "as 'owner/name'.",
+        params={
+            "repo": {"type": "string", "description": "owner/name or bare name"},
+            "state": {"type": "string", "description": "open|closed|merged|all (default open)"},
+        },
+        required=("repo",),
+        category="github",
+        deterministic=True,
+    ),
+    ToolSpec(
+        name="github_repo",
+        summary="Show a GitHub repository overview",
+        description="github_repo(repo): show a repository's description and details",
+        when_to_use="When the user asks what a GitHub repo is or for an overview. Pass "
+        "repo as 'owner/name'.",
+        params={"repo": {"type": "string", "description": "owner/name or bare name"}},
+        required=("repo",),
+        category="github",
+        deterministic=True,
+    ),
+    # --- Web -----------------------------------------------------------------
+    ToolSpec(
+        name="web_search",
+        summary="Search the web",
+        description="web_search(query, max_results?): return the top web results "
+        "(title, url, snippet)",
+        when_to_use="For current or factual info you don't have — news, weather, "
+        "look-ups. Follow up with fetch_url to read a result in full.",
+        params={
+            "query": {"type": "string", "description": "Search query"},
+            "max_results": {"type": "integer", "description": "How many results (optional)"},
+        },
+        required=("query",),
+        category="web",
+        deterministic=True,
+    ),
+    ToolSpec(
+        name="fetch_url",
+        summary="Fetch a web page as text",
+        description="fetch_url(url): download a page and return its readable text",
+        when_to_use="To read a specific page (often a web_search result) — e.g. a "
+        "weather page or an article.",
+        params={
+            "url": {"type": "string", "description": "URL to fetch"},
+            "max_chars": {"type": "integer", "description": "Max characters (optional)"},
+        },
+        required=("url",),
+        category="web",
+        deterministic=True,
+    ),
     # --- Code agent (driven by the loop, not the coordinator) ----------------
     ToolSpec(
         name="run_codex",
@@ -330,6 +420,8 @@ def tool_menu(coordinator_only: bool = True) -> str:
 _CATEGORY_LABELS = {
     "files": "Files & folders",
     "shell": "Shell / CLI",
+    "github": "GitHub",
+    "web": "Web",
     "desktop": "Desktop & screen",
     "code": "Coding agent",
     "general": "Other",
