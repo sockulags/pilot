@@ -76,6 +76,15 @@ substituted automatically.
 `COORDINATOR_MAX_STEPS` (default 6) bounds how many consults/tool calls one turn
 may chain.
 
+## Toggles (top bar)
+
+- **Läge** — Auto lets the classifier route each turn; or force **Chatt** /
+  **Dator** / **Kod** to do one thing distinctly. Forcing skips classification.
+- **Modell** — Auto (gemma4 front brain, consults experts) or pin a model.
+- **Agent** — Claude Code vs Codex for the code route.
+
+All three persist per session.
+
 ## Language gateway (clarify + refine)
 
 Before the coordinator hands work to another model, two things happen:
