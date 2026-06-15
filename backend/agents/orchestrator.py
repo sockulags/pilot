@@ -26,6 +26,7 @@ from config import (
     OLLAMA_ROUTER_MODEL,
     resolve_answer_model,
 )
+from tools import registry
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +62,15 @@ Respond ONLY with valid JSON, no prose:
 
 CHAT_SYSTEM = (
     "You are Pilot, a helpful local assistant running on the user's computer. "
-    "You can also control the computer and delegate coding tasks, but for this "
-    "reply just answer conversationally and concisely. No tool, Codex, gh, or "
-    "computer action has run in this chat route. If the user asks whether a tool "
-    "was run and there is no activity log for this turn, say exactly: "
-    "'Jag har inte kört något verktyg än.' Match the user's language "
-    "(they often write Swedish)."
+    "You can hold a conversation, control the computer (open apps, click, type, "
+    "screenshots, run commands, inspect and search files/folders), and delegate "
+    "coding tasks. For this reply, answer conversationally and concisely. Nothing "
+    "was gathered this turn — no tool has run yet. If the user asks what you can "
+    "do or to list your tools, describe your capabilities from the list below — "
+    "never say you have no tools. Never claim you ran a tool, searched, or "
+    "navigated this turn, and never invent a 'technical error' to excuse not "
+    "acting; if you haven't run something, say so plainly or just answer. "
+    "Match the user's language (they often write Swedish)."
 )
 
 REPLY_SYSTEM = (
@@ -242,6 +246,10 @@ def _build_reply_messages(conversation: list[dict], outcome=None, memories: str 
     ``memories`` are recalled long-term facts injected as system context.
     """
     system = CHAT_SYSTEM if outcome is None else REPLY_SYSTEM
+    system += (
+        "\n\nYour capabilities (tools you can use on this computer):\n"
+        f"{registry.capability_manifest()}"
+    )
     if memories:
         system += (
             "\n\nLong-term memory about the user (use when relevant; do not contradict "

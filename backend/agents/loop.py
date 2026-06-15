@@ -12,18 +12,15 @@ from tools import (
     run_command_sync, open_app, run_codex,
     active_window_title, list_dir, read_file, find_file, list_windows, focus_window,
 )
+from tools import registry
 from config import MAX_AGENT_STEPS, OLLAMA_VISION_ENABLED, PERCEPTION_ENABLED
 
-STREAMING_TOOLS = {"run_command", "run_codex"}
-DESKTOP_TOOLS = {"click_element", "click", "type_text", "scroll", "move_mouse", "key_press", "hotkey"}
-POST_ACTION_OBSERVE_TOOLS = DESKTOP_TOOLS | {"open_app"}
-DETERMINISTIC_TOOLS = {
-    "list_dir",
-    "read_file",
-    "find_file",
-    "list_windows",
-    "focus_window",
-}
+# Behaviour sets are derived from the single tool registry (tools/registry.py),
+# so a tool's streaming / observe-after / deterministic nature is declared once.
+STREAMING_TOOLS = registry.streaming_tool_names()
+DESKTOP_TOOLS = registry.desktop_tool_names()
+POST_ACTION_OBSERVE_TOOLS = registry.observe_after_tool_names()
+DETERMINISTIC_TOOLS = registry.deterministic_tool_names()
 
 
 def make_event(type_: str, **kwargs) -> dict:
