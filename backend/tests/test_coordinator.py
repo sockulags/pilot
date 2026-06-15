@@ -137,6 +137,87 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual("Vilken fil menar du?", outcome.detail)
 
 
+class ToolCallMappingTests(unittest.TestCase):
+    """Fas B: native tool-calling decisions map to the coordinator's action dict,
+    with a hardened JSON-from-content fallback."""
+
+    def test_os_tool_call_maps_to_tool_action(self):
+        from agents import coordinator
+        d = coordinator._decision_from_message({
+            "content": "looking at the repo",
+            "tool_calls": [{"function": {"name": "read_file", "arguments": {"path": "README.md"}}}],
+        })
+        self.assertEqual("tool", d["action"])
+        self.assertEqual("read_file", d["tool"])
+        self.assertEqual({"path": "README.md"}, d["args"])
+        self.assertEqual("looking at the repo", d["thinking"])
+
+    def test_meta_action_call_maps_to_named_action(self):
+        from agents import coordinator
+        d = coordinator._decision_from_message({
+            "tool_calls": [{"function": {"name": "consult", "arguments": {"model": "qwen2.5-coder:14b"}}}],
+        })
+        self.assertEqual("consult", d["action"])
+        self.assertEqual("qwen2.5-coder:14b", d["model"])
+
+    def test_answer_meta_action(self):
+        from agents import coordinator
+        d = coordinator._decision_from_message({
+            "tool_calls": [{"function": {"name": "answer", "arguments": {}}}],
+        })
+        self.assertEqual("answer", d["action"])
+
+    def test_arguments_as_json_string_are_parsed(self):
+        from agents import coordinator
+        d = coordinator._decision_from_message({
+            "tool_calls": [{"function": {"name": "find_file", "arguments": "{\"name\": \"cv.pdf\"}"}}],
+        })
+        self.assertEqual("find_file", d["tool"])
+        self.assertEqual({"name": "cv.pdf"}, d["args"])
+
+    def test_no_tool_call_falls_back_to_json_content(self):
+        from agents import coordinator
+        d = coordinator._decision_from_message({
+            "content": '{"action": "perceive", "thinking": "need the screen"}',
+            "tool_calls": [],
+        })
+        self.assertEqual("perceive", d["action"])
+
+    def test_no_tool_call_and_prose_defaults_to_answer(self):
+        from agents import coordinator
+        d = coordinator._decision_from_message({"content": "Sure, here is the answer..."})
+        self.assertEqual("answer", d["action"])
+
+    def test_gemma_action_is_tool_name_is_remapped(self):
+        # gemma4 emits {"action": "read_file", ...} — the tool name as the action.
+        from agents import coordinator
+        d = coordinator._decision_from_message({
+            "content": '{"action": "read_file", "args": {"path": "README.md"}}',
+        })
+        self.assertEqual("tool", d["action"])
+        self.assertEqual("read_file", d["tool"])
+        self.assertEqual({"path": "README.md"}, d["args"])
+
+    def test_openai_name_arguments_shape_as_text_is_remapped(self):
+        # qwen2.5-coder writes {"name","arguments"} as content instead of tool_calls.
+        from agents import coordinator
+        d = coordinator._decision_from_message({
+            "content": '{"name": "list_dir", "arguments": {"path": "."}}',
+        })
+        self.assertEqual("tool", d["action"])
+        self.assertEqual("list_dir", d["tool"])
+        self.assertEqual({"path": "."}, d["args"])
+
+    def test_meta_schemas_constrain_consult_to_available_experts(self):
+        from agents import coordinator
+        schemas = coordinator._meta_action_schemas({"qwen2.5-coder:14b": {}, "qwen3:14b": {}})
+        consult = next(s for s in schemas if s["function"]["name"] == "consult")
+        self.assertEqual(
+            ["qwen2.5-coder:14b", "qwen3:14b"],
+            consult["function"]["parameters"]["properties"]["model"]["enum"],
+        )
+
+
 def _av(value):
     async def _coro(*args, **kwargs):
         return value

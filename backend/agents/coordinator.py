@@ -77,8 +77,10 @@ def _system_prompt(intent_hint: str) -> str:
         "Never claim to have run a tool, searched, or navigated unless you actually "
         "took that action this turn; do not invent a 'technical error' to excuse not "
         f"acting — either act, or answer honestly.\n{intent_hint}\n\n"
-        'Respond ONLY with JSON: {"action": "clarify|consult|perceive|tool|remember|'
-        'answer", "question": "<for clarify>", "model": "<expert id>", "tool": "<name>", '
+        "Take your next step by EITHER calling exactly one of the provided "
+        "tools/functions, OR responding with a single JSON object: "
+        '{"action": "clarify|consult|perceive|tool|remember|answer", '
+        '"question": "<for clarify>", "model": "<expert id>", "tool": "<name>", '
         '"args": {...}, "text": "<fact to remember>", "thinking": "<short reason>"}'
     )
 
@@ -137,26 +139,140 @@ def _build_decision_context(
     return "\n".join(parts)
 
 
+META_ACTIONS = {"answer", "consult", "perceive", "remember", "clarify"}
+
+
+def _meta_action_schemas(experts: dict[str, dict]) -> list[dict]:
+    """Function schemas for the coordinator's non-OS actions, so a tool-calling
+    model can pick them structurally alongside the OS tools from the registry."""
+    model_schema: dict = {"type": "string", "description": "Specialist model id to consult"}
+    if experts:
+        model_schema["enum"] = list(experts.keys())
+
+    def fn(name: str, description: str, properties: dict, required: list[str]) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                },
+            },
+        }
+
+    return [
+        fn("answer", "You have everything needed; stop gathering and let the final "
+                     "answer be written.", {}, []),
+        fn("consult", "Hand the user's request to a specialist model — you only choose "
+                      "WHO; the request is forwarded verbatim. Use for code or hard "
+                      "reasoning.", {"model": model_schema}, ["model"]),
+        fn("perceive", "Look at the screen (screenshot + element list) when the task "
+                       "needs to know what's on screen.", {}, []),
+        fn("remember", "Save a durable fact about the user for future sessions, written "
+                       "in the user's OWN language.", {"text": {"type": "string"}}, ["text"]),
+        fn("clarify", "Ask the user ONE short clarifying question when the request is "
+                      "too vague to act on.", {"question": {"type": "string"}}, ["question"]),
+    ]
+
+
+def _map_call_to_decision(name: str, args: dict, thinking: str) -> dict:
+    """Map a native tool/function call to the coordinator's decision dict."""
+    if name in META_ACTIONS:
+        return {"action": name, "thinking": thinking, **args}
+    # Any other function name is an OS tool from the registry.
+    return {"action": "tool", "tool": name, "args": args, "thinking": thinking}
+
+
+def _normalize_decision(parsed: dict) -> dict:
+    """Coerce the many JSON shapes local models emit into a valid decision.
+
+    Observed live: qwen3 emits native tool_calls (handled before this);
+    qwen2.5-coder writes the OpenAI ``{"name","arguments"}`` shape as text;
+    gemma4 writes ``{"action":"read_file",...}`` — putting the tool name in the
+    action field instead of ``action:"tool"`` (which the old loop silently
+    dropped, so gemma never actually read files — see session d76543e3).
+    """
+    thinking = parsed.get("thinking", "")
+    # OpenAI function-call shape emitted as plain text content.
+    if "name" in parsed and "action" not in parsed:
+        args = parsed.get("arguments", parsed.get("args", {})) or {}
+        if isinstance(args, str):
+            args = extract_json_object(args, {})
+        return _map_call_to_decision(str(parsed["name"]), args, thinking)
+    action = str(parsed.get("action", "")).strip()
+    # Tool name placed directly in "action" (gemma) — remap to a tool call.
+    if action and action not in VALID_ACTIONS and action in registry.coordinator_tool_names():
+        return _map_call_to_decision(action, parsed.get("args", {}) or {}, thinking)
+    return parsed
+
+
+def _decision_from_message(msg: dict) -> dict:
+    """Turn an Ollama chat message into a coordinator decision.
+
+    Prefers a native tool call; otherwise normalises a JSON action object from
+    the content, so every model in the flora (native tool_calls, OpenAI-shape
+    text, or action-with-tool-name) yields a valid decision (hardened fallback).
+    """
+    calls = msg.get("tool_calls") or []
+    content = (msg.get("content") or "").strip()
+    if calls:
+        fn = calls[0].get("function", {}) or {}
+        name = str(fn.get("name", "")).strip()
+        args = fn.get("arguments", {})
+        if isinstance(args, str):
+            args = extract_json_object(args, {})
+        if name:
+            return _map_call_to_decision(name, args or {}, content)
+    parsed = extract_json_object(content, {}) if "{" in content else {}
+    if parsed:
+        normalized = _normalize_decision(parsed)
+        if normalized.get("action"):
+            return normalized
+    return dict(ANSWER_DEFAULT)
+
+
 async def _decide_step(
-    coordinator_model: str, system: str, context: str
+    coordinator_model: str,
+    system: str,
+    context: str,
+    experts: dict[str, dict] | None = None,
+    use_tools: bool = False,
 ) -> dict:
+    """Ask the front brain for its next step.
+
+    Tools-capable models get native function-calling (registry OS tools + the
+    meta-actions); the response is mapped back to a decision dict. Non-tools
+    models (and any endpoint that rejects the tools payload) use the plain JSON
+    path. Either way a decision dict is returned.
+    """
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": context},
     ]
+    payload: dict = {
+        "model": coordinator_model,
+        "messages": messages,
+        "stream": False,
+        "options": {"temperature": 0.1},
+    }
+    if use_tools:
+        payload["tools"] = registry.tool_schemas() + _meta_action_schemas(experts or {})
+
     async with httpx.AsyncClient(timeout=90) as client:
-        resp = await client.post(
-            f"{OLLAMA_BASE_URL}/api/chat",
-            json={
-                "model": coordinator_model,
-                "messages": messages,
-                "stream": False,
-                "options": {"temperature": 0.1},
-            },
-        )
+        resp = await client.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload)
+        if use_tools and resp.status_code >= 400:
+            # Endpoint/model rejected the tools payload — retry as plain JSON.
+            payload.pop("tools", None)
+            resp = await client.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload)
         resp.raise_for_status()
-        content = resp.json()["message"]["content"].strip()
-    return extract_json_object(content, ANSWER_DEFAULT)
+        msg = resp.json().get("message", {}) or {}
+
+    if use_tools:
+        return _decision_from_message(msg)
+    return extract_json_object((msg.get("content") or "").strip(), ANSWER_DEFAULT)
 
 
 async def _consult_expert(
@@ -237,6 +353,9 @@ async def run_coordinator(
     coordinator_model = coordinator_model or OLLAMA_MODEL
     experts = await available_expert_models(coordinator_model)
     system = _system_prompt(intent_hint)
+    # Tools-capable models drive their decisions via native function-calling;
+    # others (and a tools-rejecting endpoint) fall back to the JSON action path.
+    use_tools = bool(OLLAMA_MODELS.get(coordinator_model, {}).get("tools"))
 
     notes: list[str] = []  # human-readable evidence gathered this turn (grounds the reply)
     history: list[dict] = []  # for perceive() + desktop-tool safety gating
@@ -249,7 +368,7 @@ async def run_coordinator(
         steps += 1
         context = _build_decision_context(task, conversation, experts, notes, memories)
         try:
-            decision = await _decide_step(coordinator_model, system, context)
+            decision = await _decide_step(coordinator_model, system, context, experts, use_tools)
         except Exception as exc:
             emit(make_event("error", content=f"Coordinator error: {exc}"))
             return LoopOutcome("error", _render_notes(notes), f"Coordinator error: {exc}")
