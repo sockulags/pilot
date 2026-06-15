@@ -233,14 +233,20 @@ async def _stream_ollama_chat(
                     yield piece
 
 
-def _build_reply_messages(conversation: list[dict], outcome=None) -> list[dict]:
+def _build_reply_messages(conversation: list[dict], outcome=None, memories: str = "") -> list[dict]:
     """Messages for the shared conversational layer.
 
     With ``outcome=None`` this is a plain chat reply. With an ``outcome`` (a
-    LoopOutcome from the computer route) the activity log is appended as a final
+    LoopOutcome from the coordinator) the activity log is appended as a final
     user turn so the model answers grounded in what was actually done.
+    ``memories`` are recalled long-term facts injected as system context.
     """
     system = CHAT_SYSTEM if outcome is None else REPLY_SYSTEM
+    if memories:
+        system += (
+            "\n\nLong-term memory about the user (use when relevant; do not contradict "
+            f"or repeat verbatim unless asked):\n{memories}"
+        )
     messages = [{"role": "system", "content": system}]
     messages.extend(
         {"role": m.get("role", "user"), "content": str(m.get("content", ""))}
@@ -268,7 +274,7 @@ def _fallback_reply(outcome, exc: Exception) -> str:
 
 
 async def compose_reply(
-    conversation: list[dict], outcome=None, model: str | None = None
+    conversation: list[dict], outcome=None, model: str | None = None, memories: str = ""
 ) -> AsyncGenerator[str, None]:
     """Stream the user-facing assistant reply — the single output layer.
 
@@ -279,7 +285,7 @@ async def compose_reply(
     OLLAMA_MODEL. On model failure a fallback built from the outcome is yielded
     so the message is never lost.
     """
-    messages = _build_reply_messages(conversation, outcome)
+    messages = _build_reply_messages(conversation, outcome, memories)
     yielded = False
     try:
         async for piece in _stream_ollama_chat(messages, model):

@@ -35,6 +35,7 @@ from config import (
     OLLAMA_MODEL,
     OLLAMA_MODELS,
 )
+from memory import save_memory
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ _TOOL_MENU = (
     "act on the screen (perceive first)"
 )
 
-VALID_ACTIONS = {"consult", "perceive", "tool", "answer"}
+VALID_ACTIONS = {"consult", "perceive", "tool", "remember", "answer"}
 
 
 def _system_prompt(intent_hint: str) -> str:
@@ -80,13 +81,18 @@ def _system_prompt(intent_hint: str) -> str:
         '- "perceive": look at the screen (screenshot + element list). Use when the task '
         "needs to know what's on screen.\n"
         '- "tool": run an OS/desktop tool (give "tool" and "args").\n'
+        '- "remember": save a durable fact about the user for future sessions (give '
+        '"text"). Use when the user asks you to remember something, or shares a lasting '
+        "preference / personal fact / ongoing-project detail. Write the fact in the "
+        "user's OWN language and wording — do NOT translate it (memory recall is "
+        "language-sensitive). Do NOT save trivia or one-off task wording.\n"
         '- "answer": you have everything needed; stop and let the final answer be written.\n\n'
         "Be economical: for a simple question, choose \"answer\" immediately — do not "
         "consult or act when it adds nothing. Never consult the same model twice. "
         f"{intent_hint}\n\n"
-        'Respond ONLY with JSON: {"action": "consult|perceive|tool|answer", '
-        '"model": "<expert id>", "tool": "<name>", "args": {...}, '
-        '"thinking": "<short reason>"}'
+        'Respond ONLY with JSON: {"action": "consult|perceive|tool|remember|answer", '
+        '"model": "<expert id>", "tool": "<name>", "args": {...}, "text": "<fact to '
+        'remember>", "thinking": "<short reason>"}'
     )
 
 ANSWER_DEFAULT = {"action": "answer", "thinking": "defaulting to answer"}
@@ -120,8 +126,14 @@ def _build_decision_context(
     conversation: list[dict] | None,
     experts: dict[str, dict],
     notes: list[str],
+    memories: str = "",
 ) -> str:
     parts = []
+    if memories:
+        parts.append(
+            "Long-term memory about the user (recalled — use if relevant, don't "
+            f"re-save):\n{memories}\n"
+        )
     if conversation:
         recent = conversation[-6:]
         convo = "\n".join(
@@ -227,6 +239,8 @@ async def run_coordinator(
     project_cwd: str | None = None,
     coordinator_model: str | None = None,
     intent_hint: str = "",
+    memories: str = "",
+    session_id: str | None = None,
 ) -> LoopOutcome:
     """Run the in-turn coordinator loop. See module docstring."""
     coordinator_model = coordinator_model or OLLAMA_MODEL
@@ -241,7 +255,7 @@ async def run_coordinator(
 
     while steps < COORDINATOR_MAX_STEPS and not abort.is_set():
         steps += 1
-        context = _build_decision_context(task, conversation, experts, notes)
+        context = _build_decision_context(task, conversation, experts, notes, memories)
         try:
             decision = await _decide_step(coordinator_model, system, context)
         except Exception as exc:
@@ -271,6 +285,15 @@ async def run_coordinator(
             emit(make_event("consult", model=model, content=task))
             answer = await _consult_expert(model, task, conversation, emit, abort)
             notes.append(f"{model} answered: {answer[:1200]}")
+            continue
+
+        if action == "remember":
+            fact = str(decision.get("text") or "").strip()
+            if fact:
+                mem_id = await save_memory(fact, kind="fact", session_id=session_id)
+                if mem_id:
+                    emit(make_event("memory", content=fact))
+                    notes.append(f"Saved to long-term memory: {fact}")
             continue
 
         if action == "perceive":

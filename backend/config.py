@@ -24,6 +24,20 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma4:latest")
 OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "gemma4:latest")
 OLLAMA_FALLBACK_MODEL = os.getenv("OLLAMA_FALLBACK_MODEL", "qwen3:14b")
 
+# --- Long-term memory (semantic retrieval) ----------------------------------
+# Embeddings model for the cross-session memory store (agents-agnostic facts and
+# preferences). nomic-embed-text is small and installed by default.
+OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+MEMORY_FILE = os.getenv(
+    "MEMORY_FILE", os.path.join(os.path.dirname(__file__), "data", "memory.json")
+)
+# How many memories to retrieve per turn, and the minimum cosine similarity for
+# one to count as relevant. nomic-embed-text has a high similarity baseline
+# (unrelated sentences still score ~0.58-0.60), so the bar sits at 0.62 to keep
+# genuine matches (~0.63+) while filtering that baseline noise. Tunable.
+MEMORY_TOP_K = int(os.getenv("MEMORY_TOP_K", "4"))
+MEMORY_MIN_SCORE = float(os.getenv("MEMORY_MIN_SCORE", "0.62"))
+
 # --- Local model registry (dynamic per-turn model selection) ----------------
 # The orchestrator picks the best local model for each turn ("auto"), or the
 # user pins one via the UI toggle / `/model <id>`. Each entry carries a hint the

@@ -25,6 +25,7 @@ export type ServerEvent = {
     | "action"
     | "consult"
     | "expert_delta"
+    | "memory"
     | "codex_trace"
     | "result"
     | "screenshot"

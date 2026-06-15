@@ -34,6 +34,7 @@ from config import (
     is_known_model,
     tools_capable_model,
 )
+from memory import format_for_prompt, search_memories
 from projects import add_project, list_projects, path_for_id, remove_project
 from store import clear_session, load_session, save_session
 from tools import run_codex, run_codex_cli
@@ -126,6 +127,8 @@ async def websocket_endpoint(websocket: WebSocket):
         conversation.append({"role": "user", "content": text})
 
         project = os.path.basename(cwd.rstrip("\\/")) if cwd else None
+        # Recall relevant long-term memories for this turn (degrades to "" on failure).
+        memories = format_for_prompt(await search_memories(text))
         decision = await classify_turn(prior, text, project=project, model_mode=model_mode)
         route = decision["route"]
         # The coordinator (front brain) is fast gemma4 in auto mode; a pin makes
@@ -159,9 +162,12 @@ async def websocket_endpoint(websocket: WebSocket):
             outcome = await run_coordinator(
                 text, emit, abort, prior, project_cwd=cwd,
                 coordinator_model=coordinator_model, intent_hint=intent,
+                memories=memories, session_id=session_id,
             )
             grounding = outcome if outcome.action_log else None
-            reply = await _stream_text(compose_reply(conversation, grounding, coordinator_model), emit, abort)
+            reply = await _stream_text(
+                compose_reply(conversation, grounding, coordinator_model, memories), emit, abort
+            )
             conversation.append({"role": "assistant", "content": reply or outcome.detail or "Klar"})
             emit({"type": "done"})
 
