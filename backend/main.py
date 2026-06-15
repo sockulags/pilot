@@ -8,12 +8,13 @@ sys.path.insert(0, os.path.dirname(__file__))
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from fastapi.websockets import WebSocket
 
 from api.ws import websocket_endpoint
 from api.mcp import create_mcp_app
 from agents.vision import validate_vision_model
-from config import BACKEND_PORT, MCP_PORT, OLLAMA_VISION_ENABLED
+from config import BACKEND_PORT, MCP_PORT, OLLAMA_VISION_ENABLED, FRONTEND_DIR
 
 
 @asynccontextmanager
@@ -46,6 +47,13 @@ def create_app() -> FastAPI:
     @app.websocket("/ws")
     async def ws(websocket: WebSocket):
         await websocket_endpoint(websocket)
+
+    # Serve the built frontend from one origin when it exists (production /
+    # remote). Mounted last so /health and /ws match first. In dev (no out/)
+    # this is skipped and the frontend runs separately via `pnpm dev`.
+    if os.path.isdir(FRONTEND_DIR):
+        app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
+        print(f"Serving frontend -> {FRONTEND_DIR}")
 
     return app
 

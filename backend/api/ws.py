@@ -24,6 +24,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from agents.loop import run_agent_loop
 from agents.orchestrator import classify_turn, stream_chat
+from config import PILOT_AUTH_TOKEN
 from projects import add_project, list_projects, path_for_id, remove_project
 from store import clear_session, load_session, save_session
 from tools import run_codex, run_codex_cli
@@ -110,6 +111,10 @@ async def websocket_endpoint(websocket: WebSocket):
             msg_type = msg.get("type")
 
             if msg_type == "hello":
+                if PILOT_AUTH_TOKEN and msg.get("token") != PILOT_AUTH_TOKEN:
+                    await websocket.send_json({"type": "error", "content": "unauthorized"})
+                    await websocket.close()
+                    return
                 session_id = msg.get("session_id") or None
                 stored = load_session(session_id) if session_id else dict(load_session(""))
                 conversation = list(stored["messages"])

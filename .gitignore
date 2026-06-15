@@ -13,6 +13,7 @@ backend/data/
 # Node
 frontend/node_modules/
 frontend/.next/
+frontend/out/
 frontend/.pnpm-store/
 frontend/.env.local
 *.tsbuildinfo

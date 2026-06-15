@@ -52,6 +52,18 @@ CODEX_SANDBOX_MODE = os.getenv("CODEX_SANDBOX_MODE", "workspace-write")
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
 MCP_PORT = int(os.getenv("MCP_PORT", "3001"))
 
+# Optional shared secret. When set, WS clients must send a matching token in
+# their `hello` message. Empty = no auth (LAN behaviour). Defense-in-depth for
+# remote access; the Tailscale network is the primary boundary.
+PILOT_AUTH_TOKEN = os.getenv("PILOT_AUTH_TOKEN", "")
+
+# Built frontend (Next static export). When present, the backend serves the UI
+# from this directory so everything is one origin. Defaults to ../frontend/out.
+FRONTEND_DIR = os.getenv(
+    "FRONTEND_DIR",
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "out")),
+)
+
 MAX_AGENT_STEPS = int(os.getenv("MAX_AGENT_STEPS", "50"))
 
 # OS-grounded perception (Set-of-Marks): enumerate interactive UI elements via
