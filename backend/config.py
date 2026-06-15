@@ -39,6 +39,16 @@ CLAUDE_CLI = os.getenv("CLAUDE_CLI", "claude")
 # edits; other ops follow normal rules. See `claude --help` for valid modes.
 CLAUDE_PERMISSION_MODE = os.getenv("CLAUDE_PERMISSION_MODE", "acceptEdits")
 
+# Path/name of the Codex CLI binary (the `code` route's alternate agent).
+# tools/codex_cli.py resolves this: absolute path -> PATH -> the Codex desktop
+# app's bundled CLI (%LOCALAPPDATA%\OpenAI\Codex\bin\*\codex.exe).
+CODEX_CLI = os.getenv("CODEX_CLI", "codex")
+
+# Sandbox policy for headless `codex exec`. "workspace-write" mirrors
+# acceptEdits (writes within the project, no prompts). Other valid values:
+# "read-only", "danger-full-access". See `codex exec --help`.
+CODEX_SANDBOX_MODE = os.getenv("CODEX_SANDBOX_MODE", "workspace-write")
+
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
 MCP_PORT = int(os.getenv("MCP_PORT", "3001"))
 

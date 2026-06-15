@@ -26,7 +26,7 @@ from agents.loop import run_agent_loop
 from agents.orchestrator import classify_turn, stream_chat
 from projects import add_project, list_projects, path_for_id, remove_project
 from store import clear_session, load_session, save_session
-from tools import run_codex
+from tools import run_codex, run_codex_cli
 
 
 async def websocket_endpoint(websocket: WebSocket):
@@ -35,6 +35,8 @@ async def websocket_endpoint(websocket: WebSocket):
     session_id: str | None = None
     cwd: str | None = None
     claude_session_id: str | None = None
+    codex_session_id: str | None = None
+    agent: str = "claude"
     current_abort = asyncio.Event()
     turn_task: asyncio.Task | None = None
     turn_counter = 0
@@ -44,13 +46,18 @@ async def websocket_endpoint(websocket: WebSocket):
 
     def persist():
         if session_id:
-            save_session(session_id, conversation, turn_counter, cwd, claude_session_id)
+            save_session(
+                session_id, conversation, turn_counter, cwd,
+                claude_session_id, codex_session_id, agent,
+            )
 
     async def send_projects():
-        await websocket.send_json({"type": "projects", "projects": list_projects(), "selected": cwd})
+        await websocket.send_json(
+            {"type": "projects", "projects": list_projects(), "selected": cwd, "agent": agent}
+        )
 
     async def handle_message(text: str, turn: int, abort: asyncio.Event):
-        nonlocal claude_session_id
+        nonlocal claude_session_id, codex_session_id
         prior = list(conversation)
         conversation.append({"role": "user", "content": text})
 
@@ -79,9 +86,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 emit({"type": "assistant_delta", "content": msg})
                 conversation.append({"role": "assistant", "content": msg})
                 emit({"type": "done"})
+            elif agent == "codex":
+                emit({"type": "thinking", "content": f"Codex i {cwd}..."})
+                codex_session_id = await _run_code_turn(
+                    run_codex_cli, decision["prompt"], cwd, codex_session_id, emit, abort, conversation
+                )
             else:
+                emit({"type": "thinking", "content": f"Claude Code i {cwd}..."})
                 claude_session_id = await _run_code_turn(
-                    decision["prompt"], cwd, claude_session_id, emit, abort, conversation
+                    run_codex, decision["prompt"], cwd, claude_session_id, emit, abort, conversation
                 )
 
         else:  # computer — run_agent_loop emits its own terminal "done"
@@ -103,6 +116,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 turn_counter = stored["turn"]
                 cwd = stored.get("cwd")
                 claude_session_id = stored.get("claude_session_id")
+                codex_session_id = stored.get("codex_session_id")
+                agent = stored.get("agent", "claude")
                 await websocket.send_json(
                     {"type": "history", "messages": conversation, "turn": turn_counter}
                 )
@@ -126,7 +141,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 current_abort.set()
                 conversation = []
                 turn_counter = 0
-                claude_session_id = None  # keep cwd; new Claude session next code turn
+                claude_session_id = None  # keep cwd/agent; fresh coding sessions next turn
+                codex_session_id = None
                 if session_id:
                     clear_session(session_id)
                     persist()
@@ -146,7 +162,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 new_cwd = path_for_id(msg.get("id", ""))
                 if new_cwd != cwd:
                     cwd = new_cwd
-                    claude_session_id = None  # switching project starts a fresh Claude session
+                    claude_session_id = None  # switching project starts fresh coding sessions
+                    codex_session_id = None
+                    persist()
+                await send_projects()
+
+            elif msg_type == "select_agent":
+                new_agent = msg.get("agent")
+                if new_agent in ("claude", "codex"):
+                    agent = new_agent
                     persist()
                 await send_projects()
 
@@ -156,15 +180,18 @@ async def websocket_endpoint(websocket: WebSocket):
             turn_task.cancel()
 
 
-async def _run_code_turn(prompt, cwd, resume_id, emit, abort, conversation) -> str | None:
-    """Drive Claude Code for one turn. Returns the (possibly new) claude session id."""
-    emit({"type": "thinking", "content": f"Claude Code i {cwd}..."})
+async def _run_code_turn(runner, prompt, cwd, resume_id, emit, abort, conversation) -> str | None:
+    """Drive a coding agent (Claude Code or Codex) for one turn.
+
+    ``runner`` is run_codex or run_codex_cli — both yield the same typed events.
+    Returns the (possibly new) coding-agent session id for resume.
+    """
     parts: list[str] = []
     result_text: str | None = None
     error_text: str | None = None
     session_id = resume_id
 
-    async for ev in run_codex(prompt, cwd=cwd, resume_session_id=resume_id):
+    async for ev in runner(prompt, cwd=cwd, resume_session_id=resume_id):
         if abort.is_set():
             break
         etype = ev.get("type")
@@ -183,7 +210,7 @@ async def _run_code_turn(prompt, cwd, resume_id, emit, abort, conversation) -> s
 
     reply = "".join(parts).strip() or result_text or error_text or "(no output)"
     conversation.append({"role": "assistant", "content": reply})
-    emit({"type": "done", "summary": f"Fel: {error_text}" if error_text else "Claude Code klar"})
+    emit({"type": "done", "summary": f"Fel: {error_text}" if error_text else "Klar"})
     return session_id
 
 

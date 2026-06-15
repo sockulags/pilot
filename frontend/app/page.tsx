@@ -35,7 +35,10 @@ export type ServerEvent = {
   messages?: { role: string; content: string }[];
   projects?: Project[];
   selected?: string | null;
+  agent?: Agent;
 };
+
+export type Agent = "claude" | "codex";
 
 // A single activity row inside an assistant turn's details panel.
 export type TurnEvent = {
@@ -98,6 +101,7 @@ export default function Home() {
   const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
+  const [agent, setAgent] = useState<Agent>("claude");
   const [running, _setRunning] = useState(false);
   const [wsStatus, setWsStatus] = useState<WsStatus>("disconnected");
   const wsRef = useRef<WebSocket | null>(null);
@@ -208,6 +212,7 @@ export default function Home() {
         if (msg.type === "projects") {
           setProjects(msg.projects ?? []);
           setSelectedProject(msg.selected ?? null);
+          if (msg.agent) setAgent(msg.agent);
           return;
         }
         if (msg.type === "done" || msg.type === "error") setRunning(false);
@@ -268,6 +273,9 @@ export default function Home() {
   const removeProject = useCallback((id: string) => {
     wsRef.current?.send(JSON.stringify({ type: "remove_project", id }));
   }, []);
+  const selectAgent = useCallback((a: Agent) => {
+    wsRef.current?.send(JSON.stringify({ type: "select_agent", agent: a }));
+  }, []);
 
   return (
     <main style={{ display: "flex", flexDirection: "column", height: "100dvh", padding: "1rem", gap: "0.75rem", maxWidth: 800, margin: "0 auto" }}>
@@ -292,9 +300,11 @@ export default function Home() {
       <ProjectBar
         projects={projects}
         selected={selectedProject}
+        agent={agent}
         onSelect={selectProject}
         onAdd={addProject}
         onRemove={removeProject}
+        onSelectAgent={selectAgent}
       />
 
       <Transcript items={transcript} />
