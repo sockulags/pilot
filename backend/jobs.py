@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 import uuid
@@ -250,6 +251,136 @@ def mark_ran(job_id: str, result: str | None = None, now: float | None = None) -
         _save(data)
         return job
     return None
+
+
+# --- display + command grammar (used by the WS layer) -----------------------
+
+_WD_NAMES = ["mån", "tis", "ons", "tor", "fre", "lör", "sön"]
+_WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+
+
+def _human_duration(secs: int) -> str:
+    if secs % 86400 == 0:
+        return f"{secs // 86400} dygn"
+    if secs % 3600 == 0:
+        return f"{secs // 3600} h"
+    if secs % 60 == 0:
+        return f"{secs // 60} min"
+    return f"{secs} s"
+
+
+def describe_schedule(schedule: dict) -> str:
+    """Human-readable (Swedish) one-liner for a schedule. Used in replies + UI."""
+    stype = schedule.get("type")
+    if stype == "interval":
+        return f"var {_human_duration(int(schedule.get('interval_seconds') or 0))}"
+    if stype == "daily":
+        return f"dagligen kl {schedule.get('time')}"
+    if stype == "weekly":
+        days = ", ".join(_WD_NAMES[d] for d in schedule.get("weekdays", []) if 0 <= d < 7)
+        return f"{days} kl {schedule.get('time')}"
+    if stype == "once":
+        return f"en gång {schedule.get('date')} kl {schedule.get('time')}"
+    return "okänt schema"
+
+
+def reminder_content(job: dict) -> str:
+    """The assistant-message text a fired reminder delivers (live or offline)."""
+    payload = (job.get("payload") or "").strip()
+    return f"⏰ {payload or job.get('title') or 'Påminnelse'}"
+
+
+def _parse_duration(token: str) -> int | None:
+    m = re.fullmatch(r"(\d+)([smhd])", token.strip().lower())
+    if not m:
+        return None
+    return int(m.group(1)) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[m.group(2)]
+
+
+def _valid_hhmm(t: str) -> bool:
+    return bool(re.fullmatch(r"([01]?\d|2[0-3]):[0-5]\d", t.strip()))
+
+
+def _valid_date(d: str) -> bool:
+    try:
+        datetime.strptime(d.strip(), "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
+
+
+def _parse_weekdays(token: str) -> list[int] | None:
+    """Parse 'mon,fri' or 'mon-fri' into sorted weekday ints (mon=0). None if any
+    token is not a weekday name."""
+    days: set[int] = set()
+    for part in token.strip().lower().split(","):
+        if "-" in part:
+            a, b = part.split("-", 1)
+            if a not in _WEEKDAYS or b not in _WEEKDAYS:
+                return None
+            ia, ib = _WEEKDAYS[a], _WEEKDAYS[b]
+            span = range(ia, ib + 1) if ia <= ib else [*range(ia, 7), *range(0, ib + 1)]
+            days.update(span)
+        elif part in _WEEKDAYS:
+            days.add(_WEEKDAYS[part])
+        else:
+            return None
+    return sorted(days) if days else None
+
+
+def parse_job_command(arg: str) -> dict:
+    """Parse the `/job` argument into an intent dict.
+
+    Returns one of: {"action": "list"} | {"action": "pause"|"resume"|"delete",
+    "id": str} | {"action": "create", "title", "payload", "schedule"} |
+    {"action": "error", "message": str}.
+    """
+    arg = (arg or "").strip()
+    if not arg or arg.lower() == "list":
+        return {"action": "list"}
+
+    parts = arg.split(None, 1)
+    head = parts[0].lower()
+    rest = parts[1].strip() if len(parts) > 1 else ""
+
+    if head in ("pause", "resume", "delete"):
+        if not rest:
+            return {"action": "error", "message": f"Ange jobb-id: /job {head} <id>"}
+        return {"action": head, "id": rest.split()[0]}
+
+    def _create(payload: str, schedule: dict) -> dict:
+        payload = payload.strip()
+        if not payload:
+            return {"action": "error", "message": "Ange en text för jobbet."}
+        return {"action": "create", "title": payload[:60], "payload": payload, "schedule": schedule}
+
+    if head == "every":
+        d = rest.split(None, 1)
+        secs = _parse_duration(d[0]) if d else None
+        if not secs or len(d) < 2:
+            return {"action": "error", "message": "Format: /job every <30s|10m|2h|1d> <text>"}
+        return _create(d[1], {"type": "interval", "interval_seconds": secs})
+
+    if head == "daily":
+        d = rest.split(None, 1)
+        if len(d) < 2 or not _valid_hhmm(d[0]):
+            return {"action": "error", "message": "Format: /job daily <HH:MM> <text>"}
+        return _create(d[1], {"type": "daily", "time": d[0]})
+
+    if head == "once":
+        d = rest.split(None, 2)
+        if len(d) < 3 or not _valid_date(d[0]) or not _valid_hhmm(d[1]):
+            return {"action": "error", "message": "Format: /job once <YYYY-MM-DD> <HH:MM> <text>"}
+        return _create(d[2], {"type": "once", "date": d[0], "time": d[1]})
+
+    weekdays = _parse_weekdays(head)
+    if weekdays is not None:
+        d = rest.split(None, 1)
+        if len(d) < 2 or not _valid_hhmm(d[0]):
+            return {"action": "error", "message": "Format: /job mon,fri <HH:MM> <text>"}
+        return _create(d[1], {"type": "weekly", "time": d[0], "weekdays": weekdays})
+
+    return {"action": "error", "message": f"Okänt jobbkommando {head!r}. Skriv /job för hjälp."}
 
 
 def reconcile_on_start(now: float | None = None) -> None:

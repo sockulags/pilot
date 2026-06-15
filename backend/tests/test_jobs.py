@@ -213,5 +213,72 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(seeded, get_job(job["id"])["next_run"])
 
 
+class CommandGrammarTests(unittest.TestCase):
+    def test_list_and_empty(self):
+        from jobs import parse_job_command
+
+        self.assertEqual("list", parse_job_command("")["action"])
+        self.assertEqual("list", parse_job_command("list")["action"])
+
+    def test_management(self):
+        from jobs import parse_job_command
+
+        self.assertEqual({"action": "pause", "id": "abc"}, parse_job_command("pause abc"))
+        self.assertEqual({"action": "resume", "id": "abc"}, parse_job_command("resume abc"))
+        self.assertEqual({"action": "delete", "id": "abc"}, parse_job_command("delete abc"))
+        self.assertEqual("error", parse_job_command("pause")["action"])
+
+    def test_every(self):
+        from jobs import parse_job_command
+
+        spec = parse_job_command("every 10m drick vatten")
+        self.assertEqual("create", spec["action"])
+        self.assertEqual({"type": "interval", "interval_seconds": 600}, spec["schedule"])
+        self.assertEqual("drick vatten", spec["payload"])
+        self.assertEqual("error", parse_job_command("every 10x foo")["action"])
+        self.assertEqual("error", parse_job_command("every 10m")["action"])
+
+    def test_daily(self):
+        from jobs import parse_job_command
+
+        spec = parse_job_command("daily 09:00 ta en paus")
+        self.assertEqual({"type": "daily", "time": "09:00"}, spec["schedule"])
+        self.assertEqual("error", parse_job_command("daily 99:00 x")["action"])
+
+    def test_weekly_list_and_range(self):
+        from jobs import parse_job_command
+
+        spec = parse_job_command("mon,fri 08:00 standup")
+        self.assertEqual("weekly", spec["schedule"]["type"])
+        self.assertEqual([0, 4], spec["schedule"]["weekdays"])
+        self.assertEqual([0, 1, 2, 3, 4], parse_job_command("mon-fri 08:00 x")["schedule"]["weekdays"])
+        self.assertEqual("error", parse_job_command("xyz 08:00 x")["action"])
+
+    def test_once(self):
+        from jobs import parse_job_command
+
+        spec = parse_job_command("once 2026-06-20 09:00 ring tandläkaren")
+        self.assertEqual({"type": "once", "date": "2026-06-20", "time": "09:00"}, spec["schedule"])
+        self.assertEqual("ring tandläkaren", spec["payload"])
+        self.assertEqual("error", parse_job_command("once 2026-13-40 09:00 x")["action"])
+
+
+class DescribeTests(unittest.TestCase):
+    def test_describe_each_type(self):
+        from jobs import describe_schedule
+
+        self.assertEqual("var 10 min", describe_schedule({"type": "interval", "interval_seconds": 600}))
+        self.assertEqual("var 2 h", describe_schedule({"type": "interval", "interval_seconds": 7200}))
+        self.assertEqual("dagligen kl 09:00", describe_schedule({"type": "daily", "time": "09:00"}))
+        self.assertEqual("mån, fre kl 08:00", describe_schedule({"type": "weekly", "time": "08:00", "weekdays": [0, 4]}))
+        self.assertEqual("en gång 2026-06-20 kl 09:00", describe_schedule({"type": "once", "date": "2026-06-20", "time": "09:00"}))
+
+    def test_reminder_content(self):
+        from jobs import reminder_content
+
+        self.assertEqual("⏰ drick vatten", reminder_content({"payload": "drick vatten"}))
+        self.assertEqual("⏰ Möte", reminder_content({"payload": "", "title": "Möte"}))
+
+
 if __name__ == "__main__":
     unittest.main()

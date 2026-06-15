@@ -15,6 +15,7 @@ from api.ws import websocket_endpoint
 from api.mcp import create_mcp_app
 from agents.vision import validate_vision_model
 from config import BACKEND_PORT, MCP_PORT, OLLAMA_VISION_ENABLED, FRONTEND_DIR
+from scheduler import run_scheduler
 
 
 @asynccontextmanager
@@ -25,7 +26,13 @@ async def lifespan(app: FastAPI):
         ok, message = await validate_vision_model()
         app.state.vision_status = {"ok": ok, "message": message}
         print(message)
-    yield
+    # Background scheduler for recurring reminders / jobs (survives restarts via
+    # the persisted jobs store; reconciles missed fires on startup).
+    scheduler_task = asyncio.create_task(run_scheduler())
+    try:
+        yield
+    finally:
+        scheduler_task.cancel()
 
 
 def create_app() -> FastAPI:
