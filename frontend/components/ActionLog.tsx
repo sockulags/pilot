@@ -5,7 +5,9 @@ import type { Route, TranscriptItem, TurnEvent } from "@/app/page";
 
 const ICONS: Record<string, string> = {
   thinking: "💭",
+  context: "📁",
   action: "⚡",
+  codex_trace: "⌨",
   result: "✓",
   screenshot: "📸",
   error: "❌",
@@ -13,7 +15,9 @@ const ICONS: Record<string, string> = {
 
 const COLORS: Record<string, string> = {
   thinking: "var(--muted)",
+  context: "var(--muted)",
   action: "var(--accent)",
+  codex_trace: "var(--accent)",
   result: "var(--green)",
   screenshot: "var(--blue)",
   error: "var(--red)",
@@ -125,6 +129,42 @@ function DetailsPanel({ events }: { events: TurnEvent[] }) {
   );
 }
 
+function CodexEvidence({ trace }: { trace: NonNullable<Extract<TranscriptItem, { kind: "assistant" }>["codexTrace"]> }) {
+  const calls = trace.codex_tool_calls ?? [];
+  return (
+    <details style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", marginTop: "0.5rem" }}>
+      <summary style={{ cursor: "pointer", padding: "0.5rem 0.7rem", color: "var(--accent)", fontSize: "0.8rem", userSelect: "none" }}>
+        Codex-bevis ({trace.codex_tool_call_count ?? 0} tool calls)
+      </summary>
+      <div style={{ padding: "0 0.7rem 0.6rem", fontSize: "0.8rem", lineHeight: 1.5, color: "var(--text)" }}>
+        {trace.codex_session_id && <p style={{ margin: "0.35rem 0" }}><strong>Session:</strong> {trace.codex_session_id}</p>}
+        {trace.codex_log_path && <p style={{ margin: "0.35rem 0", wordBreak: "break-word" }}><strong>Logg:</strong> {trace.codex_log_path}</p>}
+        {trace.codex_prompt && <p style={{ margin: "0.35rem 0", whiteSpace: "pre-wrap" }}><strong>Prompt:</strong> {trace.codex_prompt}</p>}
+        <p style={{ margin: "0.35rem 0" }}>
+          <strong>Calls:</strong> shell {trace.codex_shell_call_count ?? 0}, MCP {trace.codex_mcp_call_count ?? 0}
+        </p>
+        {trace.codex_error_summary && (
+          <p style={{ margin: "0.35rem 0", color: "var(--red)", whiteSpace: "pre-wrap" }}><strong>Fel:</strong> {trace.codex_error_summary}</p>
+        )}
+        {trace.codex_final_summary && (
+          <p style={{ margin: "0.35rem 0", whiteSpace: "pre-wrap" }}><strong>Final:</strong> {trace.codex_final_summary}</p>
+        )}
+        {calls.length > 0 && (
+          <div style={{ marginTop: "0.5rem" }}>
+            <strong>Tool calls:</strong>
+            {calls.slice(0, 10).map((call, idx) => (
+              <div key={`${call.namespace}-${call.name}-${idx}`} style={{ marginTop: "0.3rem", paddingTop: "0.3rem", borderTop: "1px solid var(--border)" }}>
+                <span style={{ color: "var(--accent)" }}>{call.namespace ? `${call.namespace}.` : ""}{call.name}</span>
+                {call.arguments && <span style={{ display: "block", color: "var(--muted)", wordBreak: "break-word" }}>{call.arguments}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
 function AssistantTurn({ item }: { item: Extract<TranscriptItem, { kind: "assistant" }> }) {
   const showResult = item.summary && item.route === "computer";
   return (
@@ -149,7 +189,13 @@ function AssistantTurn({ item }: { item: Extract<TranscriptItem, { kind: "assist
       {!item.text && !item.done && item.events.length === 0 && (
         <div style={{ color: "var(--muted)", fontSize: "0.85rem", fontStyle: "italic" }}>tänker…</div>
       )}
+      {item.cwd && (
+        <div style={{ color: "var(--muted)", fontSize: "0.75rem", marginTop: "0.35rem", wordBreak: "break-word" }}>
+          CWD: {item.cwd}
+        </div>
+      )}
       {item.events.length > 0 && <DetailsPanel events={item.events} />}
+      {item.codexTrace && <CodexEvidence trace={item.codexTrace} />}
       {showResult && <ResultCard summary={item.summary!} />}
     </div>
   );

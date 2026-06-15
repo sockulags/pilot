@@ -1,5 +1,6 @@
 import asyncio
 import os
+from pathlib import Path
 from dataclasses import dataclass
 from typing import AsyncGenerator, Callable
 from agents.router import route_next_action, analyze_screenshot, vision_done_summary
@@ -61,6 +62,7 @@ async def run_agent_loop(
     emit: Callable[[dict], None],
     abort_event: asyncio.Event,
     conversation: list[dict] | None = None,
+    project_cwd: str | None = None,
 ) -> LoopOutcome:
     history: list[dict] = []
     failed_tools: set[str] = set()
@@ -141,6 +143,8 @@ async def run_agent_loop(
             emit(make_event("error", content=focus_block_reason))
             history.append({"type": "blocked", "content": focus_block_reason})
             return LoopOutcome("blocked", render_action_log(history), focus_block_reason)
+
+        args = apply_project_cwd_to_args(tool, args, project_cwd)
 
         if tool == "run_command":
             command_key = normalize_command_key(args)
@@ -225,6 +229,27 @@ def normalize_command_key(args: dict) -> tuple[str, str]:
     cmd = str(args.get("cmd", "")).strip().lower()
     cwd = str(args.get("cwd") or os.getcwd()).strip().lower()
     return cmd, cwd
+
+
+def apply_project_cwd_to_args(tool: str, args: dict, project_cwd: str | None) -> dict:
+    if not project_cwd:
+        return args
+
+    if tool == "run_command" and not args.get("cwd"):
+        return {**args, "cwd": project_cwd}
+
+    if tool == "list_dir" and not args.get("path"):
+        return {**args, "path": project_cwd}
+
+    if tool == "find_file" and not args.get("root"):
+        return {**args, "root": project_cwd}
+
+    if tool == "read_file" and args.get("path"):
+        path = Path(str(args["path"]))
+        if not path.is_absolute():
+            return {**args, "path": str(Path(project_cwd) / path)}
+
+    return args
 
 
 def task_requests_desktop_text_entry(task: str) -> bool:

@@ -23,7 +23,9 @@ import shutil
 import sys
 from typing import AsyncGenerator
 
-from config import CODEX_CLI, CODEX_SANDBOX_MODE
+from config import CODEX_CLI
+
+CODEX_EXEC_SANDBOX_MODE = "danger-full-access"
 
 _resolved_cli: str | None = None
 
@@ -45,7 +47,7 @@ def _find_bundled_codex() -> str | None:
 
 
 def resolve_codex_cli() -> str:
-    """Resolve the codex executable: explicit path -> PATH -> bundled desktop CLI."""
+    """Resolve the codex executable: explicit path -> bundled desktop CLI -> PATH."""
     global _resolved_cli
     if _resolved_cli is not None:
         return _resolved_cli
@@ -53,10 +55,12 @@ def resolve_codex_cli() -> str:
     cli = CODEX_CLI or "codex"
     if os.path.isabs(cli) and os.path.isfile(cli):
         _resolved_cli = cli
+    elif bundled := _find_bundled_codex():
+        _resolved_cli = bundled
     elif shutil.which(cli):
         _resolved_cli = shutil.which(cli)
     else:
-        _resolved_cli = _find_bundled_codex() or cli
+        _resolved_cli = cli
     return _resolved_cli
 
 
@@ -64,7 +68,7 @@ def _build_cmd(prompt: str, cwd: str | None, resume_session_id: str | None) -> l
     cli = resolve_codex_cli()
     flags = [
         "--json", "--skip-git-repo-check", "--color", "never",
-        "--sandbox", CODEX_SANDBOX_MODE,
+        "--sandbox", CODEX_EXEC_SANDBOX_MODE,
     ]
     if cwd:
         flags += ["-C", cwd]
