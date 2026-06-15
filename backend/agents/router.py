@@ -1,9 +1,8 @@
-import json
 import logging
 import os
 import platform
-import re
 import httpx
+from agents.json_utils import extract_json_object
 from config import OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_VISION_MODEL
 
 logger = logging.getLogger(__name__)
@@ -19,8 +18,9 @@ Available tools:
 - focus_window(title): Focus a desktop window by partial title match.
 - screenshot(): Take a screenshot of the current screen. Use when you need to see what's on screen.
 - get_screen_size(): Get screen resolution.
-- click(x, y, button?): Click at coordinates. button is "left" (default), "right", or "middle".
-- type_text(text): Type text using the keyboard.
+- click_element(element_id, button?): Click a numbered UI element from the current screen observation. PREFER this over click(x,y) whenever the observation lists elements — it is accurate. button is "left" (default), "right", or "middle".
+- click(x, y, button?): Click at raw pixel coordinates. Use only when no element list is available (e.g. games/canvas). button is "left" (default), "right", or "middle".
+- type_text(text): Type text using the keyboard into the focused control. Click the target field with click_element first.
 - scroll(x, y, amount): Scroll at coordinates. Positive amount scrolls up, negative scrolls down.
 - move_mouse(x, y): Move mouse cursor.
 - key_press(key): Press a key (e.g. "enter", "escape", "tab", "f5").
@@ -32,10 +32,11 @@ Available tools:
 """
 
 SAFETY_RULE = (
-    "Do not use click, type_text, scroll, move_mouse, key_press, or hotkey unless "
-    "the current screen observation clearly identifies the active window or target. "
-    "If visual context is unavailable, use run_command/open_app/run_codex or done "
-    "with a clear limitation instead."
+    "Do not use click_element, click, type_text, scroll, move_mouse, key_press, or "
+    "hotkey unless the current screen observation clearly identifies the active "
+    "window or target. When the observation lists numbered elements, prefer "
+    "click_element over click(x,y). If visual context is unavailable, use "
+    "run_command/open_app/run_codex or done with a clear limitation instead."
 )
 
 COMMAND_RULES = (
@@ -128,39 +129,7 @@ async def route_next_action(
         data = resp.json()
         content = data["message"]["content"].strip()
 
-    return _parse_json(content)
-
-
-def _parse_json(content: str) -> dict:
-    # 1. Markdown code block
-    for marker in ("```json", "```"):
-        if marker in content:
-            inner = content.split(marker)[1].split("```")[0].strip()
-            try:
-                return _loads_router_json(inner)
-            except json.JSONDecodeError:
-                pass
-
-    # 2. Greedy regex: first { to last } — handles nested objects correctly
-    match = re.search(r"\{.*\}", content, re.DOTALL)
-    if match:
-        try:
-            return _loads_router_json(match.group())
-        except json.JSONDecodeError:
-            pass
-
-    logger.warning("Failed to parse router response: %r", content[:300])
-    return PARSE_ERROR_DEFAULT
-
-
-def _loads_router_json(raw: str) -> dict:
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        # Local Windows paths in model prose often appear as C:\Users\... inside
-        # JSON strings. Escape only backslashes that are not valid JSON escapes.
-        repaired = re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", raw)
-        return json.loads(repaired)
+    return extract_json_object(content, PARSE_ERROR_DEFAULT)
 
 
 async def vision_done_summary(task: str, image_b64: str) -> str:

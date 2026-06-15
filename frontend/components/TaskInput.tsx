@@ -3,16 +3,16 @@
 import { useState, KeyboardEvent } from "react";
 
 interface Props {
-  onRun: (task: string) => void;
+  onSend: (text: string) => void;
   disabled: boolean;
 }
 
-export default function TaskInput({ onRun, disabled }: Props) {
+export default function ChatInput({ onSend, disabled }: Props) {
   const [value, setValue] = useState("");
 
   const submit = () => {
     if (!value.trim() || disabled) return;
-    onRun(value.trim());
+    onSend(value.trim());
     setValue("");
   };
 
@@ -30,7 +30,7 @@ export default function TaskInput({ onRun, disabled }: Props) {
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={onKey}
         disabled={disabled}
-        placeholder="Beskriv vad agenten ska göra... (Enter för att köra)"
+        placeholder="Skriv ett meddelande... (Enter för att skicka, Shift+Enter för ny rad)"
         rows={3}
         style={{
           flex: 1,
@@ -61,7 +61,7 @@ export default function TaskInput({ onRun, disabled }: Props) {
           whiteSpace: "nowrap",
         }}
       >
-        Kör
+        Skicka
       </button>
     </div>
   );

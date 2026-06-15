@@ -1,20 +1,58 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import TaskInput from "@/components/TaskInput";
-import ActionLog from "@/components/ActionLog";
+import ChatInput from "@/components/TaskInput";
+import Transcript from "@/components/ActionLog";
 import AbortButton from "@/components/AbortButton";
 
-export type LogEvent = {
-  id: number;
-  type: "thinking" | "action" | "result" | "screenshot" | "done" | "error";
+export type Route = "chat" | "computer" | "code";
+
+// Raw event coming over the WebSocket from the backend.
+export type ServerEvent = {
+  type:
+    | "history"
+    | "turn_start"
+    | "assistant_delta"
+    | "thinking"
+    | "action"
+    | "result"
+    | "screenshot"
+    | "done"
+    | "error"
+    | "reset_ok";
+  turn?: number;
+  route?: Route;
   content?: string;
   tool?: string;
   args?: Record<string, unknown>;
   image?: string;
   summary?: string;
-  ts: number;
+  thinking?: string;
+  messages?: { role: string; content: string }[];
 };
+
+// A single activity row inside an assistant turn's details panel.
+export type TurnEvent = {
+  id: number;
+  type: string;
+  content?: string;
+  tool?: string;
+  args?: Record<string, unknown>;
+  image?: string;
+};
+
+export type TranscriptItem =
+  | { kind: "user"; id: number; turn: number; text: string }
+  | {
+      kind: "assistant";
+      id: number;
+      turn: number;
+      route?: Route;
+      text: string; // streamed reply (chat / code)
+      events: TurnEvent[]; // thinking / action / result / screenshot / error
+      summary?: string; // final result (computer / code)
+      done: boolean;
+    };
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws";
 
@@ -35,22 +73,95 @@ const STATUS_COLOR: Record<WsStatus, string> = {
 
 const RECONNECT_DELAY = 3000;
 
+// crypto.randomUUID requires a secure context (missing over http on the LAN,
+// i.e. the mobile case). Fall back to getRandomValues, then Math.random.
+function makeSessionId(): string {
+  try {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+    if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+      const b = crypto.getRandomValues(new Uint8Array(16));
+      return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+    }
+  } catch {
+    // fall through
+  }
+  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+}
+
 export default function Home() {
-  const [log, setLog] = useState<LogEvent[]>([]);
+  const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
   const [running, _setRunning] = useState(false);
   const [wsStatus, setWsStatus] = useState<WsStatus>("disconnected");
   const wsRef = useRef<WebSocket | null>(null);
   const idRef = useRef(0);
+  const turnRef = useRef(0); // mirrors the backend's per-message turn counter
   const runningRef = useRef(false);
+  const transcriptRef = useRef<TranscriptItem[]>([]);
+  const sessionIdRef = useRef<string>("");
 
-  const addEvent = useCallback((e: Omit<LogEvent, "id" | "ts">) => {
-    setLog((prev) => [...prev, { ...e, id: idRef.current++, ts: Date.now() }]);
+  // Keep a synchronous mirror of the transcript so WS callbacks can read its
+  // current length without a stale closure.
+  useEffect(() => {
+    transcriptRef.current = transcript;
+  }, [transcript]);
+
+  // Stable per-browser session id so the backend can resume the conversation
+  // across reconnects / reloads.
+  useEffect(() => {
+    let id = localStorage.getItem("pilot_session_id");
+    if (!id) {
+      id = makeSessionId();
+      localStorage.setItem("pilot_session_id", id);
+    }
+    sessionIdRef.current = id;
   }, []);
 
-  // Keeps runningRef in sync so WS callbacks can read current value without stale closure
   const setRunning = useCallback((val: boolean) => {
     runningRef.current = val;
     _setRunning(val);
+  }, []);
+
+  // Fold an incoming server event into the assistant turn it belongs to.
+  const applyEvent = useCallback((ev: ServerEvent) => {
+    if (ev.type === "reset_ok") return;
+    const turn = ev.turn ?? turnRef.current;
+
+    setTranscript((prev) => {
+      const next = [...prev];
+      let idx = next.findIndex((i) => i.kind === "assistant" && i.turn === turn);
+      if (idx === -1) {
+        next.push({ kind: "assistant", id: idRef.current++, turn, text: "", events: [], done: false });
+        idx = next.length - 1;
+      }
+      const item = next[idx];
+      if (item.kind !== "assistant") return prev;
+      const updated = { ...item, events: [...item.events] };
+
+      switch (ev.type) {
+        case "turn_start":
+          updated.route = ev.route;
+          if (ev.thinking) updated.events.push({ id: idRef.current++, type: "thinking", content: ev.thinking });
+          break;
+        case "assistant_delta":
+          updated.text += ev.content ?? "";
+          break;
+        case "done":
+          updated.done = true;
+          if (ev.summary) updated.summary = ev.summary;
+          break;
+        case "screenshot":
+          updated.events.push({ id: idRef.current++, type: "screenshot", image: ev.image });
+          break;
+        case "action":
+          updated.events.push({ id: idRef.current++, type: "action", tool: ev.tool, args: ev.args });
+          break;
+        default: // thinking | result | error
+          updated.events.push({ id: idRef.current++, type: ev.type, content: ev.content });
+      }
+
+      next[idx] = updated;
+      return next;
+    });
   }, []);
 
   useEffect(() => {
@@ -63,20 +174,36 @@ export default function Home() {
       const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
 
-      ws.onopen = () => setWsStatus("connected");
+      ws.onopen = () => {
+        setWsStatus("connected");
+        // Resume (or register) this browser's session.
+        ws.send(JSON.stringify({ type: "hello", session_id: sessionIdRef.current }));
+      };
 
-      ws.onmessage = (ev) => {
-        const msg = JSON.parse(ev.data) as LogEvent;
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data) as ServerEvent;
+        if (msg.type === "history") {
+          // Only rebuild on a fresh page (empty transcript); a mid-session
+          // reconnect keeps the richer local transcript intact.
+          if (transcriptRef.current.length === 0 && msg.messages?.length) {
+            setTranscript(
+              msg.messages.map((m) =>
+                m.role === "user"
+                  ? { kind: "user", id: idRef.current++, turn: 0, text: m.content }
+                  : { kind: "assistant", id: idRef.current++, turn: 0, text: m.content, events: [], done: true }
+              )
+            );
+            turnRef.current = msg.turn ?? 0;
+          }
+          return;
+        }
         if (msg.type === "done" || msg.type === "error") setRunning(false);
-        addEvent(msg);
+        applyEvent(msg);
       };
 
       ws.onerror = () => {
         setWsStatus("error");
-        if (runningRef.current) {
-          setRunning(false);
-          addEvent({ type: "error", content: `Anslutning bröts — ${WS_URL}` });
-        }
+        if (runningRef.current) setRunning(false);
       };
 
       ws.onclose = () => {
@@ -93,24 +220,29 @@ export default function Home() {
       if (retryTimer) clearTimeout(retryTimer);
       wsRef.current?.close();
     };
-  }, [addEvent, setRunning]);
+  }, [applyEvent, setRunning]);
 
-  const handleRun = useCallback(
-    (task: string) => {
+  const handleSend = useCallback(
+    (text: string) => {
       const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        addEvent({ type: "error", content: "Inte ansluten — vänta på Ansluten-status och försök igen" });
-        return;
-      }
-      setLog([]);
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      turnRef.current += 1; // matches backend turn_counter increment order
+      setTranscript((prev) => [...prev, { kind: "user", id: idRef.current++, turn: turnRef.current, text }]);
       setRunning(true);
-      ws.send(JSON.stringify({ type: "run", task }));
+      ws.send(JSON.stringify({ type: "message", text }));
     },
-    [addEvent, setRunning]
+    [setRunning]
   );
 
   const handleAbort = useCallback(() => {
     wsRef.current?.send(JSON.stringify({ type: "abort" }));
+    setRunning(false);
+  }, [setRunning]);
+
+  const handleReset = useCallback(() => {
+    wsRef.current?.send(JSON.stringify({ type: "reset" }));
+    turnRef.current = 0;
+    setTranscript([]);
     setRunning(false);
   }, [setRunning]);
 
@@ -119,18 +251,26 @@ export default function Home() {
       <header style={{ paddingBottom: "0.5rem", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
           <h1 style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--accent)" }}>Pilot</h1>
-          <p style={{ fontSize: "0.8rem", color: "var(--muted)" }}>Local AI computer agent</p>
+          <p style={{ fontSize: "0.8rem", color: "var(--muted)" }}>Local AI chat &amp; computer agent</p>
         </div>
-        <span style={{ fontSize: "0.75rem", fontWeight: 600, color: STATUS_COLOR[wsStatus] }}>
-          ● {STATUS_LABEL[wsStatus]}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <button
+            onClick={handleReset}
+            style={{ fontSize: "0.75rem", color: "var(--muted)", background: "none", border: "1px solid var(--border)", borderRadius: 6, padding: "0.25rem 0.6rem", cursor: "pointer" }}
+          >
+            Ny konversation
+          </button>
+          <span style={{ fontSize: "0.75rem", fontWeight: 600, color: STATUS_COLOR[wsStatus] }}>
+            ● {STATUS_LABEL[wsStatus]}
+          </span>
+        </div>
       </header>
 
-      <TaskInput onRun={handleRun} disabled={running} />
+      <Transcript items={transcript} />
 
       {running && <AbortButton onAbort={handleAbort} />}
 
-      <ActionLog events={log} />
+      <ChatInput onSend={handleSend} disabled={wsStatus !== "connected"} />
     </main>
   );
 }
