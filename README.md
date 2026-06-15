@@ -76,6 +76,23 @@ substituted automatically.
 `COORDINATOR_MAX_STEPS` (default 6) bounds how many consults/tool calls one turn
 may chain.
 
+## Long-term memory
+
+Pilot remembers durable facts across sessions with a small semantic store
+(`backend/memory.py`, embeddings via `nomic-embed-text`):
+
+- **Recall** — every chat/computer turn embeds the message and retrieves the
+  most similar stored memories (cosine ≥ `MEMORY_MIN_SCORE`), injecting them into
+  the coordinator and the final reply. So "vad heter jag?" works in a brand-new
+  session once you've told it your name.
+- **Save** — the coordinator's `remember` action stores a fact (e.g. when you
+  say "kom ihåg att…", or share a lasting preference). A 💾 chip marks the turn.
+  Facts are saved in **your language** — `nomic-embed-text` is weak cross-lingual,
+  so a translated memory wouldn't match a same-language query.
+
+The store is a JSON file under `backend/data/` (gitignored). Tunables:
+`MEMORY_TOP_K`, `MEMORY_MIN_SCORE`, `OLLAMA_EMBED_MODEL`.
+
 ## MCP integration (Claude Desktop)
 
 Add to your Claude Desktop config:
