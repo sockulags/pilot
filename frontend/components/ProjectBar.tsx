@@ -1,15 +1,22 @@
 "use client";
 
 import { useState, CSSProperties } from "react";
-import type { Project } from "@/app/page";
+import type { Project, Agent } from "@/app/page";
 
 interface Props {
   projects: Project[];
   selected: string | null; // selected project path (cwd)
+  agent: Agent;
   onSelect: (id: string) => void;
   onAdd: (path: string) => void;
   onRemove: (id: string) => void;
+  onSelectAgent: (a: Agent) => void;
 }
+
+const AGENTS: { id: Agent; label: string }[] = [
+  { id: "claude", label: "Claude Code" },
+  { id: "codex", label: "Codex" },
+];
 
 const btn: CSSProperties = {
   background: "none",
@@ -31,7 +38,7 @@ const field: CSSProperties = {
   fontSize: "0.8rem",
 };
 
-export default function ProjectBar({ projects, selected, onSelect, onAdd, onRemove }: Props) {
+export default function ProjectBar({ projects, selected, agent, onSelect, onAdd, onRemove, onSelectAgent }: Props) {
   const [adding, setAdding] = useState(false);
   const [path, setPath] = useState("");
   const selectedProj = projects.find((p) => p.path === selected) ?? null;
@@ -97,11 +104,30 @@ export default function ProjectBar({ projects, selected, onSelect, onAdd, onRemo
       {selectedProj && (
         <span
           title={selectedProj.path}
-          style={{ color: "var(--muted)", fontFamily: "monospace", fontSize: "0.72rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 320 }}
+          style={{ color: "var(--muted)", fontFamily: "monospace", fontSize: "0.72rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 240 }}
         >
           {selectedProj.path}
         </span>
       )}
+
+      <span style={{ marginLeft: "auto", display: "flex", gap: "0.25rem", alignItems: "center" }}>
+        <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>Agent:</span>
+        {AGENTS.map((a) => (
+          <button
+            key={a.id}
+            onClick={() => onSelectAgent(a.id)}
+            title={`Kör kod-uppgifter med ${a.label}`}
+            style={{
+              ...btn,
+              ...(agent === a.id
+                ? { color: "var(--text)", borderColor: "var(--accent)", background: "rgba(99,102,241,0.12)" }
+                : {}),
+            }}
+          >
+            {a.label}
+          </button>
+        ))}
+      </span>
     </div>
   );
 }

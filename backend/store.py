@@ -5,7 +5,8 @@ of truth on the backend, so a reconnecting client (mobile drops the WebSocket
 often) or a backend restart can resume the same conversation.
 
 Stored shape: {"messages": [{"role", "content"}, ...], "turn": int,
-"cwd": str|None, "claude_session_id": str|None}
+"cwd": str|None, "claude_session_id": str|None, "codex_session_id": str|None,
+"agent": "claude"|"codex"}
 """
 
 import json
@@ -21,7 +22,14 @@ logger = logging.getLogger(__name__)
 # Accept only safe session ids (uuid-ish) so the id can't escape SESSIONS_DIR.
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
-_EMPTY = {"messages": [], "turn": 0, "cwd": None, "claude_session_id": None}
+_EMPTY = {
+    "messages": [],
+    "turn": 0,
+    "cwd": None,
+    "claude_session_id": None,
+    "codex_session_id": None,
+    "agent": "claude",
+}
 
 
 def is_valid_session_id(session_id: str) -> bool:
@@ -44,6 +52,8 @@ def load_session(session_id: str) -> dict:
             "turn": int(data.get("turn", 0)),
             "cwd": data.get("cwd"),
             "claude_session_id": data.get("claude_session_id"),
+            "codex_session_id": data.get("codex_session_id"),
+            "agent": data.get("agent", "claude"),
         }
     except FileNotFoundError:
         return dict(_EMPTY)
@@ -58,6 +68,8 @@ def save_session(
     turn: int,
     cwd: str | None = None,
     claude_session_id: str | None = None,
+    codex_session_id: str | None = None,
+    agent: str = "claude",
 ) -> None:
     if not is_valid_session_id(session_id):
         return
@@ -67,6 +79,8 @@ def save_session(
         "turn": turn,
         "cwd": cwd,
         "claude_session_id": claude_session_id,
+        "codex_session_id": codex_session_id,
+        "agent": agent,
     }
     try:
         # Atomic write: temp file in the same dir, then replace.
