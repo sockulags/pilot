@@ -63,7 +63,18 @@ export type TranscriptItem =
       done: boolean;
     };
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws";
+// Derive the WS URL from the page origin so one build works on localhost, LAN
+// and over a Tailscale HTTPS hostname. The Next dev server runs the UI on :3000
+// while the backend WS is on :8000 of the same host — detect that and redirect.
+// (No NEXT_PUBLIC_ env: it would be inlined into the static build and break the
+// single-origin/Tailscale case.)
+function wsUrl(): string {
+  if (typeof window === "undefined") return "ws://localhost:8000/ws";
+  const { protocol, hostname, host, port } = window.location;
+  if (port === "3000") return `ws://${hostname}:8000/ws`; // Next dev
+  const proto = protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${host}/ws`;
+}
 
 type WsStatus = "disconnected" | "connecting" | "connected" | "error";
 
@@ -110,6 +121,7 @@ export default function Home() {
   const runningRef = useRef(false);
   const transcriptRef = useRef<TranscriptItem[]>([]);
   const sessionIdRef = useRef<string>("");
+  const tokenRef = useRef<string>("");
 
   // Keep a synchronous mirror of the transcript so WS callbacks can read its
   // current length without a stale closure.
@@ -126,6 +138,19 @@ export default function Home() {
       localStorage.setItem("pilot_session_id", id);
     }
     sessionIdRef.current = id;
+  }, []);
+
+  // Auth token: ?token=… is captured once into localStorage (then stripped from
+  // the URL) and sent on every hello. Empty when the backend has no token set.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const fromQuery = url.searchParams.get("token");
+    if (fromQuery) {
+      localStorage.setItem("pilot_token", fromQuery);
+      url.searchParams.delete("token");
+      window.history.replaceState({}, "", url.toString());
+    }
+    tokenRef.current = localStorage.getItem("pilot_token") || "";
   }, []);
 
   const setRunning = useCallback((val: boolean) => {
@@ -183,13 +208,13 @@ export default function Home() {
     function openWs() {
       if (dead) return;
       setWsStatus("connecting");
-      const ws = new WebSocket(WS_URL);
+      const ws = new WebSocket(wsUrl());
       wsRef.current = ws;
 
       ws.onopen = () => {
         setWsStatus("connected");
-        // Resume (or register) this browser's session.
-        ws.send(JSON.stringify({ type: "hello", session_id: sessionIdRef.current }));
+        // Resume (or register) this browser's session; token is "" unless set.
+        ws.send(JSON.stringify({ type: "hello", session_id: sessionIdRef.current, token: tokenRef.current }));
       };
 
       ws.onmessage = (e) => {
