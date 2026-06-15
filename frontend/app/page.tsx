@@ -48,6 +48,7 @@ export type ServerEvent = {
   model?: string; // turn_start: the local model that answers this turn
   model_mode?: string; // projects: "auto" or a pinned model id
   models?: ModelOption[]; // projects: selectable model catalog
+  route_mode?: string; // projects: "auto" or a forced route
 };
 
 export type Agent = "claude" | "codex";
@@ -151,6 +152,7 @@ export default function Home() {
   const [agent, setAgent] = useState<Agent>("claude");
   const [modelMode, setModelMode] = useState<string>("auto");
   const [models, setModels] = useState<ModelOption[]>([]);
+  const [routeMode, setRouteMode] = useState<string>("auto");
   const [running, _setRunning] = useState(false);
   const [wsStatus, setWsStatus] = useState<WsStatus>("disconnected");
   const wsRef = useRef<WebSocket | null>(null);
@@ -313,6 +315,7 @@ export default function Home() {
           if (msg.agent) setAgent(msg.agent);
           if (msg.model_mode) setModelMode(msg.model_mode);
           if (msg.models) setModels(msg.models);
+          if (msg.route_mode) setRouteMode(msg.route_mode);
           return;
         }
         if (msg.type === "done" || msg.type === "error") setRunning(false);
@@ -374,8 +377,9 @@ export default function Home() {
       if (selected) ws.send(JSON.stringify({ type: "select_project", id: selected.id }));
       ws.send(JSON.stringify({ type: "select_agent", agent }));
       ws.send(JSON.stringify({ type: "select_model", model_mode: modelMode }));
+      ws.send(JSON.stringify({ type: "select_route", route_mode: routeMode }));
     }
-  }, [agent, modelMode, projects, selectedProject, setRunning]);
+  }, [agent, modelMode, routeMode, projects, selectedProject, setRunning]);
 
   const selectProject = useCallback((id: string) => {
     wsRef.current?.send(JSON.stringify({ type: "select_project", id }));
@@ -391,6 +395,9 @@ export default function Home() {
   }, []);
   const selectModel = useCallback((mode: string) => {
     wsRef.current?.send(JSON.stringify({ type: "select_model", model_mode: mode }));
+  }, []);
+  const selectRoute = useCallback((mode: string) => {
+    wsRef.current?.send(JSON.stringify({ type: "select_route", route_mode: mode }));
   }, []);
 
   return (
@@ -419,11 +426,13 @@ export default function Home() {
         agent={agent}
         modelMode={modelMode}
         models={models}
+        routeMode={routeMode}
         onSelect={selectProject}
         onAdd={addProject}
         onRemove={removeProject}
         onSelectAgent={selectAgent}
         onSelectModel={selectModel}
+        onSelectRoute={selectRoute}
       />
 
       <Transcript items={transcript} />

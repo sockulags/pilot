@@ -30,6 +30,7 @@ _EMPTY = {
     "codex_session_id": None,
     "agent": "claude",
     "model_mode": "auto",
+    "route_mode": "auto",
 }
 
 
@@ -56,6 +57,7 @@ def load_session(session_id: str) -> dict:
             "codex_session_id": data.get("codex_session_id"),
             "agent": data.get("agent", "claude"),
             "model_mode": data.get("model_mode", "auto"),
+            "route_mode": data.get("route_mode", "auto"),
         }
     except FileNotFoundError:
         return dict(_EMPTY)
@@ -73,6 +75,7 @@ def save_session(
     codex_session_id: str | None = None,
     agent: str = "claude",
     model_mode: str = "auto",
+    route_mode: str = "auto",
 ) -> None:
     if not is_valid_session_id(session_id):
         return
@@ -85,6 +88,7 @@ def save_session(
         "codex_session_id": codex_session_id,
         "agent": agent,
         "model_mode": model_mode,
+        "route_mode": route_mode,
     }
     try:
         # Atomic write: temp file in the same dir, then replace.

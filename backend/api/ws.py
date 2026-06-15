@@ -50,6 +50,7 @@ async def websocket_endpoint(websocket: WebSocket):
     codex_session_id: str | None = None
     agent: str = "claude"
     model_mode: str = "auto"  # "auto" = orchestrator picks per turn; else a pinned model id
+    route_mode: str = "auto"  # "auto" = classifier routes; else forced chat|computer|code
     current_abort = asyncio.Event()
     turn_task: asyncio.Task | None = None
     turn_counter = 0
@@ -61,7 +62,7 @@ async def websocket_endpoint(websocket: WebSocket):
         if session_id:
             save_session(
                 session_id, conversation, turn_counter, cwd,
-                claude_session_id, codex_session_id, agent, model_mode,
+                claude_session_id, codex_session_id, agent, model_mode, route_mode,
             )
 
     def model_catalog() -> list[dict]:
@@ -78,6 +79,7 @@ async def websocket_endpoint(websocket: WebSocket):
             "agent": agent,
             "model_mode": model_mode,
             "models": model_catalog(),
+            "route_mode": route_mode,
         })
 
     def resolve_model_token(token: str) -> str | None:
@@ -130,11 +132,16 @@ async def websocket_endpoint(websocket: WebSocket):
         project = os.path.basename(cwd.rstrip("\\/")) if cwd else None
         # Recall relevant long-term memories for this turn (degrades to "" on failure).
         memories = format_for_prompt(await search_memories(text))
-        decision = await classify_turn(prior, text, project=project, model_mode=model_mode)
+        # route_mode "auto" lets the classifier decide; otherwise the user has
+        # pinned the route (Läge toggle) and we skip classification entirely.
+        if route_mode == "auto":
+            decision = await classify_turn(prior, text, project=project, model_mode=model_mode)
+        else:
+            decision = {"route": route_mode, "prompt": text, "thinking": f"forced route: {route_mode}"}
         route = decision["route"]
         # The coordinator (front brain) is fast gemma4 in auto mode; a pin makes
         # the chosen model the lead. It consults installed experts as needed.
-        coordinator_model = OLLAMA_MODEL if model_mode == "auto" else tools_capable_model(decision.get("model"))
+        coordinator_model = OLLAMA_MODEL if model_mode == "auto" else tools_capable_model(model_mode)
 
         def emit(event: dict):
             send({**event, "turn": turn, "route": route})
@@ -227,6 +234,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 codex_session_id = stored.get("codex_session_id")
                 agent = stored.get("agent", "claude")
                 model_mode = stored.get("model_mode", "auto")
+                route_mode = stored.get("route_mode", "auto")
                 await websocket.send_json(
                     {"type": "history", "messages": conversation, "turn": turn_counter}
                 )
@@ -287,6 +295,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 requested = str(msg.get("model_mode", "auto"))
                 if requested == "auto" or is_known_model(requested):
                     model_mode = requested
+                    persist()
+                await send_projects()
+
+            elif msg_type == "select_route":
+                requested = str(msg.get("route_mode", "auto"))
+                if requested in ("auto", "chat", "computer", "code"):
+                    route_mode = requested
                     persist()
                 await send_projects()
 

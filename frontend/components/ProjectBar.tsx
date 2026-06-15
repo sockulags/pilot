@@ -9,12 +9,21 @@ interface Props {
   agent: Agent;
   modelMode: string; // "auto" or a pinned model id
   models: ModelOption[];
+  routeMode: string; // "auto" or a forced route
   onSelect: (id: string) => void;
   onAdd: (path: string) => void;
   onRemove: (id: string) => void;
   onSelectAgent: (a: Agent) => void;
   onSelectModel: (mode: string) => void;
+  onSelectRoute: (mode: string) => void;
 }
+
+const ROUTE_MODES: { id: string; label: string }[] = [
+  { id: "auto", label: "Auto" },
+  { id: "chat", label: "Chatt" },
+  { id: "computer", label: "Dator" },
+  { id: "code", label: "Kod" },
+];
 
 const AGENTS: { id: Agent; label: string }[] = [
   { id: "claude", label: "Claude Code" },
@@ -41,7 +50,7 @@ const field: CSSProperties = {
   fontSize: "0.8rem",
 };
 
-export default function ProjectBar({ projects, selected, agent, modelMode, models, onSelect, onAdd, onRemove, onSelectAgent, onSelectModel }: Props) {
+export default function ProjectBar({ projects, selected, agent, modelMode, models, routeMode, onSelect, onAdd, onRemove, onSelectAgent, onSelectModel, onSelectRoute }: Props) {
   const [adding, setAdding] = useState(false);
   const [path, setPath] = useState("");
   const selectedProj = projects.find((p) => p.path === selected) ?? null;
@@ -113,7 +122,25 @@ export default function ProjectBar({ projects, selected, agent, modelMode, model
         </span>
       )}
 
-      <span style={{ marginLeft: "auto", display: "flex", gap: "0.35rem", alignItems: "center" }}>
+      <span style={{ marginLeft: "auto", display: "flex", gap: "0.25rem", alignItems: "center" }}>
+        <span style={{ color: "var(--muted)", fontSize: "0.8rem" }} title="Auto = Pilot väljer rutt per fråga. Annars tvingas läget.">Läge:</span>
+        {ROUTE_MODES.map((r) => (
+          <button
+            key={r.id}
+            onClick={() => onSelectRoute(r.id)}
+            style={{
+              ...btn,
+              ...(routeMode === r.id
+                ? { color: "var(--text)", borderColor: "var(--accent)", background: "rgba(99,102,241,0.12)" }
+                : {}),
+            }}
+          >
+            {r.label}
+          </button>
+        ))}
+      </span>
+
+      <span style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
         <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>Modell:</span>
         <select
           value={modelMode}
