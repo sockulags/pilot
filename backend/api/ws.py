@@ -24,6 +24,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from agents.loop import run_agent_loop
 from agents.orchestrator import classify_turn, compose_reply
+from codex_logs import summarize_codex_session
 from config import PILOT_AUTH_TOKEN
 from projects import add_project, list_projects, path_for_id, remove_project
 from store import clear_session, load_session, save_session
@@ -84,17 +85,28 @@ async def websocket_endpoint(websocket: WebSocket):
                 emit({"type": "done"})
             elif agent == "codex":
                 emit({"type": "thinking", "content": f"Codex i {cwd}..."})
+                emit({"type": "context", "content": f"Working directory: {cwd}"})
                 codex_session_id = await _run_code_turn(
-                    run_codex_cli, decision["prompt"], cwd, codex_session_id, emit, abort, conversation
+                    run_codex_cli,
+                    decision["prompt"],
+                    cwd,
+                    codex_session_id,
+                    emit,
+                    abort,
+                    conversation,
+                    trace_provider=summarize_codex_session,
                 )
             else:
                 emit({"type": "thinking", "content": f"Claude Code i {cwd}..."})
+                emit({"type": "context", "content": f"Working directory: {cwd}"})
                 claude_session_id = await _run_code_turn(
                     run_codex, decision["prompt"], cwd, claude_session_id, emit, abort, conversation
                 )
 
         else:  # computer — loop streams live activity; compose_reply phrases the reply
-            outcome = await run_agent_loop(decision["task"], emit, abort, prior)
+            if cwd:
+                emit({"type": "context", "content": f"Working directory: {cwd}"})
+            outcome = await run_agent_loop(decision["task"], emit, abort, prior, project_cwd=cwd)
             reply = await _stream_text(compose_reply(conversation, outcome), emit, abort)
             conversation.append(
                 {"role": "assistant", "content": reply or outcome.detail or "Klar"}
@@ -184,7 +196,16 @@ async def websocket_endpoint(websocket: WebSocket):
             turn_task.cancel()
 
 
-async def _run_code_turn(runner, prompt, cwd, resume_id, emit, abort, conversation) -> str | None:
+async def _run_code_turn(
+    runner,
+    prompt,
+    cwd,
+    resume_id,
+    emit,
+    abort,
+    conversation,
+    trace_provider=None,
+) -> str | None:
     """Drive a coding agent (Claude Code or Codex) for one turn.
 
     ``runner`` is run_codex or run_codex_cli — both yield the same typed events.
@@ -195,25 +216,43 @@ async def _run_code_turn(runner, prompt, cwd, resume_id, emit, abort, conversati
     error_text: str | None = None
     session_id = resume_id
 
-    async for ev in runner(prompt, cwd=cwd, resume_session_id=resume_id):
-        if abort.is_set():
-            break
-        etype = ev.get("type")
-        if etype == "text":
-            parts.append(ev["text"])
-            emit({"type": "assistant_delta", "content": ev["text"]})
-        elif etype == "tool":
-            emit({"type": "action", "tool": ev.get("name", "tool"), "args": ev.get("input", {})})
-        elif etype == "session":
-            session_id = ev["id"]
-        elif etype == "result":
-            result_text = ev.get("text", "")
-        elif etype == "error":
-            error_text = ev.get("text", "")
-            emit({"type": "error", "content": error_text})
+    try:
+        async for ev in runner(prompt, cwd=cwd, resume_session_id=resume_id):
+            if abort.is_set():
+                break
+            etype = ev.get("type")
+            if etype == "text":
+                parts.append(ev["text"])
+                emit({"type": "assistant_delta", "content": ev["text"]})
+            elif etype == "tool":
+                emit({"type": "action", "tool": ev.get("name", "tool"), "args": ev.get("input", {})})
+            elif etype == "session":
+                session_id = ev["id"]
+            elif etype == "result":
+                result_text = ev.get("text", "")
+            elif etype == "error":
+                error_text = ev.get("text", "")
+                emit({"type": "error", "content": error_text})
+    except Exception as exc:
+        error_text = f"{type(exc).__name__}: {exc}"
+        emit({"type": "error", "content": error_text})
 
     reply = "".join(parts).strip() or result_text or error_text or "(no output)"
-    conversation.append({"role": "assistant", "content": reply})
+    message = {
+        "role": "assistant",
+        "content": reply,
+        "cwd": cwd,
+        "code_session_id": session_id,
+    }
+    if trace_provider and session_id:
+        try:
+            trace = trace_provider(session_id)
+        except Exception:
+            trace = None
+        if trace:
+            message["codex_trace"] = trace
+            emit({"type": "codex_trace", "trace": trace})
+    conversation.append(message)
     emit({"type": "done", "summary": f"Fel: {error_text}" if error_text else "Klar"})
     return session_id
 

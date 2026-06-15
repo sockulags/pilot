@@ -18,7 +18,9 @@ export type ServerEvent = {
     | "turn_start"
     | "assistant_delta"
     | "thinking"
+    | "context"
     | "action"
+    | "codex_trace"
     | "result"
     | "screenshot"
     | "done"
@@ -32,13 +34,34 @@ export type ServerEvent = {
   image?: string;
   summary?: string;
   thinking?: string;
-  messages?: { role: string; content: string }[];
+  messages?: StoredMessage[];
   projects?: Project[];
   selected?: string | null;
   agent?: Agent;
+  trace?: CodexTrace;
 };
 
 export type Agent = "claude" | "codex";
+
+export type CodexTrace = {
+  codex_session_id?: string;
+  codex_log_path?: string;
+  codex_prompt?: string;
+  codex_tool_call_count?: number;
+  codex_shell_call_count?: number;
+  codex_mcp_call_count?: number;
+  codex_tool_calls?: { name?: string; namespace?: string; arguments?: string }[];
+  codex_final_summary?: string;
+  codex_error_summary?: string;
+};
+
+type StoredMessage = {
+  role: string;
+  content: string;
+  cwd?: string;
+  code_session_id?: string;
+  codex_trace?: CodexTrace;
+};
 
 // A single activity row inside an assistant turn's details panel.
 export type TurnEvent = {
@@ -60,6 +83,9 @@ export type TranscriptItem =
       text: string; // streamed reply (chat / code)
       events: TurnEvent[]; // thinking / action / result / screenshot / error
       summary?: string; // final result (computer / code)
+      cwd?: string;
+      codeSessionId?: string;
+      codexTrace?: CodexTrace;
       done: boolean;
     };
 
@@ -182,6 +208,15 @@ export default function Home() {
         case "assistant_delta":
           updated.text += ev.content ?? "";
           break;
+        case "context":
+          updated.events.push({ id: idRef.current++, type: "context", content: ev.content });
+          if (ev.content?.startsWith("Working directory: ")) {
+            updated.cwd = ev.content.replace("Working directory: ", "");
+          }
+          break;
+        case "codex_trace":
+          updated.codexTrace = ev.trace;
+          break;
         case "done":
           updated.done = true;
           if (ev.summary) updated.summary = ev.summary;
@@ -220,6 +255,7 @@ export default function Home() {
       ws.onmessage = (e) => {
         const msg = JSON.parse(e.data) as ServerEvent;
         if (msg.type === "history") {
+          turnRef.current = msg.turn ?? 0;
           // Only rebuild on a fresh page (empty transcript); a mid-session
           // reconnect keeps the richer local transcript intact.
           if (transcriptRef.current.length === 0 && msg.messages?.length) {
@@ -227,10 +263,19 @@ export default function Home() {
               msg.messages.map((m) =>
                 m.role === "user"
                   ? { kind: "user", id: idRef.current++, turn: 0, text: m.content }
-                  : { kind: "assistant", id: idRef.current++, turn: 0, text: m.content, events: [], done: true }
+                  : {
+                      kind: "assistant",
+                      id: idRef.current++,
+                      turn: 0,
+                      text: m.content,
+                      events: [],
+                      done: true,
+                      cwd: m.cwd,
+                      codeSessionId: m.code_session_id,
+                      codexTrace: m.codex_trace,
+                    }
               )
             );
-            turnRef.current = msg.turn ?? 0;
           }
           return;
         }
@@ -283,11 +328,23 @@ export default function Home() {
   }, [setRunning]);
 
   const handleReset = useCallback(() => {
-    wsRef.current?.send(JSON.stringify({ type: "reset" }));
+    const ws = wsRef.current;
+    const wasRunning = runningRef.current;
+    const nextSessionId = makeSessionId();
+    localStorage.setItem("pilot_session_id", nextSessionId);
+    sessionIdRef.current = nextSessionId;
     turnRef.current = 0;
+    idRef.current = 0;
     setTranscript([]);
     setRunning(false);
-  }, [setRunning]);
+    if (ws?.readyState === WebSocket.OPEN) {
+      if (wasRunning) ws.send(JSON.stringify({ type: "abort" }));
+      ws.send(JSON.stringify({ type: "hello", session_id: nextSessionId, token: tokenRef.current }));
+      const selected = projects.find((p) => p.path === selectedProject);
+      if (selected) ws.send(JSON.stringify({ type: "select_project", id: selected.id }));
+      ws.send(JSON.stringify({ type: "select_agent", agent }));
+    }
+  }, [agent, projects, selectedProject, setRunning]);
 
   const selectProject = useCallback((id: string) => {
     wsRef.current?.send(JSON.stringify({ type: "select_project", id }));

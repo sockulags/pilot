@@ -26,6 +26,17 @@ logger = logging.getLogger(__name__)
 VALID_ROUTES = {"chat", "computer", "code"}
 # Safe default: never act on the computer on a parse failure.
 ROUTE_DEFAULT = {"route": "chat", "thinking": "parse error — defaulting to chat"}
+PROJECT_GITHUB_TERMS = (
+    "gh ",
+    "github",
+    "issue",
+    "issues",
+    "pull request",
+    "pull requests",
+    "pr ",
+    "repo",
+    "repository",
+)
 
 CLASSIFY_SYSTEM = """You are the orchestrator for a local AI assistant. The assistant can hold a normal conversation, control THIS computer (open apps, click, type, screenshots, run shell commands, read files/folders), or delegate to a coding agent (Claude Code) to work on software projects.
 
@@ -43,7 +54,10 @@ Respond ONLY with valid JSON, no prose:
 CHAT_SYSTEM = (
     "You are Pilot, a helpful local assistant running on the user's computer. "
     "You can also control the computer and delegate coding tasks, but for this "
-    "reply just answer conversationally and concisely. Match the user's language "
+    "reply just answer conversationally and concisely. No tool, Codex, gh, or "
+    "computer action has run in this chat route. If the user asks whether a tool "
+    "was run and there is no activity log for this turn, say exactly: "
+    "'Jag har inte kört något verktyg än.' Match the user's language "
     "(they often write Swedish)."
 )
 
@@ -82,6 +96,10 @@ async def classify_turn(
     is the name of the active project folder, if one is selected — it biases
     code-related requests toward the "code" route.
     """
+    forced = route_project_bound_message(user_message, project)
+    if forced:
+        return forced
+
     project_line = (
         f"\n\nActive project folder: {project!r}. If the latest message is about working on "
         "this project's code or files, choose \"code\"."
@@ -116,6 +134,21 @@ async def classify_turn(
 
     decision = extract_json_object(content, ROUTE_DEFAULT)
     return _normalize_decision(decision, user_message)
+
+
+def route_project_bound_message(user_message: str, project: str | None) -> dict | None:
+    if not project:
+        return None
+
+    text = f" {user_message.lower()} "
+    if not any(term in text for term in PROJECT_GITHUB_TERMS):
+        return None
+
+    return {
+        "route": "code",
+        "prompt": user_message.strip(),
+        "thinking": "project GitHub/repository request with an active project; routing to code",
+    }
 
 
 def _normalize_decision(decision: dict, user_message: str) -> dict:
