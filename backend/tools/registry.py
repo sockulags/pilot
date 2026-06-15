@@ -369,9 +369,32 @@ REGISTRY: tuple[ToolSpec, ...] = (
 
 _BY_NAME: dict[str, ToolSpec] = {spec.name: spec for spec in REGISTRY}
 
+# External tools registered at runtime by the MCP client (tools/registry is the
+# single surface, whether a tool is native or comes from an MCP server). Their
+# names are namespaced with EXTERNAL_PREFIX so the loop can route execution.
+EXTERNAL_PREFIX = "mcp__"
+_EXTERNAL: list[ToolSpec] = []
+
+
+def _all_specs() -> tuple[ToolSpec, ...]:
+    return REGISTRY + tuple(_EXTERNAL)
+
+
+def register_external(specs: list[ToolSpec]) -> None:
+    """Add MCP-discovered tools to the registry (replacing any prior set)."""
+    _EXTERNAL.clear()
+    _EXTERNAL.extend(specs)
+
+
+def clear_external() -> None:
+    _EXTERNAL.clear()
+
 
 def get(name: str) -> ToolSpec | None:
-    return _BY_NAME.get(name)
+    spec = _BY_NAME.get(name)
+    if spec:
+        return spec
+    return next((s for s in _EXTERNAL if s.name == name), None)
 
 
 # ---------------------------------------------------------------------------
@@ -380,7 +403,7 @@ def get(name: str) -> ToolSpec | None:
 
 def coordinator_tool_names() -> set[str]:
     """Allowlist of tools the in-turn coordinator may drive."""
-    return {s.name for s in REGISTRY if s.coordinator}
+    return {s.name for s in _all_specs() if s.coordinator}
 
 
 def streaming_tool_names() -> set[str]:
@@ -409,7 +432,7 @@ def _param_signature(spec: ToolSpec) -> str:
 def tool_menu(coordinator_only: bool = True) -> str:
     """The decision menu shown to the front brain when it picks an action."""
     lines = []
-    for spec in REGISTRY:
+    for spec in _all_specs():
         if coordinator_only and not spec.coordinator:
             continue
         sig = _param_signature(spec)
@@ -435,16 +458,20 @@ def capability_manifest(coordinator_only: bool = True) -> str:
     knows its real capabilities — the fix for "I have no tools available".
     """
     by_cat: dict[str, list[ToolSpec]] = {}
-    for spec in REGISTRY:
+    for spec in _all_specs():
         if coordinator_only and not spec.coordinator:
             continue
         by_cat.setdefault(spec.category, []).append(spec)
 
+    # Predefined categories first (stable order), then any extras (e.g. an MCP
+    # server's namespace) appended in insertion order.
+    ordered = list(_CATEGORY_LABELS) + [c for c in by_cat if c not in _CATEGORY_LABELS]
     blocks = []
-    for cat, label in _CATEGORY_LABELS.items():
+    for cat in ordered:
         specs = by_cat.get(cat)
         if not specs:
             continue
+        label = _CATEGORY_LABELS.get(cat, cat.replace("_", " ").title())
         items = "; ".join(f"{s.name} — {s.summary.lower()}" for s in specs)
         blocks.append(f"{label}: {items}")
     return "\n".join(blocks)
@@ -476,7 +503,7 @@ def mcp_manifest() -> dict[str, Any]:
 def tool_schemas(coordinator_only: bool = True) -> list[dict[str, Any]]:
     """OpenAI/Ollama-style function schemas for native tool-calling (Fas B)."""
     schemas = []
-    for spec in REGISTRY:
+    for spec in _all_specs():
         if coordinator_only and not spec.coordinator:
             continue
         schemas.append({
