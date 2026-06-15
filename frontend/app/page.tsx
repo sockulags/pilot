@@ -5,6 +5,7 @@ import ChatInput from "@/components/TaskInput";
 import Transcript from "@/components/ActionLog";
 import AbortButton from "@/components/AbortButton";
 import ProjectBar from "@/components/ProjectBar";
+import JobsPanel from "@/components/JobsPanel";
 
 export type Route = "chat" | "computer" | "code";
 
@@ -12,6 +13,32 @@ export type Project = { id: string; name: string; path: string };
 
 // A selectable local model offered by the backend (plus the "auto" pseudo-mode).
 export type ModelOption = { id: string; label: string; hint: string };
+
+// A scheduled job's recurrence (mirrors backend jobs.py).
+export type JobSchedule = {
+  type: "interval" | "daily" | "weekly" | "once";
+  interval_seconds?: number;
+  time?: string; // "HH:MM"
+  weekdays?: number[]; // mon=0
+  date?: string; // "YYYY-MM-DD"
+};
+
+// A scheduled job as sent by the backend (with display fields it adds on send).
+export type Job = {
+  id: string;
+  session_id: string | null;
+  title: string;
+  kind: string;
+  payload: string;
+  schedule: JobSchedule;
+  enabled: boolean;
+  next_run: number | null;
+  created_ts: number;
+  last_run: number | null;
+  last_result: string | null;
+  summary: string; // backend-rendered "var 10 min" / "dagligen kl 09:00"
+  next_run_label: string; // backend-rendered "YYYY-MM-DD HH:MM" / "—"
+};
 
 // Raw event coming over the WebSocket from the backend.
 export type ServerEvent = {
@@ -29,6 +56,7 @@ export type ServerEvent = {
     | "codex_trace"
     | "result"
     | "screenshot"
+    | "jobs"
     | "done"
     | "error"
     | "reset_ok";
@@ -49,6 +77,7 @@ export type ServerEvent = {
   model_mode?: string; // projects: "auto" or a pinned model id
   models?: ModelOption[]; // projects: selectable model catalog
   route_mode?: string; // projects: "auto" or a forced route
+  jobs?: Job[]; // jobs: the scheduled-job list for this session
 };
 
 export type Agent = "claude" | "codex";
@@ -153,6 +182,8 @@ export default function Home() {
   const [modelMode, setModelMode] = useState<string>("auto");
   const [models, setModels] = useState<ModelOption[]>([]);
   const [routeMode, setRouteMode] = useState<string>("auto");
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [jobsOpen, setJobsOpen] = useState(false);
   const [running, _setRunning] = useState(false);
   const [wsStatus, setWsStatus] = useState<WsStatus>("disconnected");
   const wsRef = useRef<WebSocket | null>(null);
@@ -318,6 +349,10 @@ export default function Home() {
           if (msg.route_mode) setRouteMode(msg.route_mode);
           return;
         }
+        if (msg.type === "jobs") {
+          setJobs(msg.jobs ?? []);
+          return;
+        }
         if (msg.type === "done" || msg.type === "error") setRunning(false);
         applyEvent(msg);
       };
@@ -399,6 +434,18 @@ export default function Home() {
   const selectRoute = useCallback((mode: string) => {
     wsRef.current?.send(JSON.stringify({ type: "select_route", route_mode: mode }));
   }, []);
+  const addJob = useCallback((payload: string, schedule: JobSchedule, title: string) => {
+    wsRef.current?.send(JSON.stringify({ type: "add_job", payload, schedule, title }));
+  }, []);
+  const pauseJob = useCallback((id: string) => {
+    wsRef.current?.send(JSON.stringify({ type: "pause_job", id }));
+  }, []);
+  const resumeJob = useCallback((id: string) => {
+    wsRef.current?.send(JSON.stringify({ type: "resume_job", id }));
+  }, []);
+  const deleteJob = useCallback((id: string) => {
+    wsRef.current?.send(JSON.stringify({ type: "delete_job", id }));
+  }, []);
 
   return (
     <main style={{ display: "flex", flexDirection: "column", height: "100dvh", padding: "1rem", gap: "0.75rem", maxWidth: 800, margin: "0 auto" }}>
@@ -408,6 +455,13 @@ export default function Home() {
           <p style={{ fontSize: "0.8rem", color: "var(--muted)" }}>Local AI chat &amp; computer agent</p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <button
+            onClick={() => setJobsOpen(true)}
+            title="Schemalagda jobb och påminnelser"
+            style={{ fontSize: "0.75rem", color: "var(--muted)", background: "none", border: "1px solid var(--border)", borderRadius: 6, padding: "0.25rem 0.6rem", cursor: "pointer" }}
+          >
+            ⏰ Jobb{jobs.length ? ` (${jobs.length})` : ""}
+          </button>
           <button
             onClick={handleReset}
             style={{ fontSize: "0.75rem", color: "var(--muted)", background: "none", border: "1px solid var(--border)", borderRadius: 6, padding: "0.25rem 0.6rem", cursor: "pointer" }}
@@ -440,6 +494,17 @@ export default function Home() {
       {running && <AbortButton onAbort={handleAbort} />}
 
       <ChatInput onSend={handleSend} disabled={wsStatus !== "connected"} />
+
+      {jobsOpen && (
+        <JobsPanel
+          jobs={jobs}
+          onClose={() => setJobsOpen(false)}
+          onAdd={addJob}
+          onPause={pauseJob}
+          onResume={resumeJob}
+          onDelete={deleteJob}
+        />
+      )}
     </main>
   );
 }
