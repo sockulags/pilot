@@ -22,6 +22,7 @@
 .art .ah .acts button:hover { color: var(--text); border-color: var(--border-2); }
 
 .art .ab { padding: 13px; max-height: 320px; overflow: auto; }
+.art .ab .artifact-prose { font-size: 13.5px; color: var(--dim); }
 
 /* ── diff view ────────────────────────────────────────────── */
 .diff         { font: 12px/1.55 var(--mono); }
@@ -31,6 +32,14 @@
 .diff .ln2.ctx { color: var(--dim); }
 
 /* ── browser screenshot ───────────────────────────────────── */
+.shot-real {
+  border-radius: var(--r-md);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #0b1017;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
+}
+
 .shot              { border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--border); }
 .shot .bar         { background: #1c2230; padding: 6px 10px; display: flex; gap: 6px; align-items: center; }
 .shot .bar i       { width: 9px; height: 9px; border-radius: 50%; }
@@ -59,6 +68,14 @@
 }
 .term .tl { color: var(--cyan); }
 .term .ok  { color: var(--green); }
+
+.artifact-modal {
+  width: 860px;
+}
+
+.artifact-modal .mb {
+  max-height: 72vh;
+}
 
 /* ── GitHub issue row ─────────────────────────────────────── */
 .ghrow      { display: flex; align-items: center; gap: 11px; padding: 9px 10px; border-radius: 8px; }

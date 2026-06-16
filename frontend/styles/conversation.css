@@ -47,10 +47,15 @@
 .istep .g    { display: flex; flex-direction: column; align-items: center; }
 .istep .dot  { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--border-2); display: grid; place-items: center; font-size: 7px; color: var(--dim); flex-shrink: 0; }
 .istep.done .dot { border-color: var(--green); color: var(--green); }
+.istep .dot.cyan { border-color: rgba(79,214,224,.45); color: var(--cyan); }
+.istep .dot.green { border-color: rgba(84,217,140,.45); color: var(--green); }
+.istep .dot.red { border-color: rgba(240,133,124,.45); color: var(--del); }
+.istep .dot.violet { border-color: rgba(182,156,255,.45); color: var(--violet); }
 .istep .ln   { width: 1.5px; flex: 1; background: var(--border); min-height: 10px; margin: 2px 0; }
 .istep:last-child .ln { display: none; }
 .istep .t    { font: 12.5px var(--sans); color: var(--dim); padding-bottom: 11px; }
 .istep .t b  { color: var(--text); }
+.istep .t .meta { color: var(--dim); }
 .istep .t .ex { font: 11.5px var(--mono); color: var(--violet); }
 
 /* ── response badge ───────────────────────────────────────── */
@@ -60,6 +65,43 @@
   color: var(--dim-2); margin-bottom: 6px;
 }
 .rbadge.clarify { color: var(--amber); }
+
+.toolstrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 10px;
+}
+
+.toolchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 7px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(20,21,27,.45);
+  font: 11px var(--mono);
+}
+
+.toolchip .tn { color: #d8deff; }
+.toolchip .ta {
+  color: var(--dim-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+
+.artifact-stack { margin-top: 8px; }
+.artifact-label {
+  font: 10px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--dim-2);
+  margin: 10px 0 6px;
+}
 
 /* ── prose ────────────────────────────────────────────────── */
 .prose { font-size: 15px; line-height: 1.7; }
@@ -75,6 +117,14 @@
   display: inline-block; width: 8px; height: 16px;
   background: var(--accent); vertical-align: -3px;
   animation: blink 1s steps(2) infinite;
+}
+
+@media (max-width: 820px) {
+  .toolchip {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .toolchip .ta { max-width: 46vw; }
 }
 
 /* abort notice */
