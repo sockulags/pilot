@@ -59,17 +59,26 @@ async def web_search(query: str, max_results: int = 5) -> str:
     except Exception as exc:
         return f"web_search failed: {type(exc).__name__}: {exc}"
 
-    titles = list(_RESULT_RE.finditer(body))
+    matches = list(_RESULT_RE.finditer(body))
     snippets = [_strip_tags(m.group("snippet")) for m in _SNIPPET_RE.finditer(body)]
-    if not titles:
+
+    results = []
+    for i, m in enumerate(matches):
+        url = _clean_ddg_href(m.group("href"))
+        # Skip DuckDuckGo sponsored/ad results (y.js redirects) — not real sources.
+        if any(mark in url for mark in ("duckduckgo.com/y.js", "ad_provider=", "ad_domain=")):
+            continue
+        snippet = snippets[i] if i < len(snippets) else ""
+        results.append((_strip_tags(m.group("title")), url, snippet))
+        if len(results) >= max_results:
+            break
+
+    if not results:
         return f"No web results for {query!r}."
 
     lines = [f"Top results for {query!r}:"]
-    for i, m in enumerate(titles[:max_results]):
-        title = _strip_tags(m.group("title"))
-        url = _clean_ddg_href(m.group("href"))
-        snippet = snippets[i] if i < len(snippets) else ""
-        lines.append(f"{i + 1}. {title}\n   {url}")
+    for n, (title, url, snippet) in enumerate(results, 1):
+        lines.append(f"{n}. {title}\n   {url}")
         if snippet:
             lines.append(f"   {snippet[:240]}")
     return "\n".join(lines)
