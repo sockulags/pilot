@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pilot — Förslag 1: Workspace</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --bg-2: #0e1428;
+    --surface: #141b30;
+    --surface-2: #1a2238;
+    --border: #26304b;
+    --border-soft: #1e2740;
+    --text: #eef2ff;
+    --muted: #8b97b8;
+    --muted-2: #5f6c8f;
+    --accent: #6d7cff;
+    --accent-soft: rgba(109,124,255,0.14);
+    --accent-line: rgba(109,124,255,0.4);
+    --green: #34d399;
+    --blue: #38bdf8;
+    --amber: #fbbf24;
+    --red: #fb7185;
+    --radius: 12px;
+    --shadow: 0 8px 30px rgba(0,0,0,0.35);
+    --mono: "SF Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(109,124,255,0.10), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font: 14px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  button { font: inherit; cursor: pointer; color: inherit; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #20294160; border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-thumb:hover { background: #2b365580; background-clip: content-box; }
+
+  .app { display: grid; grid-template-columns: 260px 1fr 340px; height: 100vh; }
+  .app.inspector-collapsed { grid-template-columns: 260px 1fr 0; }
+
+  /* ───────────── Left rail ───────────── */
+  .rail { background: var(--bg-2); border-right: 1px solid var(--border-soft); display: flex; flex-direction: column; min-width: 0; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 16px 16px 12px; }
+  .brand .logo {
+    width: 30px; height: 30px; border-radius: 9px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--accent), #9b6bff);
+    display: grid; place-items: center; font-size: 16px; box-shadow: 0 4px 14px rgba(109,124,255,0.4);
+  }
+  .brand .name { font-weight: 700; letter-spacing: -0.2px; font-size: 15px; }
+  .brand .sub { font-size: 11px; color: var(--muted-2); }
+  .rail-pad { padding: 0 12px; }
+  .new-chat {
+    width: 100%; display: flex; align-items: center; gap: 8px; justify-content: center;
+    background: var(--accent-soft); border: 1px solid var(--accent-line); color: #c7ceff;
+    padding: 9px; border-radius: 10px; font-weight: 600; transition: .15s;
+  }
+  .new-chat:hover { background: rgba(109,124,255,0.22); transform: translateY(-1px); }
+  .rail-section { padding: 18px 12px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted-2); font-weight: 700; }
+  .thread {
+    display: flex; flex-direction: column; gap: 1px; padding: 8px 10px; border-radius: 9px; color: var(--muted);
+    transition: .12s; border: 1px solid transparent;
+  }
+  .thread:hover { background: var(--surface); color: var(--text); }
+  .thread.active { background: var(--surface); border-color: var(--border); color: var(--text); }
+  .thread .t { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .thread .m { font-size: 11px; color: var(--muted-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rail-scroll { overflow-y: auto; flex: 1; }
+  .proj {
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 9px; color: var(--muted); transition: .12s;
+  }
+  .proj:hover { background: var(--surface); color: var(--text); }
+  .proj.active { background: var(--surface); color: var(--text); }
+  .proj .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted-2); flex-shrink: 0; }
+  .proj.active .dot { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .proj .path { font-family: var(--mono); font-size: 10px; color: var(--muted-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rail-foot { border-top: 1px solid var(--border-soft); padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; }
+  .status { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; }
+  .status .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 0 rgba(52,211,153,0.6); animation: pulse 2.4s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(52,211,153,0.55);} 70%{ box-shadow:0 0 0 7px rgba(52,211,153,0);} 100%{box-shadow:0 0 0 0 rgba(52,211,153,0);} }
+  .icon-btn { width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); display: grid; place-items: center; color: var(--muted); transition: .12s; }
+  .icon-btn:hover { color: var(--text); border-color: var(--accent-line); }
+
+  /* ───────────── Center ───────────── */
+  .center { display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+  .topbar { display: flex; align-items: center; gap: 10px; padding: 12px 20px; border-bottom: 1px solid var(--border-soft); }
+  .topbar h2 { font-size: 14px; font-weight: 600; }
+  .topbar .crumb { color: var(--muted-2); font-size: 13px; }
+  .seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; padding: 3px; gap: 2px; }
+  .seg button { padding: 5px 11px; border-radius: 7px; border: none; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; transition: .12s; }
+  .seg button:hover { color: var(--text); }
+  .seg button.on { background: var(--accent); color: #fff; box-shadow: 0 2px 8px rgba(109,124,255,0.45); }
+  .spacer { flex: 1; }
+  .ghost { border: 1px solid var(--border); background: transparent; color: var(--muted); padding: 6px 11px; border-radius: 9px; font-size: 12px; font-weight: 600; transition: .12s; display:inline-flex; gap:6px; align-items:center;}
+  .ghost:hover { color: var(--text); border-color: var(--accent-line); }
+
+  .scroll { flex: 1; overflow-y: auto; padding: 24px clamp(20px, 6vw, 80px); }
+  .stream { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+
+  /* empty state */
+  .empty { text-align: center; padding-top: 6vh; }
+  .empty .big { font-size: 26px; font-weight: 700; letter-spacing: -0.4px; }
+  .empty .lede { color: var(--muted); margin: 8px auto 26px; max-width: 440px; }
+  .cards { display: grid; grid-template-columns: repeat(2,1fr); gap: 12px; max-width: 560px; margin: 0 auto; }
+  .card {
+    text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 14px 15px; transition: .15s;
+  }
+  .card:hover { border-color: var(--accent-line); transform: translateY(-2px); background: var(--surface-2); }
+  .card .ico { font-size: 18px; }
+  .card .h { font-weight: 600; margin: 8px 0 2px; font-size: 13.5px; }
+  .card .d { color: var(--muted); font-size: 12px; }
+
+  /* messages */
+  .msg-user { align-self: flex-end; max-width: 78%; background: linear-gradient(135deg, var(--accent), #7a6bff); color: #fff; padding: 11px 15px; border-radius: 16px 16px 4px 16px; box-shadow: var(--shadow); }
+  .turn { display: flex; flex-direction: column; gap: 8px; }
+  .turn-head { display: flex; align-items: center; gap: 8px; }
+  .avatar { width: 28px; height: 28px; border-radius: 9px; background: linear-gradient(135deg,#1c2540,#28335a); display:grid; place-items:center; font-size: 14px; border: 1px solid var(--border); }
+  .badge { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 3px 8px; border-radius: 999px; }
+  .badge.chat { background: rgba(139,151,184,0.15); color: var(--muted); }
+  .badge.computer { background: rgba(56,189,248,0.15); color: var(--blue); }
+  .badge.code { background: var(--accent-soft); color: #aab2ff; }
+  .chip { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 2px 7px; font-family: var(--mono); }
+  .bubble { background: var(--surface); border: 1px solid var(--border); border-radius: 4px 16px 16px 16px; padding: 13px 16px; line-height: 1.6; margin-left: 36px; }
+  .bubble code { font-family: var(--mono); background: #0c1124; padding: 1px 6px; border-radius: 5px; font-size: 12.5px; color: #c8d2ff; }
+  .result { margin-left: 36px; border: 1px solid rgba(52,211,153,0.4); background: rgba(52,211,153,0.08); border-radius: 12px; padding: 12px 15px; }
+  .result .rt { font-size: 11px; font-weight: 700; color: var(--green); text-transform: uppercase; letter-spacing: .06em; }
+
+  .cursor { display: inline-block; width: 7px; height: 15px; background: var(--accent); margin-left: 2px; border-radius: 1px; animation: blink 1s steps(2) infinite; vertical-align: -2px; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* composer */
+  .composer-wrap { padding: 14px clamp(20px,6vw,80px) 20px; border-top: 1px solid var(--border-soft); background: linear-gradient(to top, var(--bg) 60%, transparent); }
+  .composer { max-width: 760px; margin: 0 auto; }
+  .composer-chips { display: flex; gap: 7px; margin-bottom: 9px; align-items: center; flex-wrap: wrap; }
+  .mini { font-size: 11px; color: var(--muted-2); }
+  .pill { font-size: 11.5px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; background: var(--surface); transition:.12s; display:inline-flex; gap:5px; align-items:center;}
+  .pill:hover { color: var(--text); border-color: var(--accent-line); }
+  .pill b { color: #c7ceff; font-weight: 600; }
+  .inputbox { display: flex; gap: 10px; align-items: flex-end; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 10px 10px 10px 16px; transition: .15s; }
+  .inputbox:focus-within { border-color: var(--accent-line); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .inputbox textarea { flex: 1; background: none; border: none; resize: none; color: var(--text); font: inherit; outline: none; max-height: 160px; padding: 4px 0; }
+  .send { width: 38px; height: 38px; border-radius: 11px; border: none; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 17px; transition: .15s; flex-shrink: 0; }
+  .send:hover { background: var(--accent-hover, #818cf8); transform: scale(1.05); }
+  .send:disabled { background: var(--border); color: var(--muted-2); transform: none; }
+
+  /* ───────────── Inspector ───────────── */
+  .inspector { background: var(--bg-2); border-left: 1px solid var(--border-soft); display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+  .app.inspector-collapsed .inspector { border: none; }
+  .insp-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--border-soft); }
+  .insp-head .t { font-weight: 700; font-size: 13px; }
+  .insp-head .live { margin-left: auto; font-size: 10.5px; font-weight: 700; color: var(--amber); display: flex; align-items: center; gap: 5px; opacity: 0; transition: .2s; }
+  .insp-head .live.on { opacity: 1; }
+  .insp-head .live .d { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); animation: pulse2 1s infinite; }
+  @keyframes pulse2 { 50% { opacity: .3; } }
+  .insp-scroll { flex: 1; overflow-y: auto; padding: 8px 12px 16px; }
+  .insp-empty { color: var(--muted-2); font-size: 12px; text-align: center; padding: 40px 16px; }
+
+  .node { display: flex; gap: 11px; padding: 4px 0; }
+  .node .gutter { display: flex; flex-direction: column; align-items: center; }
+  .node .ring { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; font-size: 13px; background: var(--surface); border: 1px solid var(--border); flex-shrink: 0; }
+  .node .line { width: 2px; flex: 1; background: var(--border); margin: 3px 0; min-height: 8px; }
+  .node:last-child .line { display: none; }
+  .node .body { padding-bottom: 12px; min-width: 0; flex: 1; }
+  .node .nh { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .node .nb { font-size: 12.5px; color: var(--text); margin-top: 3px; word-break: break-word; }
+  .node .nb.mono { font-family: var(--mono); font-size: 11.5px; color: #aab2ff; background: #0c1124; padding: 7px 9px; border-radius: 7px; border: 1px solid var(--border-soft); white-space: pre-wrap; }
+  .node.thinking .ring { color: var(--muted); }
+  .node.consult .ring { background: rgba(56,189,248,0.14); border-color: rgba(56,189,248,0.4); color: var(--blue); }
+  .node.expert .ring { background: rgba(155,107,255,0.14); border-color: rgba(155,107,255,0.4); }
+  .node.action .ring { background: var(--accent-soft); border-color: var(--accent-line); color: #aab2ff; }
+  .node.done .ring { background: rgba(52,211,153,0.14); border-color: rgba(52,211,153,0.4); color: var(--green); }
+  .expert-stream { font-size: 12.5px; color: var(--muted); line-height: 1.55; }
+
+  @media (max-width: 1080px) { .app, .app.inspector-collapsed { grid-template-columns: 1fr; } .rail, .inspector { display: none; } }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <!-- LEFT RAIL -->
+  <aside class="rail">
+    <div class="brand">
+      <div class="logo">✦</div>
+      <div><div class="name">Pilot</div><div class="sub">Workspace</div></div>
+    </div>
+    <div class="rail-pad">
+      <button class="new-chat" onclick="resetChat()">＋ Ny konversation</button>
+    </div>
+    <div class="rail-scroll">
+      <div class="rail-section">Konversationer</div>
+      <div class="rail-pad">
+        <div class="thread active"><span class="t">Vänd en sträng i Python</span><span class="m">qwen2.5-coder · nyss</span></div>
+        <div class="thread"><span class="t">Hitta mitt CV i Downloads</span><span class="m">search_files · 14:02</span></div>
+        <div class="thread"><span class="t">GitHub-issues i cv_builder</span><span class="m">gh · igår</span></div>
+        <div class="thread"><span class="t">Väder i Stockholm</span><span class="m">web_search · igår</span></div>
+      </div>
+      <div class="rail-section">Projekt</div>
+      <div class="rail-pad">
+        <div class="proj active"><span class="dot"></span><div style="min-width:0"><div class="t" style="font-size:13px">pilot</div><div class="path">C:\Users\lucas\Code\pilot</div></div></div>
+        <div class="proj"><span class="dot"></span><div style="min-width:0"><div class="t" style="font-size:13px">cv_builder</div><div class="path">C:\Users\lucas\Code\cv_builder</div></div></div>
+        <div class="proj" style="color:var(--muted-2)"><span class="dot"></span>＋ Lägg till projekt</div>
+      </div>
+    </div>
+    <div class="rail-foot">
+      <div class="status"><span class="pulse"></span> Ansluten</div>
+      <button class="icon-btn" title="Schemalagda jobb" onclick="alert('Öppnar Jobb-panelen')">⏰</button>
+    </div>
+  </aside>
+
+  <!-- CENTER -->
+  <section class="center">
+    <header class="topbar">
+      <h2>pilot</h2><span class="crumb">/ chatt</span>
+      <div class="spacer"></div>
+      <div class="seg" id="routeSeg">
+        <button class="on" data-route="auto">Auto</button>
+        <button data-route="chat">Chatt</button>
+        <button data-route="computer">Dator</button>
+        <button data-route="code">Kod</button>
+      </div>
+      <button class="ghost" id="inspToggle" onclick="toggleInspector()">⟨ ⟩ Aktivitet</button>
+    </header>
+
+    <div class="scroll" id="scroll">
+      <div class="stream" id="stream">
+        <div class="empty" id="empty">
+          <div class="big">Vad ska vi göra?</div>
+          <p class="lede">Pilot svarar, styr datorn eller skriver kod — lokalt via Ollama, och kopplar in en specialistmodell när det behövs.</p>
+          <div class="cards">
+            <button class="card" onclick="quick('Vänd strängen \'hej\' i Python')"><div class="ico">⌨</div><div class="h">Skriv lite kod</div><div class="d">Vänd en sträng i Python</div></button>
+            <button class="card" onclick="quick('Hitta mitt CV i Downloads')"><div class="ico">🔎</div><div class="h">Hitta en fil</div><div class="d">Sök i hela hemkatalogen</div></button>
+            <button class="card" onclick="quick('Vad gör det här projektet?')"><div class="ico">📁</div><div class="h">Förstå projektet</div><div class="d">Läs README och förklara</div></button>
+            <button class="card" onclick="quick('Påminn mig kl 17 att ta en paus')"><div class="ico">⏰</div><div class="h">Schemalägg</div><div class="d">Påminnelser & uppgifter</div></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="composer-wrap">
+      <div class="composer">
+        <div class="composer-chips">
+          <span class="mini">Front-hjärna:</span>
+          <button class="pill" onclick="cycleModel(this)">🧠 <b>gemma4</b> · auto</button>
+          <button class="pill" onclick="cycleAgent(this)">Agent: <b>lokal</b></button>
+          <span class="mini" style="margin-left:auto">Enter skickar · Shift+Enter ny rad</span>
+        </div>
+        <div class="inputbox">
+          <textarea id="ta" rows="1" placeholder="Skriv ett meddelande…" oninput="autosize(this);toggleSend()" onkeydown="onKey(event)"></textarea>
+          <button class="send" id="send" disabled onclick="sendMsg()">➤</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- INSPECTOR -->
+  <aside class="inspector">
+    <div class="insp-head">
+      <span>⚡</span><span class="t">Live-aktivitet</span>
+      <span class="live" id="liveTag"><span class="d"></span> ARBETAR</span>
+    </div>
+    <div class="insp-scroll" id="insp">
+      <div class="insp-empty" id="inspEmpty">Här visas hur Pilot tänker: vilken specialistmodell den frågar, vilka verktyg den kör och resultatet — i realtid.</div>
+    </div>
+  </aside>
+</div>
+
+<script>
+  const app = document.getElementById('app');
+  const stream = document.getElementById('stream');
+  const scroll = document.getElementById('scroll');
+  const insp = document.getElementById('insp');
+  const inspEmpty = document.getElementById('inspEmpty');
+  const liveTag = document.getElementById('liveTag');
+  const ta = document.getElementById('ta');
+  const sendBtn = document.getElementById('send');
+  let busy = false;
+
+  // route segmented control
+  document.getElementById('routeSeg').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    [...e.currentTarget.children].forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    document.querySelector('.topbar .crumb').textContent = '/ ' + b.textContent.toLowerCase();
+  });
+
+  function toggleInspector(){ app.classList.toggle('inspector-collapsed'); }
+  function autosize(el){ el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,160)+'px'; }
+  function toggleSend(){ sendBtn.disabled = !ta.value.trim() || busy; }
+  function onKey(e){ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendMsg(); } }
+  function quick(t){ ta.value=t; autosize(ta); toggleSend(); ta.focus(); }
+  const MODELS=['gemma4','qwen3:14b','deepseek-r1:14b','qwen2.5-coder:14b'];
+  let mi=0; function cycleModel(b){ mi=(mi+1)%MODELS.length; b.innerHTML='🧠 <b>'+MODELS[mi].split(':')[0]+'</b> · '+(mi?'pinned':'auto'); }
+  function cycleAgent(b){ const cur=b.querySelector('b').textContent; b.querySelector('b').textContent = cur==='lokal'?'Codex':cur==='Codex'?'Claude':'lokal'; }
+
+  function resetChat(){
+    stream.innerHTML = document.getElementById('empty') ? stream.innerHTML : '';
+    location.reload();
+  }
+
+  function el(html){ const t=document.createElement('template'); t.innerHTML=html.trim(); return t.content.firstElementChild; }
+  function down(){ scroll.scrollTop = scroll.scrollHeight; }
+  const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+  async function sendMsg(){
+    const text = ta.value.trim(); if(!text || busy) return;
+    document.getElementById('empty')?.remove();
+    stream.appendChild(el(`<div class="msg-user"></div>`)).textContent = text;
+    ta.value=''; autosize(ta); busy=true; toggleSend(); down();
+    await runTurn(text);
+    busy=false; toggleSend();
+  }
+
+  function inspNode(cls, icon, head, body, mono){
+    inspEmpty.style.display='none';
+    const n = el(`<div class="node ${cls}"><div class="gutter"><div class="ring">${icon}</div><div class="line"></div></div>
+      <div class="body"><div class="nh">${head}</div><div class="nb ${mono?'mono':''}"></div></div></div>`);
+    n.querySelector('.nb').textContent = body || '';
+    insp.appendChild(n); insp.scrollTop = insp.scrollHeight;
+    return n.querySelector('.nb');
+  }
+
+  async function runTurn(text){
+    insp.innerHTML=''; inspEmpty.style.display='none'; liveTag.classList.add('on');
+    const isCode = /python|kod|sträng|string|reverse|vänd/i.test(text);
+    const isFile = /cv|fil|downloads|hitta|sök/i.test(text);
+
+    // turn skeleton in center
+    const turn = el(`<div class="turn">
+      <div class="turn-head"><div class="avatar">✦</div>
+        <span class="badge ${isCode?'code':isFile?'computer':'chat'}">${isCode?'⌨ Kod':isFile?'🖥 Dator':'💬 Chatt'}</span>
+        <span class="chip">🧠 gemma4</span></div>
+      <div class="bubble"><span class="cursor"></span></div></div>`);
+    stream.appendChild(turn); down();
+    const bubble = turn.querySelector('.bubble');
+
+    inspNode('thinking','💭','Tänker','Tolkar förfrågan och väljer angreppssätt…');
+    await sleep(700);
+
+    if(isCode){
+      inspNode('consult','🔀','Frågar specialist','qwen2.5-coder:14b — kodexpert');
+      const stream2 = inspNode('expert','🧠','qwen2.5-coder svarar','', true);
+      const expertText = `def reverse(s):\n    return s[::-1]\n\nreverse("hej")  # -> "jeh"`;
+      for(let i=0;i<expertText.length;i++){ stream2.textContent += expertText[i]; if(i%3===0){insp.scrollTop=insp.scrollHeight; await sleep(12);} }
+      await sleep(400);
+      inspNode('done','✓','Klar','Vävde in expertsvaret i ett svar.');
+      await typeInto(bubble, `Här är en kort Python-funktion som vänder en sträng:\n\n`);
+      const pre = el(`<pre style="font-family:var(--mono);background:#0c1124;padding:12px 14px;border-radius:9px;border:1px solid var(--border-soft);overflow:auto;font-size:12.5px;color:#c8d2ff;margin-top:6px"></pre>`);
+      bubble.appendChild(pre);
+      await typeInto(pre, `def reverse(s):\n    return s[::-1]`);
+    } else if(isFile){
+      const a1 = inspNode('action','⚡','Verktyg: search_files','{ "query": "CV", "root": "~", "globs": ["*.pdf"] }', true);
+      await sleep(900);
+      inspNode('done','✓','3 träffar',`Downloads\\Lucas_CV.pdf · Downloads\\Lucas_CV_2024.pdf …`);
+      await typeInto(bubble, `Jag hittade tre filer i din hemkatalog:\n\n• Downloads\\Lucas_CV.pdf  (2026-05-30, 184 kB)\n• Downloads\\Lucas_CV_2024.pdf  (2024-11-12)\n• Documents\\CV\\old_cv.pdf\n\nVill du att jag öppnar den senaste?`);
+    } else {
+      await sleep(500);
+      inspNode('done','✓','Direktsvar','Ingen specialist behövdes.');
+      await typeInto(bubble, `Visst! Jag kan svara, styra datorn (öppna appar, klicka, skriva), söka på webben, läsa filer, köra kommandon och schemalägga uppgifter — allt lokalt via Ollama. Vad vill du göra?`);
+    }
+    bubble.querySelector('.cursor')?.remove();
+    liveTag.classList.remove('on');
+    down();
+  }
+
+  async function typeInto(node, text){
+    const cursor = node.querySelector('.cursor');
+    for(let i=0;i<text.length;i++){
+      const ch=document.createTextNode(text[i]);
+      cursor ? node.insertBefore(ch, cursor) : node.appendChild(ch);
+      if(i%2===0){ down(); await sleep(9); }
+    }
+  }
+</script>
+</body>
+</html>

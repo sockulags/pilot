@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pilot — Frontend v3 (B+C-hybrid)</title>
+<style>
+  :root {
+    --bg:#08080c; --panel:#14141d; --panel-2:#1a1a26; --border:#212130; --border-2:#2c2c3e;
+    --text:#f1f1f6; --dim:#8a8a9c; --dim-2:#57576a; --accent:#8b7bff; --cyan:#4fd6e0; --violet:#b69cff; --green:#54d98c;
+    --grad: linear-gradient(110deg,#8b7bff,#4fd6e0);
+    --mono: ui-monospace,"Cascadia Code",Consolas,monospace;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background: radial-gradient(900px 460px at 30% -8%, rgba(139,123,255,.16), transparent 60%), radial-gradient(800px 400px at 100% 10%, rgba(79,214,224,.12), transparent 60%), var(--bg); color:var(--text); font:15px/1.6 -apple-system,"Segoe UI",Roboto,sans-serif; -webkit-font-smoothing:antialiased; min-height:100vh; padding:46px 24px 70px; }
+  .wrap { max-width:1060px; margin:0 auto; }
+  .brand { display:flex; align-items:center; gap:13px; margin-bottom:10px; }
+  .logo { width:42px; height:42px; border-radius:12px; background:var(--grad); display:grid; place-items:center; color:#07070c; font-weight:900; font-size:20px; }
+  h1 { font-size:26px; letter-spacing:-.5px; }
+  .lede { color:var(--dim); max-width:740px; margin:14px 0 8px; }
+  .lede b { color:var(--text); }
+  .back { display:inline-block; margin-top:6px; font:12px var(--mono); color:var(--dim); border:1px solid var(--border); border-radius:7px; padding:4px 9px; text-decoration:none; }
+  .back:hover { color:var(--text); border-color:var(--border-2); }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.12em; color:var(--dim); margin:36px 0 14px; }
+
+  .shared { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:11px; }
+  .s { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:14px 15px; }
+  .s .h { font-weight:650; font-size:13.5px; margin-bottom:3px; } .s .d { color:var(--dim); font-size:12.5px; }
+  .s .h .em { color:var(--cyan); }
+
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:18px; }
+  .card { background:linear-gradient(180deg,var(--panel),var(--panel-2)); border:1px solid var(--border); border-radius:17px; overflow:hidden; text-decoration:none; color:inherit; transition:.18s; display:flex; flex-direction:column; }
+  .card:hover { transform:translateY(-4px); box-shadow:0 22px 54px rgba(0,0,0,.5); border-color:var(--border-2); }
+  .thumb { height:128px; position:relative; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:center; overflow:hidden; }
+  .thumb .tag { position:absolute; top:11px; left:13px; font:11px var(--mono); color:var(--dim-2); z-index:2; }
+  /* tiny faux previews */
+  .t-aurora { background:radial-gradient(120% 120% at 30% 0,rgba(139,123,255,.3),transparent 55%),radial-gradient(120% 120% at 100% 60%,rgba(79,214,224,.22),transparent 55%),radial-gradient(120% 120% at 70% 100%,rgba(255,143,176,.18),transparent 55%),#0a0a0e; }
+  .t-aurora .split { position:absolute; right:0; top:0; bottom:0; width:38%; background:rgba(14,14,20,.6); border-left:1px solid rgba(255,255,255,.06); }
+  .t-inline { background:#0a0b0e; }
+  .t-inline .hl { position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,transparent,var(--accent),var(--cyan),transparent); }
+  .t-inline .c1,.t-inline .c2 { position:absolute; left:24%; right:18%; border:1px solid rgba(255,255,255,.08); border-radius:8px; background:rgba(255,255,255,.03); }
+  .t-inline .c1 { top:34px; height:26px; } .t-inline .c2 { top:66px; height:30px; }
+  .t-spot { background:radial-gradient(40% 50% at 30% 35%,rgba(139,123,255,.3),transparent 70%),radial-gradient(40% 50% at 75% 70%,rgba(79,214,224,.24),transparent 70%),#08080c; }
+  .t-spot .bar { position:absolute; left:18%; right:18%; bottom:16px; height:30px; border-radius:12px; background:rgba(18,18,26,.9); border:1.5px solid rgba(255,255,255,.1); }
+  .b { padding:17px 18px 19px; display:flex; flex-direction:column; flex:1; }
+  .b .n { font:11px var(--mono); color:var(--dim-2); }
+  .b .h { font-size:19px; font-weight:740; letter-spacing:-.3px; margin-top:3px; }
+  .b .sub { font:12px var(--mono); color:var(--violet); margin:3px 0 11px; }
+  .b .d { color:var(--dim); font-size:13.5px; flex:1; }
+  .b .twist { margin-top:13px; font-size:12.5px; color:var(--text); background:rgba(139,123,255,.1); border:1px solid rgba(139,123,255,.25); border-radius:9px; padding:8px 11px; }
+  .b .twist b { color:var(--cyan); }
+  .b .open { margin-top:14px; font-size:13.5px; font-weight:600; color:var(--cyan); }
+  footer { color:var(--dim-2); font-size:12.5px; margin-top:46px; text-align:center; }
+  .tip { margin-top:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand"><div class="logo">✦</div><h1>Pilot — B+C-hybrid, tre twists</h1></div>
+  <p class="lede">Sammansmältning av <b>Canvas</b> (adaptiv scen) och <b>Focus</b> (komposör-centrerad minimalism), enligt dina svar: läge, modellval och projekt sköts <b>automatiskt och dolt</b>; kod-agenten (lokal/Claude/Codex) är kvar som en diskret kontroll; scenen <b>dyker upp vid behov</b>; arbetet visas <b>lugnt men expanderbart</b>; och en <b>diskret egen identitet</b>. Tre snarlika förslag som bara skiljer sig i hur scenen manifesteras.</p>
+  <a class="back" href="../v2/index.html">← runda 2</a>
+
+  <h2>Delad grund i alla tre</h2>
+  <div class="shared">
+    <div class="s"><div class="h">Inga läge-knappar</div><div class="d">Pilot klassar själv. Rutten visas bara som ett litet märke i efterhand.</div></div>
+    <div class="s"><div class="h">Modell auto</div><div class="d">En diskret <span class="em">front-hjärna</span>-indikator istället för dropdown.</div></div>
+    <div class="s"><div class="h">Projekt härleds</div><div class="d">Klickbar breadcrumb i stället för väljare.</div></div>
+    <div class="s"><div class="h">Agent kvar</div><div class="d">⚡ lokal / Claude / Codex — diskret men åtkomlig.</div></div>
+    <div class="s"><div class="h">Lugn insyn</div><div class="d">En rad som expanderas till full tidslinje.</div></div>
+    <div class="s"><div class="h">Komposör-hjälte</div><div class="d">Tom vy = centrerad input; dockar när samtalet börjar.</div></div>
+  </div>
+
+  <h2 style="margin-top:32px">Tre twists — klicka och testa (växla 🖥/📱 uppe till höger)</h2>
+  <div class="grid">
+    <a class="card" href="01-aurora.html">
+      <div class="thumb t-aurora"><span class="tag">1</span><div class="split"></div></div>
+      <div class="b">
+        <div class="n">TWIST 1</div><div class="h">Aurora</div><div class="sub">scen glider in från sidan</div>
+        <div class="d">Den klassiska B-scenen som en companion-panel: glider in från höger när det finns en diff, skärm, sökträff eller graf — annars ren komposör-vy. På mobil blir den ett svep-upp-ark.</div>
+        <div class="twist">Identitet: <b>varm aurora-glöd</b> bakom allt som intensifieras när Pilot arbetar.</div>
+        <div class="open">Öppna →</div>
+      </div>
+    </a>
+    <a class="card" href="02-inline.html">
+      <div class="thumb t-inline"><span class="tag">2</span><div class="hl"></div><div class="c1"></div><div class="c2"></div></div>
+      <div class="b">
+        <div class="n">TWIST 2</div><div class="h">Inline</div><div class="sub">scenen lever i flödet</div>
+        <div class="d">Ingen separat panel — det Pilot skapar dyker upp som <b>artefaktkort inne i samtalet</b> (diff, skärm, träffar, graf), med ⤢ för att blåsa upp till fullskärm. Allt i en lugn kolumn.</div>
+        <div class="twist">Identitet: <b>animerad gradient-hårlinje</b> i toppen som rör sig under arbete.</div>
+        <div class="open">Öppna →</div>
+      </div>
+    </a>
+    <a class="card" href="03-spotlight.html">
+      <div class="thumb t-spot"><span class="tag">3</span><div class="bar"></div></div>
+      <div class="b">
+        <div class="n">TWIST 3</div><div class="h">Spotlight</div><div class="sub">scenen tar över fokus</div>
+        <div class="d">Komposören är en <b>flytande kommando-bar</b> (Raycast-känsla) som alltid är navet. När Pilot skapar något reser det sig i <b>fokus-takeover</b> mitt på skärmen; stäng för att gå tillbaka, återöppna via en chip.</div>
+        <div class="twist">Identitet: <b>ambient glow</b> som driver i bakgrunden + front-hjärna i baren.</div>
+        <div class="open">Öppna →</div>
+      </div>
+    </a>
+  </div>
+
+  <footer>Statiska, fristående HTML-mockuper · simulerade flöden · ingen backend krävs
+    <div class="tip">Tips: prova "lägg till en vision-flagga i config", "hitta mitt CV", "bevisa att roten ur 2 är irrationell", "öppna Anteckningar och skriv Hej".</div>
+  </footer>
+</div>
+</body>
+</html>

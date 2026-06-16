@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, CSSProperties } from "react";
+import { useState } from "react";
 import type { Job, JobSchedule } from "@/app/page";
 
 interface Props {
@@ -17,26 +17,6 @@ type SType = "interval" | "daily" | "weekly" | "once";
 const WEEKDAYS = ["mån", "tis", "ons", "tor", "fre", "lör", "sön"];
 const UNIT_SECONDS: Record<string, number> = { min: 60, h: 3600, dygn: 86400 };
 
-const btn: CSSProperties = {
-  background: "none",
-  color: "var(--muted)",
-  border: "1px solid var(--border)",
-  borderRadius: 6,
-  padding: "0.3rem 0.55rem",
-  cursor: "pointer",
-  fontSize: "0.78rem",
-  whiteSpace: "nowrap",
-};
-
-const field: CSSProperties = {
-  background: "var(--surface)",
-  color: "var(--text)",
-  border: "1px solid var(--border)",
-  borderRadius: 6,
-  padding: "0.3rem 0.5rem",
-  fontSize: "0.8rem",
-};
-
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -51,19 +31,16 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
   const [kind, setKind] = useState<"reminder" | "task">("reminder");
   const [payload, setPayload] = useState("");
 
-  const toggleDay = (d: number) =>
+  const toggleDay = (d: number) => {
     setWeekdays((prev) => (prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d].sort((a, b) => a - b)));
+  };
 
   const buildSchedule = (): JobSchedule | null => {
     if (stype === "interval") {
-      const secs = Math.max(1, Math.round(intervalN)) * UNIT_SECONDS[unit];
-      return { type: "interval", interval_seconds: secs };
+      return { type: "interval", interval_seconds: Math.max(1, Math.round(intervalN)) * UNIT_SECONDS[unit] };
     }
     if (stype === "daily") return { type: "daily", time };
-    if (stype === "weekly") {
-      if (weekdays.length === 0) return null;
-      return { type: "weekly", time, weekdays };
-    }
+    if (stype === "weekly") return weekdays.length ? { type: "weekly", time, weekdays } : null;
     return { type: "once", date, time };
   };
 
@@ -76,88 +53,46 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
   };
 
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
-        display: "flex", alignItems: "flex-start", justifyContent: "center",
-        zIndex: 50, padding: "2rem 1rem", overflowY: "auto",
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: "var(--bg, #111)", border: "1px solid var(--border)",
-          borderRadius: 10, padding: "1.1rem", width: "100%", maxWidth: 560,
-          display: "flex", flexDirection: "column", gap: "0.9rem",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <h2 style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--accent)" }}>Schemalagda jobb</h2>
-          <button onClick={onClose} style={btn}>Stäng</button>
+    <div className="scrim on" onClick={onClose}>
+      <div className="modal narrow" onClick={(e) => e.stopPropagation()}>
+        <div className="mh">
+          <span>⏰</span>
+          <span className="nm">Schemalagda jobb</span>
+          <button className="x" onClick={onClose}>✕</button>
         </div>
-
-        {/* List */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-          {jobs.length === 0 && (
-            <p style={{ color: "var(--muted)", fontSize: "0.82rem" }}>Inga jobb ännu.</p>
-          )}
-          {jobs.map((j) => (
-            <div
-              key={j.id}
-              style={{
-                display: "flex", alignItems: "center", gap: "0.5rem",
-                border: "1px solid var(--border)", borderRadius: 8, padding: "0.45rem 0.6rem",
-                opacity: j.enabled ? 1 : 0.55,
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ color: "var(--text)", fontSize: "0.84rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {j.title}
+        <div className="mb">
+          {jobs.length === 0 ? (
+            <p style={{ color: "var(--dim)" }}>Inga jobb ännu.</p>
+          ) : (
+            jobs.map((job) => (
+              <div key={job.id} className="jrow" style={{ opacity: job.enabled ? 1 : 0.55 }}>
+                <div className="ji">{job.kind === "task" ? "✦" : "⏰"}</div>
+                <div>
+                  <div className="jt">{job.title}</div>
+                  <div className="js">
+                    {job.kind === "task" ? "uppgift · " : ""}
+                    {job.summary} · nästa {job.next_run_label}
+                    {!job.enabled ? " · pausad" : ""}
+                  </div>
                 </div>
-                <div style={{ color: "var(--muted)", fontSize: "0.72rem" }}>
-                  {j.kind === "task" ? "uppgift · " : ""}{j.summary} · nästa {j.next_run_label}
-                  {!j.enabled && " · pausad"}
+                <div className="jx">
+                  <button onClick={() => (job.enabled ? onPause(job.id) : onResume(job.id))}>
+                    {job.enabled ? "⏸" : "▶"}
+                  </button>
+                  <button onClick={() => onDelete(job.id)}>✕</button>
                 </div>
               </div>
-              <button
-                onClick={() => (j.enabled ? onPause(j.id) : onResume(j.id))}
-                title={j.enabled ? "Pausa" : "Återuppta"}
-                style={btn}
-              >
-                {j.enabled ? "⏸" : "▶"}
-              </button>
-              <button onClick={() => onDelete(j.id)} title="Ta bort" style={{ ...btn, color: "var(--red)" }}>
-                ✕
-              </button>
-            </div>
-          ))}
-        </div>
+            ))
+          )}
 
-        {/* New job form */}
-        <div style={{ borderTop: "1px solid var(--border)", paddingTop: "0.8rem", display: "flex", flexDirection: "column", gap: "0.55rem" }}>
-          <span style={{ color: "var(--muted)", fontSize: "0.8rem", fontWeight: 600 }}>Nytt jobb</span>
-
-          <div style={{ display: "flex", gap: "0.3rem", alignItems: "center" }}>
-            {([["reminder", "Påminnelse"], ["task", "Uppgift (kör Pilot)"]] as const).map(([k, label]) => (
-              <button
-                key={k}
-                onClick={() => setKind(k)}
-                title={k === "task" ? "Pilot utför instruktionen på schemat och levererar resultatet" : "Levererar texten som en påminnelse"}
-                style={{
-                  ...btn,
-                  ...(kind === k
-                    ? { color: "var(--text)", borderColor: "var(--accent)", background: "rgba(99,102,241,0.12)" }
-                    : {}),
-                }}
-              >
-                {label}
-              </button>
-            ))}
+          <div className="seclabel">Nytt jobb</div>
+          <div className="seg2" style={{ marginBottom: 10 }}>
+            <button className={kind === "reminder" ? "on" : ""} onClick={() => setKind("reminder")}>Påminnelse</button>
+            <button className={kind === "task" ? "on" : ""} onClick={() => setKind("task")}>Uppgift</button>
           </div>
 
-          <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignItems: "center" }}>
-            <select value={stype} onChange={(e) => setStype(e.target.value as SType)} style={field}>
+          <div className="jadd" style={{ marginBottom: 10 }}>
+            <select className="fld" value={stype} onChange={(e) => setStype(e.target.value as SType)}>
               <option value="interval">Intervall</option>
               <option value="daily">Dagligen</option>
               <option value="weekly">Veckodagar</option>
@@ -166,13 +101,8 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
 
             {stype === "interval" && (
               <>
-                <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>var</span>
-                <input
-                  type="number" min={1} value={intervalN}
-                  onChange={(e) => setIntervalN(Number(e.target.value))}
-                  style={{ ...field, width: 70 }}
-                />
-                <select value={unit} onChange={(e) => setUnit(e.target.value as keyof typeof UNIT_SECONDS)} style={field}>
+                <input className="fld" type="number" min={1} value={intervalN} onChange={(e) => setIntervalN(Number(e.target.value))} style={{ width: 90 }} />
+                <select className="fld" value={unit} onChange={(e) => setUnit(e.target.value as keyof typeof UNIT_SECONDS)}>
                   <option value="min">min</option>
                   <option value="h">timme</option>
                   <option value="dygn">dygn</option>
@@ -180,49 +110,37 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
               </>
             )}
 
-            {stype === "once" && (
-              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={field} />
-            )}
-
+            {stype === "once" && <input className="fld" type="date" value={date} onChange={(e) => setDate(e.target.value)} />}
             {(stype === "daily" || stype === "weekly" || stype === "once") && (
-              <input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={field} />
+              <input className="fld" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
             )}
           </div>
 
           {stype === "weekly" && (
-            <div style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap" }}>
-              {WEEKDAYS.map((label, d) => (
-                <button
-                  key={d}
-                  onClick={() => toggleDay(d)}
-                  style={{
-                    ...btn,
-                    ...(weekdays.includes(d)
-                      ? { color: "var(--text)", borderColor: "var(--accent)", background: "rgba(99,102,241,0.12)" }
-                      : {}),
-                  }}
-                >
+            <div className="seg2" style={{ marginBottom: 10, flexWrap: "wrap" }}>
+              {WEEKDAYS.map((label, idx) => (
+                <button key={label} className={weekdays.includes(idx) ? "on" : ""} onClick={() => toggleDay(idx)}>
                   {label}
                 </button>
               ))}
             </div>
           )}
 
-          <div style={{ display: "flex", gap: "0.4rem" }}>
+          <div className="jadd">
             <input
+              className="fld"
               value={payload}
               onChange={(e) => setPayload(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  submit();
+                }
+              }}
               placeholder={kind === "task" ? "Instruktion till Pilot…" : "Påminnelsetext…"}
-              style={{ ...field, flex: 1 }}
+              style={{ flex: 1 }}
             />
-            <button
-              onClick={submit}
-              disabled={!payload.trim() || (stype === "weekly" && weekdays.length === 0)}
-              style={{ ...btn, color: "var(--accent)", borderColor: "var(--accent)" }}
-            >
-              Lägg till
-            </button>
+            <button className="addbtn" onClick={submit}>Lägg till</button>
           </div>
         </div>
       </div>

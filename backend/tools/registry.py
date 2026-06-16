@@ -323,6 +323,22 @@ REGISTRY: tuple[ToolSpec, ...] = (
     ),
     # --- Web -----------------------------------------------------------------
     ToolSpec(
+        name="web_research",
+        summary="Search the web and fetch readable sources",
+        description="web_research(query?, task?, min_sources?): search, filter ads, "
+        "fetch readable pages and return source excerpts",
+        when_to_use="For web/news requests that ask for links, sources, citations or "
+        "a summary of multiple sources. Use this instead of plain web_search when "
+        "the user asks for sources.",
+        params={
+            "query": {"type": "string", "description": "Search query (optional if task is supplied)"},
+            "task": {"type": "string", "description": "Original user task, used to infer query (optional)"},
+            "min_sources": {"type": "integer", "description": "Minimum readable sources to fetch (optional)"},
+        },
+        category="web",
+        deterministic=True,
+    ),
+    ToolSpec(
         name="web_search",
         summary="Search the web",
         description="web_search(query, max_results?): return the top web results "

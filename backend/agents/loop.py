@@ -11,9 +11,11 @@ from tools import (
     click, click_element, type_text, scroll, move_mouse, key_press, hotkey,
     run_command_sync, open_app, run_codex,
     active_window_title, list_dir, read_file, find_file, list_windows, focus_window,
-    search_files, github_issues, github_prs, github_repo, web_search, fetch_url,
+    search_files, github_issues, github_prs, github_repo, web_search, fetch_url, web_research_result,
 )
+from tools.web import infer_requested_source_count, infer_web_query, task_requires_sources
 from tools import registry
+from tool_results import ToolResult
 from config import MAX_AGENT_STEPS, OLLAMA_VISION_ENABLED, PERCEPTION_ENABLED
 
 # Behaviour sets are derived from the single tool registry (tools/registry.py),
@@ -146,6 +148,9 @@ async def run_agent_loop(
             return LoopOutcome("blocked", render_action_log(history), focus_block_reason)
 
         args = apply_project_cwd_to_args(tool, args, project_cwd)
+        tool, args, repair_note = repair_web_tool_call(tool, args, task)
+        if repair_note:
+            emit(make_event("thinking", content=repair_note))
 
         if tool == "run_command":
             command_key = normalize_command_key(args)
@@ -166,9 +171,13 @@ async def run_agent_loop(
             result = await execute_tool(tool, args, emit)
         except Exception as e:
             result = f"Error executing {tool}: {e}"
-            emit(make_event("error", content=result))
-            # Mark the tool so the router won't retry it this session.
             failed_tools.add(tool)
+            emit(make_event("error", content=result))
+
+        tool_ok = tool_execution_succeeded(tool, result)
+        if not tool_ok:
+            failed_tools.add(tool)
+            emit(make_event("error", content=result))
 
         history.append({"type": "action", "content": f"{tool}({args}) -> {result[:1000]}"})
         desktop_target_hint = update_desktop_target_hint(tool, args, result, desktop_target_hint)
@@ -176,7 +185,7 @@ async def run_agent_loop(
             emit(make_event("result", content=result[:500]))
 
         completion_summary = command_completion_summary(task, tool, result)
-        if not completion_summary:
+        if not completion_summary and tool_ok:
             completion_summary = deterministic_completion_summary(tool, result)
         if completion_summary:
             return LoopOutcome("done", render_action_log(history), completion_summary)
@@ -251,6 +260,29 @@ def apply_project_cwd_to_args(tool: str, args: dict, project_cwd: str | None) ->
             return {**args, "path": str(Path(project_cwd) / path)}
 
     return args
+
+
+def repair_web_tool_call(tool: str, args: dict, task: str) -> tuple[str, dict, str | None]:
+    """Self-repair obvious web tool issues before executing.
+
+    Missing query arguments and source-heavy requests are mechanical recoveries;
+    asking the user to restate them only creates the loop seen in today's
+    sessions.
+    """
+    args = dict(args or {})
+    if tool == "web_search" and task_requires_sources(task):
+        query = str(args.get("query") or infer_web_query(task)).strip()
+        min_sources = int(args.get("min_sources") or infer_requested_source_count(task, default=3))
+        return "web_research", {"query": query, "task": task, "min_sources": min_sources}, (
+            "Reparerar webbanrop: använder web_research eftersom uppgiften kräver källor."
+        )
+    if tool in {"web_search", "web_research"} and not str(args.get("query") or "").strip():
+        query = infer_web_query(task)
+        if query:
+            args["query"] = query
+            args.setdefault("task", task)
+            return tool, args, f"Reparerar webbanrop: härledde sökfrågan {query!r}."
+    return tool, args, None
 
 
 def task_requests_desktop_text_entry(task: str) -> bool:
@@ -336,7 +368,37 @@ def deterministic_completion_summary(tool: str, result: str) -> str | None:
     return None
 
 
+def tool_execution_succeeded(tool: str, text: str) -> bool:
+    if tool == "web_research":
+        return text.startswith("Research results for ")
+    return not (
+        text.startswith("Error executing")
+        or " requires argument(s): " in text
+        or text.startswith("web_search failed:")
+        or text.startswith("fetch_url failed:")
+        or text.startswith("Unknown tool:")
+    )
+
+
+async def execute_tool_result(tool: str, args: dict, emit: Callable[[dict], None]) -> ToolResult:
+    if tool == "web_research":
+        result = await web_research_result(
+            args.get("query", ""),
+            args.get("task", ""),
+            args.get("min_sources", 3),
+        )
+        return result
+
+    text = await _execute_tool_text(tool, args, emit)
+    ok = tool_execution_succeeded(tool, text)
+    return ToolResult(ok=ok, kind=tool, text=text if ok else "", error=None if ok else text)
+
+
 async def execute_tool(tool: str, args: dict, emit: Callable[[dict], None]) -> str:
+    return (await execute_tool_result(tool, args, emit)).to_text()
+
+
+async def _execute_tool_text(tool: str, args: dict, emit: Callable[[dict], None]) -> str:
     args = args or {}
     # Validate required args up front: a missing one returns a clear, model-
     # actionable message (so the model retries WITH the arg) instead of crashing

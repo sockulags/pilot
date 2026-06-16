@@ -1,29 +1,23 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ChatInput from "@/components/TaskInput";
 import Transcript from "@/components/ActionLog";
-import AbortButton from "@/components/AbortButton";
 import ProjectBar from "@/components/ProjectBar";
 import JobsPanel from "@/components/JobsPanel";
 
 export type Route = "chat" | "computer" | "code";
-
 export type Project = { id: string; name: string; path: string };
-
-// A selectable local model offered by the backend (plus the "auto" pseudo-mode).
 export type ModelOption = { id: string; label: string; hint: string };
 
-// A scheduled job's recurrence (mirrors backend jobs.py).
 export type JobSchedule = {
   type: "interval" | "daily" | "weekly" | "once";
   interval_seconds?: number;
-  time?: string; // "HH:MM"
-  weekdays?: number[]; // mon=0
-  date?: string; // "YYYY-MM-DD"
+  time?: string;
+  weekdays?: number[];
+  date?: string;
 };
 
-// A scheduled job as sent by the backend (with display fields it adds on send).
 export type Job = {
   id: string;
   session_id: string | null;
@@ -36,11 +30,32 @@ export type Job = {
   created_ts: number;
   last_run: number | null;
   last_result: string | null;
-  summary: string; // backend-rendered "var 10 min" / "dagligen kl 09:00"
-  next_run_label: string; // backend-rendered "YYYY-MM-DD HH:MM" / "—"
+  summary: string;
+  next_run_label: string;
 };
 
-// Raw event coming over the WebSocket from the backend.
+export type Agent = "claude" | "codex";
+
+export type CodexTrace = {
+  codex_session_id?: string;
+  codex_log_path?: string;
+  codex_prompt?: string;
+  codex_tool_call_count?: number;
+  codex_shell_call_count?: number;
+  codex_mcp_call_count?: number;
+  codex_tool_calls?: { name?: string; namespace?: string; arguments?: string }[];
+  codex_final_summary?: string;
+  codex_error_summary?: string;
+};
+
+type StoredMessage = {
+  role: string;
+  content: string;
+  cwd?: string;
+  code_session_id?: string;
+  codex_trace?: CodexTrace;
+};
+
 export type ServerEvent = {
   type:
     | "history"
@@ -73,36 +88,13 @@ export type ServerEvent = {
   selected?: string | null;
   agent?: Agent;
   trace?: CodexTrace;
-  model?: string; // turn_start: the local model that answers this turn
-  model_mode?: string; // projects: "auto" or a pinned model id
-  models?: ModelOption[]; // projects: selectable model catalog
-  route_mode?: string; // projects: "auto" or a forced route
-  jobs?: Job[]; // jobs: the scheduled-job list for this session
+  model?: string;
+  model_mode?: string;
+  models?: ModelOption[];
+  route_mode?: string;
+  jobs?: Job[];
 };
 
-export type Agent = "claude" | "codex";
-
-export type CodexTrace = {
-  codex_session_id?: string;
-  codex_log_path?: string;
-  codex_prompt?: string;
-  codex_tool_call_count?: number;
-  codex_shell_call_count?: number;
-  codex_mcp_call_count?: number;
-  codex_tool_calls?: { name?: string; namespace?: string; arguments?: string }[];
-  codex_final_summary?: string;
-  codex_error_summary?: string;
-};
-
-type StoredMessage = {
-  role: string;
-  content: string;
-  cwd?: string;
-  code_session_id?: string;
-  codex_trace?: CodexTrace;
-};
-
-// A single activity row inside an assistant turn's details panel.
 export type TurnEvent = {
   id: number;
   type: string;
@@ -119,59 +111,147 @@ export type TranscriptItem =
       id: number;
       turn: number;
       route?: Route;
-      model?: string; // local model that answered this turn (auto-picked or pinned)
-      text: string; // streamed reply (chat / code)
-      events: TurnEvent[]; // thinking / action / result / screenshot / error
-      summary?: string; // final result (computer / code)
+      model?: string;
+      text: string;
+      events: TurnEvent[];
+      summary?: string;
       cwd?: string;
       codeSessionId?: string;
       codexTrace?: CodexTrace;
       done: boolean;
     };
 
-// Derive the WS URL from the page origin so one build works on localhost, LAN
-// and over a Tailscale HTTPS hostname. The Next dev server runs the UI on :3000
-// while the backend WS is on :8000 of the same host — detect that and redirect.
-// (No NEXT_PUBLIC_ env: it would be inlined into the static build and break the
-// single-origin/Tailscale case.)
-function wsUrl(): string {
-  if (typeof window === "undefined") return "ws://localhost:8000/ws";
-  const { protocol, hostname, host, port } = window.location;
-  if (port === "3000") return `ws://${hostname}:8000/ws`; // Next dev
-  const proto = protocol === "https:" ? "wss" : "ws";
-  return `${proto}://${host}/ws`;
-}
-
 type WsStatus = "disconnected" | "connecting" | "connected" | "error";
 
 const STATUS_LABEL: Record<WsStatus, string> = {
   disconnected: "Frånkopplad",
-  connecting: "Ansluter...",
+  connecting: "Ansluter",
   connected: "Ansluten",
-  error: "Anslutningsfel",
+  error: "Fel",
 };
-const STATUS_COLOR: Record<WsStatus, string> = {
-  disconnected: "var(--muted)",
-  connecting: "var(--yellow)",
-  connected: "var(--green)",
-  error: "var(--red)",
-};
+
+const HERO_SUGGESTIONS = [
+  "Granska den här diffen och säg vad som är riskabelt",
+  "Kör igenom repo:t och föreslå nästa tekniska steg",
+  "Jämför lokala modeller och föreslå rätt standardstack",
+  "Öppna projektet, kör testerna och förklara vad som faller",
+];
 
 const RECONNECT_DELAY = 3000;
 
-// crypto.randomUUID requires a secure context (missing over http on the LAN,
-// i.e. the mobile case). Fall back to getRandomValues, then Math.random.
+function wsUrl(): string {
+  if (typeof window === "undefined") return "ws://localhost:8000/ws";
+  const { protocol, hostname, host, port } = window.location;
+  if (port === "3000") return `ws://${hostname}:8000/ws`;
+  const proto = protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${host}/ws`;
+}
+
 function makeSessionId(): string {
   try {
     if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
     if (typeof crypto !== "undefined" && crypto.getRandomValues) {
-      const b = crypto.getRandomValues(new Uint8Array(16));
-      return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
     }
-  } catch {
-    // fall through
-  }
+  } catch {}
   return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+}
+
+function preview(text: string, max = 72) {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
+}
+
+function approximateTokens(transcript: TranscriptItem[]) {
+  return transcript.reduce((sum, item) => {
+    const text = item.kind === "user" ? item.text : `${item.text} ${item.summary ?? ""}`;
+    return sum + Math.ceil(text.length / 4);
+  }, 1600);
+}
+
+function ContextModal({
+  transcript,
+  onClose,
+}: {
+  transcript: TranscriptItem[];
+  onClose: () => void;
+}) {
+  const total = approximateTokens(transcript);
+  const system = 900;
+  const skills = 420;
+  const conversation = Math.max(0, total - system - skills);
+  const percent = Math.min(100, Math.round((total / 8192) * 100));
+
+  return (
+    <div className="scrim on" onClick={onClose}>
+      <div className="modal narrow" onClick={(e) => e.stopPropagation()}>
+        <div className="mh">
+          <span>◔</span>
+          <span className="nm">Huvudagentens kontext</span>
+          <button className="x" onClick={onClose}>✕</button>
+        </div>
+        <div className="mb">
+          <p style={{ color: "var(--dim)", marginBottom: 12 }}>
+            Ungefärlig fördelning för den här konversationen just nu.
+          </p>
+          <div className="ctxbar">
+            <span style={{ width: `${(system / 8192) * 100}%`, background: "var(--accent)" }} />
+            <span style={{ width: `${(skills / 8192) * 100}%`, background: "var(--violet)" }} />
+            <span style={{ width: `${(conversation / 8192) * 100}%`, background: "var(--green)" }} />
+          </div>
+          <div className="ctxrow"><span className="sw" style={{ background: "var(--accent)" }} /><span className="nm2">System</span><span className="tk">{system} tok</span></div>
+          <div className="ctxrow"><span className="sw" style={{ background: "var(--violet)" }} /><span className="nm2">Skills</span><span className="tk">{skills} tok</span></div>
+          <div className="ctxrow"><span className="sw" style={{ background: "var(--green)" }} /><span className="nm2">Samtal</span><span className="tk">{conversation} tok</span></div>
+          <div className="ctxrow" style={{ borderBottom: "none" }}><span className="sw" style={{ background: "var(--panel-2)" }} /><span className="nm2">Totalt</span><span className="tk">{total} tok · {percent}% av 8k</span></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Drawer({
+  transcript,
+  selectedProject,
+  onClose,
+  onOpenControls,
+  onReset,
+}: {
+  transcript: TranscriptItem[];
+  selectedProject: Project | null;
+  onClose: () => void;
+  onOpenControls: () => void;
+  onReset: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const items = transcript.filter((item): item is Extract<TranscriptItem, { kind: "user" }> => item.kind === "user");
+  const filtered = items.filter((item) => item.text.toLowerCase().includes(query.toLowerCase()));
+
+  return (
+    <>
+      <div className="drawer-scrim on" onClick={onClose} />
+      <aside className="drawer on">
+        <div className="dh">
+          <div className="t">Session</div>
+          <button className="x" onClick={onClose}>✕</button>
+        </div>
+        <button className="newbtn" onClick={onReset}>＋ Ny konversation</button>
+        <input className="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filtrera tidigare prompts…" />
+        <div className="list">
+          <button className="ses-item on" onClick={onOpenControls}>
+            <div className="st">{selectedProject?.name ?? "Inget projekt valt"}</div>
+            <div className="sm">{selectedProject?.path ?? "Öppna kontrollpanelen för projekt, modell och agent."}</div>
+          </button>
+          {filtered.map((item) => (
+            <button key={item.id} className="ses-item">
+              <div className="st">{preview(item.text)}</div>
+              <div className="sm">Tur {item.turn}</div>
+            </button>
+          ))}
+        </div>
+      </aside>
+    </>
+  );
 }
 
 export default function Home() {
@@ -179,29 +259,41 @@ export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [agent, setAgent] = useState<Agent>("claude");
-  const [modelMode, setModelMode] = useState<string>("auto");
+  const [modelMode, setModelMode] = useState("auto");
   const [models, setModels] = useState<ModelOption[]>([]);
-  const [routeMode, setRouteMode] = useState<string>("auto");
+  const [routeMode, setRouteMode] = useState("auto");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [jobsOpen, setJobsOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
+  const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const [running, _setRunning] = useState(false);
   const [wsStatus, setWsStatus] = useState<WsStatus>("disconnected");
   const wsRef = useRef<WebSocket | null>(null);
   const idRef = useRef(0);
-  const turnRef = useRef(0); // mirrors the backend's per-message turn counter
+  const turnRef = useRef(0);
   const runningRef = useRef(false);
   const transcriptRef = useRef<TranscriptItem[]>([]);
-  const sessionIdRef = useRef<string>("");
-  const tokenRef = useRef<string>("");
+  const sessionIdRef = useRef("");
+  const tokenRef = useRef("");
 
-  // Keep a synchronous mirror of the transcript so WS callbacks can read its
-  // current length without a stale closure.
   useEffect(() => {
     transcriptRef.current = transcript;
   }, [transcript]);
 
-  // Stable per-browser session id so the backend can resume the conversation
-  // across reconnects / reloads.
+  useEffect(() => {
+    document.body.classList.toggle("busy", running);
+  }, [running]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const apply = () => document.body.classList.toggle("m", window.innerWidth < 820);
+    apply();
+    window.addEventListener("resize", apply);
+    return () => window.removeEventListener("resize", apply);
+  }, []);
+
   useEffect(() => {
     let id = localStorage.getItem("pilot_session_id");
     if (!id) {
@@ -211,8 +303,6 @@ export default function Home() {
     sessionIdRef.current = id;
   }, []);
 
-  // Auth token: ?token=… is captured once into localStorage (then stripped from
-  // the URL) and sent on every hello. Empty when the backend has no token set.
   useEffect(() => {
     const url = new URL(window.location.href);
     const fromQuery = url.searchParams.get("token");
@@ -224,19 +314,18 @@ export default function Home() {
     tokenRef.current = localStorage.getItem("pilot_token") || "";
   }, []);
 
-  const setRunning = useCallback((val: boolean) => {
-    runningRef.current = val;
-    _setRunning(val);
+  const setRunning = useCallback((value: boolean) => {
+    runningRef.current = value;
+    _setRunning(value);
   }, []);
 
-  // Fold an incoming server event into the assistant turn it belongs to.
   const applyEvent = useCallback((ev: ServerEvent) => {
     if (ev.type === "reset_ok") return;
     const turn = ev.turn ?? turnRef.current;
 
     setTranscript((prev) => {
       const next = [...prev];
-      let idx = next.findIndex((i) => i.kind === "assistant" && i.turn === turn);
+      let idx = next.findIndex((item) => item.kind === "assistant" && item.turn === turn);
       if (idx === -1) {
         next.push({ kind: "assistant", id: idRef.current++, turn, text: "", events: [], done: false });
         idx = next.length - 1;
@@ -274,21 +363,12 @@ export default function Home() {
           updated.events.push({ id: idRef.current++, type: "action", tool: ev.tool, args: ev.args });
           break;
         case "consult":
-          // Header row for an expert hand-off, then a buffer the expert streams into.
           updated.events.push({ id: idRef.current++, type: "consult", tool: ev.model, content: ev.content });
-          updated.events.push({ id: idRef.current++, type: "expert", tool: ev.model, content: "" });
           break;
-        case "expert_delta": {
-          const evs = updated.events;
-          const last = evs[evs.length - 1];
-          if (last && last.type === "expert" && last.tool === ev.model) {
-            evs[evs.length - 1] = { ...last, content: (last.content ?? "") + (ev.content ?? "") };
-          } else {
-            evs.push({ id: idRef.current++, type: "expert", tool: ev.model, content: ev.content });
-          }
+        case "expert_delta":
+          updated.events.push({ id: idRef.current++, type: "expert", tool: ev.model, content: ev.content });
           break;
-        }
-        default: // thinking | result | error
+        default:
           updated.events.push({ id: idRef.current++, type: ev.type, content: ev.content });
       }
 
@@ -309,7 +389,6 @@ export default function Home() {
 
       ws.onopen = () => {
         setWsStatus("connected");
-        // Resume (or register) this browser's session; token is "" unless set.
         ws.send(JSON.stringify({ type: "hello", session_id: sessionIdRef.current, token: tokenRef.current }));
       };
 
@@ -317,8 +396,6 @@ export default function Home() {
         const msg = JSON.parse(e.data) as ServerEvent;
         if (msg.type === "history") {
           turnRef.current = msg.turn ?? 0;
-          // Only rebuild on a fresh page (empty transcript); a mid-session
-          // reconnect keeps the richer local transcript intact.
           if (transcriptRef.current.length === 0 && msg.messages?.length) {
             setTranscript(
               msg.messages.map((m) =>
@@ -378,17 +455,14 @@ export default function Home() {
     };
   }, [applyEvent, setRunning]);
 
-  const handleSend = useCallback(
-    (text: string) => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      turnRef.current += 1; // matches backend turn_counter increment order
-      setTranscript((prev) => [...prev, { kind: "user", id: idRef.current++, turn: turnRef.current, text }]);
-      setRunning(true);
-      ws.send(JSON.stringify({ type: "message", text }));
-    },
-    [setRunning]
-  );
+  const handleSend = useCallback((text: string) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    turnRef.current += 1;
+    setTranscript((prev) => [...prev, { kind: "user", id: idRef.current++, turn: turnRef.current, text }]);
+    setRunning(true);
+    ws.send(JSON.stringify({ type: "message", text }));
+  }, [setRunning]);
 
   const handleAbort = useCallback(() => {
     wsRef.current?.send(JSON.stringify({ type: "abort" }));
@@ -408,13 +482,14 @@ export default function Home() {
     if (ws?.readyState === WebSocket.OPEN) {
       if (wasRunning) ws.send(JSON.stringify({ type: "abort" }));
       ws.send(JSON.stringify({ type: "hello", session_id: nextSessionId, token: tokenRef.current }));
-      const selected = projects.find((p) => p.path === selectedProject);
+      const selected = projects.find((project) => project.path === selectedProject);
       if (selected) ws.send(JSON.stringify({ type: "select_project", id: selected.id }));
       ws.send(JSON.stringify({ type: "select_agent", agent }));
       ws.send(JSON.stringify({ type: "select_model", model_mode: modelMode }));
       ws.send(JSON.stringify({ type: "select_route", route_mode: routeMode }));
     }
-  }, [agent, modelMode, routeMode, projects, selectedProject, setRunning]);
+    setDrawerOpen(false);
+  }, [agent, modelMode, projects, routeMode, selectedProject, setRunning]);
 
   const selectProject = useCallback((id: string) => {
     wsRef.current?.send(JSON.stringify({ type: "select_project", id }));
@@ -425,8 +500,9 @@ export default function Home() {
   const removeProject = useCallback((id: string) => {
     wsRef.current?.send(JSON.stringify({ type: "remove_project", id }));
   }, []);
-  const selectAgent = useCallback((a: Agent) => {
-    wsRef.current?.send(JSON.stringify({ type: "select_agent", agent: a }));
+  const selectAgent = useCallback((value: Agent) => {
+    wsRef.current?.send(JSON.stringify({ type: "select_agent", agent: value }));
+    setAgentMenuOpen(false);
   }, []);
   const selectModel = useCallback((mode: string) => {
     wsRef.current?.send(JSON.stringify({ type: "select_model", model_mode: mode }));
@@ -447,64 +523,122 @@ export default function Home() {
     wsRef.current?.send(JSON.stringify({ type: "delete_job", id }));
   }, []);
 
+  const selectedProjectObject = projects.find((project) => project.path === selectedProject) ?? null;
+  const hasConversation = transcript.length > 0;
+
   return (
-    <main style={{ display: "flex", flexDirection: "column", height: "100dvh", padding: "1rem", gap: "0.75rem", maxWidth: 800, margin: "0 auto" }}>
-      <header style={{ paddingBottom: "0.5rem", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div>
-          <h1 style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--accent)" }}>Pilot</h1>
-          <p style={{ fontSize: "0.8rem", color: "var(--muted)" }}>Local AI chat &amp; computer agent</p>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <button
-            onClick={() => setJobsOpen(true)}
-            title="Schemalagda jobb och påminnelser"
-            style={{ fontSize: "0.75rem", color: "var(--muted)", background: "none", border: "1px solid var(--border)", borderRadius: 6, padding: "0.25rem 0.6rem", cursor: "pointer" }}
-          >
-            ⏰ Jobb{jobs.length ? ` (${jobs.length})` : ""}
+    <>
+      <div className="hairline" />
+      <div className="shell">
+        <header className="top">
+          <button className="ic" onClick={() => setDrawerOpen(true)} title="Öppna session">
+            ☰
           </button>
-          <button
-            onClick={handleReset}
-            style={{ fontSize: "0.75rem", color: "var(--muted)", background: "none", border: "1px solid var(--border)", borderRadius: 6, padding: "0.25rem 0.6rem", cursor: "pointer" }}
-          >
-            Ny konversation
+          <div className="mk">✦</div>
+          <div className="nm">Pilot</div>
+          <button className="crumb" onClick={() => setControlsOpen(true)}>
+            {selectedProjectObject?.name ?? "Välj projekt"}
           </button>
-          <span style={{ fontSize: "0.75rem", fontWeight: 600, color: STATUS_COLOR[wsStatus] }}>
-            ● {STATUS_LABEL[wsStatus]}
-          </span>
+          <div className="sp" />
+          <button className="brain" onClick={() => setContextOpen(true)}>
+            <span className="orb" />
+            <span id="brainTxt">{modelMode === "auto" ? "auto orchestration" : modelMode}</span>
+          </button>
+          <div className={`agent${agentMenuOpen ? " open" : ""}`}>
+            <button className="agent-trigger" onClick={() => setAgentMenuOpen((value) => !value)}>
+              {agent === "claude" ? "Claude Code" : "Codex"}
+            </button>
+            <div className="menu">
+              <button className={agent === "claude" ? "on" : ""} onClick={() => selectAgent("claude")}>Claude Code</button>
+              <button className={agent === "codex" ? "on" : ""} onClick={() => selectAgent("codex")}>Codex</button>
+            </div>
+          </div>
+          <button className="ic" onClick={() => setJobsOpen(true)} title="Schemalagda jobb">
+            ⏰
+            {jobs.length > 0 && <span className="badge">{jobs.length}</span>}
+          </button>
+          <button className="ic" onClick={handleReset} title="Ny konversation">⟲</button>
+          <div className="brain" title={STATUS_LABEL[wsStatus]}>
+            <span className="conn" style={{ background: wsStatus === "error" ? "var(--del)" : wsStatus === "connecting" ? "var(--amber)" : "var(--green)" }} />
+            <span>{STATUS_LABEL[wsStatus]}</span>
+          </div>
+        </header>
+
+        <div className="scroll">
+          {!hasConversation ? (
+            <section className="hero">
+              <h1 className="greet">
+                Bygg, granska och kör <span className="g">lokala agentflöden</span>.
+              </h1>
+              <p className="tag">
+                Pilot håller ihop chatt, kod, datorstyrning och modellval i ett enda arbetsflöde.
+              </p>
+              <div className="ghosts">
+                {HERO_SUGGESTIONS.map((suggestion) => (
+                  <button key={suggestion} className="ghost" onClick={() => handleSend(suggestion)}>
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+              <ChatInput onSend={handleSend} onAbort={handleAbort} onOpenContext={() => setContextOpen(true)} disabled={wsStatus !== "connected"} running={running} />
+            </section>
+          ) : (
+            <section className="conv on">
+              <Transcript items={transcript} />
+            </section>
+          )}
         </div>
-      </header>
 
-      <ProjectBar
-        projects={projects}
-        selected={selectedProject}
-        agent={agent}
-        modelMode={modelMode}
-        models={models}
-        routeMode={routeMode}
-        onSelect={selectProject}
-        onAdd={addProject}
-        onRemove={removeProject}
-        onSelectAgent={selectAgent}
-        onSelectModel={selectModel}
-        onSelectRoute={selectRoute}
-      />
+        {hasConversation && (
+          <div className="dock">
+            <ChatInput onSend={handleSend} onAbort={handleAbort} onOpenContext={() => setContextOpen(true)} disabled={wsStatus !== "connected"} running={running} />
+          </div>
+        )}
+      </div>
 
-      <Transcript items={transcript} />
-
-      {running && <AbortButton onAbort={handleAbort} />}
-
-      <ChatInput onSend={handleSend} disabled={wsStatus !== "connected"} />
-
-      {jobsOpen && (
-        <JobsPanel
-          jobs={jobs}
-          onClose={() => setJobsOpen(false)}
-          onAdd={addJob}
-          onPause={pauseJob}
-          onResume={resumeJob}
-          onDelete={deleteJob}
+      {drawerOpen && (
+        <Drawer
+          transcript={transcript}
+          selectedProject={selectedProjectObject}
+          onClose={() => setDrawerOpen(false)}
+          onOpenControls={() => {
+            setControlsOpen(true);
+            setDrawerOpen(false);
+          }}
+          onReset={handleReset}
         />
       )}
-    </main>
+
+      {controlsOpen && (
+        <div className="scrim on" onClick={() => setControlsOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="mh">
+              <span>⌘</span>
+              <span className="nm">Projekt, modell och agent</span>
+              <button className="x" onClick={() => setControlsOpen(false)}>✕</button>
+            </div>
+            <div className="mb">
+              <ProjectBar
+                projects={projects}
+                selected={selectedProject}
+                agent={agent}
+                modelMode={modelMode}
+                models={models}
+                routeMode={routeMode}
+                onSelect={selectProject}
+                onAdd={addProject}
+                onRemove={removeProject}
+                onSelectAgent={selectAgent}
+                onSelectModel={selectModel}
+                onSelectRoute={selectRoute}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {contextOpen && <ContextModal transcript={transcript} onClose={() => setContextOpen(false)} />}
+      {jobsOpen && <JobsPanel jobs={jobs} onClose={() => setJobsOpen(false)} onAdd={addJob} onPause={pauseJob} onResume={resumeJob} onDelete={deleteJob} />}
+    </>
   );
 }

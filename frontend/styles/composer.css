@@ -1,0 +1,87 @@
+/* ── composer wrapper ─────────────────────────────────────── */
+.hero .composer  { width: 100%; max-width: 600px; margin-top: 24px; }
+.dock .composer  { max-width: 760px; margin: 0 auto; }
+
+/* ── input box ────────────────────────────────────────────── */
+.box {
+  background: var(--panel);
+  border: 1.5px solid var(--border-2);
+  border-radius: 18px;
+  box-shadow: var(--shadow-md);
+  transition: .18s;
+}
+.box:focus-within {
+  border-color: transparent;
+  background: linear-gradient(var(--panel), var(--panel)) padding-box, var(--grad) border-box;
+  box-shadow: 0 14px 50px rgba(124,140,255,.16);
+}
+
+/* top row: textarea + send */
+.l1 {
+  display: flex; align-items: flex-end; gap: 8px;
+  padding: 9px 9px 5px 15px;
+}
+
+.box textarea {
+  flex: 1;
+  background: none; border: none; resize: none; outline: none;
+  color: var(--text); font: 15px var(--sans);
+  max-height: 150px; padding: 5px 0;
+}
+.box textarea::placeholder { color: var(--dim-2); }
+
+/* send / stop button */
+.send {
+  width: 32px; height: 32px; border-radius: 10px;
+  background: var(--grad); color: #08090d; font-weight: 900; font-size: 14px;
+  display: grid; place-items: center; flex-shrink: 0;
+  transition: .15s;
+}
+.send:disabled {
+  background: transparent;
+  border: 1px solid var(--border-2);
+  color: var(--dim-2);
+}
+.send:not(:disabled):hover { transform: scale(1.08); }
+.send.stop {
+  background: transparent;
+  border: 1.5px solid var(--del);
+  color: var(--del); font-size: 12px;
+}
+
+/* bottom row: tools + context indicator */
+.l2 {
+  display: flex; align-items: center; gap: 5px;
+  padding: 2px 8px 8px;
+  font: 11px var(--mono); color: var(--dim-2);
+}
+.l2 .sp2 { flex: 1; }
+.l2 .hint { color: var(--dim-2); }
+
+/* mini icon buttons in composer toolbar */
+.mini {
+  width: 27px; height: 27px; border-radius: 8px;
+  color: var(--dim-2); display: grid; place-items: center; font-size: 13px;
+  transition: .12s;
+}
+.mini:hover { color: var(--text); background: var(--panel-2); }
+
+/* context window pill */
+.ctxm {
+  display: inline-flex; align-items: center; gap: 7px;
+  font: 10.5px var(--mono); color: var(--dim);
+  border: 1px solid var(--border); border-radius: var(--r-pill);
+  padding: 3px 10px 3px 6px;
+  transition: .12s;
+}
+.ctxm:hover { color: var(--text); border-color: var(--border-2); }
+
+.ctxm .ring {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: conic-gradient(var(--c, var(--accent)) var(--p, 16%), var(--border) 0);
+  position: relative; flex-shrink: 0;
+}
+.ctxm .ring::after {
+  content: ""; position: absolute; inset: 3px;
+  border-radius: 50%; background: var(--panel);
+}

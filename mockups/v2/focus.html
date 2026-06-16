@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pilot — Focus</title>
+<style>
+  :root {
+    --bg: #08080a;
+    --bg-soft: #0d0d10;
+    --panel: #131318;
+    --panel-2: #17171d;
+    --border: #202027;
+    --border-2: #2b2b34;
+    --text: #f2f2f4;
+    --dim: #8d8d97;
+    --dim-2: #5c5c66;
+    --accent: #8b7bff;
+    --accent-2: #4fd6e0;
+    --grad: linear-gradient(110deg, #8b7bff, #4fd6e0);
+    --green: #54d98c;
+    --violet: #b69cff;
+    --cyan: #4fd6e0;
+    --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { background: var(--bg); color: var(--text); font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased; overflow: hidden; }
+  button { font: inherit; cursor: pointer; color: inherit; border: none; background: none; }
+  ::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-thumb { background: #1d1d24; border-radius: 8px; }
+
+  .devbar { position: fixed; top: 12px; right: 14px; z-index: 60; display: flex; gap: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 9px; padding: 3px; }
+  .devbar button { font: 11px var(--mono); color: var(--dim); padding: 4px 9px; border-radius: 6px; }
+  .devbar button.on { background: var(--panel-2); color: var(--text); }
+
+  /* minimal top — just identity + front-brain status, fades when chatting */
+  .topbar { position: fixed; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 11px; padding: 16px 22px; z-index: 30; pointer-events: none; }
+  .topbar .b { display: flex; align-items: center; gap: 9px; pointer-events: auto; }
+  .topbar .mk { width: 26px; height: 26px; border-radius: 8px; background: var(--grad); display: grid; place-items: center; color: #07070a; font-weight: 900; font-size: 13px; }
+  .topbar .nm { font-weight: 700; letter-spacing: -.2px; font-size: 15px; }
+  .topbar .sp { flex: 1; }
+  .topbar .brain { pointer-events: auto; display: flex; align-items: center; gap: 8px; font: 11px var(--mono); color: var(--dim); border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; background: rgba(13,13,16,.7); backdrop-filter: blur(8px); transition: .2s; }
+  .topbar .brain .led { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 7px var(--green); transition: .2s; }
+  .topbar .brain.busy .led { background: var(--violet); box-shadow: 0 0 9px var(--violet); animation: pl 1s infinite; }
+  @keyframes pl { 50% { opacity: .4; } }
+
+  .stagewrap { height: 100vh; display: flex; flex-direction: column; align-items: center; }
+
+  /* hero (empty) state: composer centered */
+  .hero { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; padding: 0 22px; transition: .4s; }
+  .hero.gone { display: none; }
+  .hero .greet { font-size: clamp(26px, 4vw, 38px); font-weight: 750; letter-spacing: -1px; text-align: center; line-height: 1.15; margin-bottom: 8px; }
+  .hero .greet .g { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero .tagline { color: var(--dim); margin-bottom: 30px; text-align: center; }
+
+  /* conversation (active) */
+  .convo { flex: 1; width: 100%; overflow-y: auto; display: none; }
+  .convo.on { display: block; }
+  .convo-inner { max-width: 720px; margin: 0 auto; padding: 84px 22px 30px; display: flex; flex-direction: column; gap: 26px; }
+
+  .u { align-self: flex-end; max-width: 80%; background: var(--panel-2); border: 1px solid var(--border); padding: 11px 16px; border-radius: 16px 16px 5px 16px; }
+  .turn { display: flex; flex-direction: column; gap: 12px; }
+
+  /* calm timeline */
+  .tl { display: flex; flex-direction: column; gap: 0; }
+  .step { display: flex; gap: 14px; }
+  .step .rail { display: flex; flex-direction: column; align-items: center; }
+  .step .nodea { width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--border-2); background: var(--bg); display: grid; place-items: center; font-size: 10px; color: var(--dim); flex-shrink: 0; transition: .3s; z-index: 1; }
+  .step.run .nodea { border-color: var(--violet); color: var(--violet); }
+  .step.done .nodea { border-color: var(--green); color: var(--green); background: rgba(84,217,140,.08); }
+  .step .conn { width: 1.5px; flex: 1; background: var(--border); min-height: 14px; margin: 2px 0; }
+  .step:last-child .conn { display: none; }
+  .step .c { padding-bottom: 16px; flex: 1; min-width: 0; }
+  .step .lbl { font-size: 13px; color: var(--dim); display: flex; align-items: center; gap: 8px; }
+  .step .lbl b { color: var(--text); font-weight: 600; }
+  .step .lbl .ex { font: 12px var(--mono); color: var(--violet); }
+  .step .spin { display: inline-block; animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+  .step .det { font: 11.5px var(--mono); color: var(--dim-2); margin-top: 3px; }
+
+  /* answer */
+  .ans { display: flex; gap: 14px; }
+  .ans .rail { width: 22px; flex-shrink: 0; display: flex; justify-content: center; }
+  .ans .rail .mk { width: 22px; height: 22px; border-radius: 7px; background: var(--grad); display: grid; place-items: center; color: #07070a; font-size: 11px; font-weight: 900; }
+  .ans .body { flex: 1; min-width: 0; }
+  .ans .rbadge { font: 10px var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--dim-2); margin-bottom: 5px; }
+  .ans .prose { font-size: 15px; line-height: 1.7; }
+  .ans .prose code { font: 13px var(--mono); background: var(--panel-2); padding: 1px 6px; border-radius: 5px; }
+  .codeblk { font: 13px/1.6 var(--mono); background: var(--bg-soft); border: 1px solid var(--border); border-radius: 12px; padding: 13px 16px; margin-top: 10px; white-space: pre-wrap; color: #cfd8ff; }
+  .cur { display: inline-block; width: 8px; height: 16px; background: var(--accent); vertical-align: -3px; margin-left: 1px; animation: blink 1s steps(2) infinite; border-radius: 1px; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* composer — the hero element */
+  .dock { width: 100%; padding: 0 22px 26px; transition: .3s; }
+  .convo.on ~ .dock, body.chatting .dock { /* docked */ }
+  .composer { max-width: 720px; margin: 0 auto; }
+  .ghosts { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-bottom: 16px; }
+  body.chatting .ghosts { display: none; }
+  .ghost { font-size: 13px; color: var(--dim); border: 1px solid var(--border); border-radius: 999px; padding: 7px 14px; transition: .15s; }
+  .ghost:hover { color: var(--text); border-color: var(--border-2); transform: translateY(-1px); }
+  .box { background: var(--panel); border: 1px solid var(--border-2); border-radius: 18px; padding: 6px 6px 6px 6px; transition: .18s; box-shadow: 0 10px 40px rgba(0,0,0,.35); }
+  .box:focus-within { border-color: transparent; box-shadow: 0 0 0 1.5px transparent, 0 10px 50px rgba(139,123,255,.18); background:
+    linear-gradient(var(--panel),var(--panel)) padding-box, var(--grad) border-box; border: 1.5px solid transparent; }
+  .box .line1 { display: flex; align-items: flex-end; gap: 8px; padding: 8px 8px 4px 14px; }
+  .box textarea { flex: 1; background: none; border: none; resize: none; outline: none; color: var(--text); font: 15px var(--sans); max-height: 150px; padding: 5px 0; }
+  .box textarea::placeholder { color: var(--dim-2); }
+  .box .send { width: 38px; height: 38px; border-radius: 12px; background: var(--grad); color: #07070a; font-weight: 900; font-size: 16px; display: grid; place-items: center; flex-shrink: 0; transition: .15s; }
+  .box .send:disabled { background: var(--border-2); color: var(--dim-2); }
+  .box .send:not(:disabled):hover { transform: scale(1.05); }
+  .box .line2 { display: flex; align-items: center; gap: 6px; padding: 2px 10px 8px; }
+  .seg { display: inline-flex; gap: 2px; background: var(--bg-soft); border: 1px solid var(--border); border-radius: 9px; padding: 2px; }
+  .seg button { font: 11px var(--mono); color: var(--dim); padding: 4px 10px; border-radius: 6px; transition: .12s; }
+  .seg button.on { background: var(--panel-2); color: var(--text); }
+  .line2 .hint { margin-left: auto; font: 11px var(--mono); color: var(--dim-2); }
+  body.m .line2 .hint { display: none; }
+  .line2 .extra { font: 11px var(--mono); color: var(--dim-2); display: inline-flex; gap: 6px; }
+  .line2 .extra button { color: var(--dim); } .line2 .extra button:hover { color: var(--text); }
+
+  body.m .convo-inner { padding-top: 76px; }
+</style>
+</head>
+<body>
+<div class="devbar"><button id="dvD" class="on" onclick="setDevice(false)">🖥 Desktop</button><button id="dvM" onclick="setDevice(true)">📱 Mobil</button></div>
+
+<div class="topbar">
+  <div class="b"><div class="mk">✦</div><span class="nm">Pilot</span></div>
+  <div class="sp"></div>
+  <div class="brain" id="brain"><span class="led"></span> <span id="brainTxt">gemma4 · redo</span></div>
+</div>
+
+<div class="stagewrap">
+  <!-- hero / empty -->
+  <div class="hero" id="hero">
+    <div class="greet">God kväll, Lucas.<br><span class="g">Vad ska vi göra?</span></div>
+    <div class="tagline">Lokal AI som chattar, kodar och styr datorn — orkestrerad i realtid.</div>
+    <div class="composer">
+      <div class="box">
+        <div class="line1">
+          <textarea id="ta0" rows="1" placeholder="Be Pilot om vad som helst…" oninput="mirror(this);autosize(this,'ta0')" onkeydown="onKey(event,'ta0')"></textarea>
+          <button class="send" id="go0" disabled onclick="send('ta0')">➤</button>
+        </div>
+        <div class="line2">
+          <div class="seg" data-seg><button class="on" data-r="auto">auto</button><button data-r="chat">chatt</button><button data-r="computer">dator</button><button data-r="code">kod</button></div>
+          <span class="extra" style="margin-left:10px"><button onclick="alert('Jobb')">⏰ jobb</button><button onclick="alert('Minne')">💾 minne</button></span>
+          <span class="hint">↵ skicka · ⇧↵ ny rad</span>
+        </div>
+      </div>
+      <div class="ghosts" id="ghosts">
+        <button class="ghost" onclick="seed('Vänd strängen hej i Python')">⌨ Vänd en sträng</button>
+        <button class="ghost" onclick="seed('Hitta mitt CV i Downloads')">🔎 Hitta mitt CV</button>
+        <button class="ghost" onclick="seed('Bevisa att roten ur 2 är irrationell')">🧠 Svår reasoning</button>
+        <button class="ghost" onclick="seed('Påminn mig kl 17 att ta en paus')">⏰ Påminn mig</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- conversation -->
+  <div class="convo" id="convo"><div class="convo-inner" id="stream"></div></div>
+
+  <!-- docked composer (used after first send) -->
+  <div class="dock" id="dock" style="display:none">
+    <div class="composer">
+      <div class="box">
+        <div class="line1">
+          <textarea id="ta1" rows="1" placeholder="Fortsätt…" oninput="mirror(this);autosize(this,'ta1')" onkeydown="onKey(event,'ta1')"></textarea>
+          <button class="send" id="go1" disabled onclick="send('ta1')">➤</button>
+        </div>
+        <div class="line2">
+          <div class="seg" data-seg><button class="on" data-r="auto">auto</button><button data-r="chat">chatt</button><button data-r="computer">dator</button><button data-r="code">kod</button></div>
+          <span class="hint">🧠 gemma4 · auto</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const $=id=>document.getElementById(id);
+  const convo=$('convo'),stream=$('stream'),hero=$('hero'),dock=$('dock'),brain=$('brain');
+  let busy=false; const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  function el(h){ const t=document.createElement('template'); t.innerHTML=h.trim(); return t.content.firstElementChild; }
+  function down(){ convo.scrollTop=convo.scrollHeight; }
+  function autosize(elm){ elm.style.height='auto'; elm.style.height=Math.min(elm.scrollHeight,150)+'px'; }
+  function tg(){ $('go0').disabled=!$('ta0').value.trim()||busy; $('go1').disabled=!$('ta1').value.trim()||busy; }
+  // keep both composers in sync (so route segs feel like one app)
+  function mirror(src){ const v=src.value; $('ta0').value=v; $('ta1').value=v; tg(); }
+  function onKey(e,id){ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); send(id); } }
+  function seed(t){ $('ta0').value=t; $('ta1').value=t; tg(); $(busy?'ta1':'ta0').focus(); }
+  document.querySelectorAll('[data-seg]').forEach(g=>g.addEventListener('click',e=>{const b=e.target.closest('button'); if(!b)return;
+    document.querySelectorAll('[data-seg] button').forEach(x=>x.classList.toggle('on', x.dataset.r===b.dataset.r));}));
+
+  let manual=null;
+  function applyResp(){ if(manual!==null) return; document.body.classList.toggle('m', innerWidth<760); }
+  function setDevice(m){ manual=m; document.body.classList.toggle('m',m); $('dvM').classList.toggle('on',m); $('dvD').classList.toggle('on',!m); }
+  addEventListener('resize',applyResp); applyResp();
+
+  function setBrain(b,txt){ brain.classList.toggle('busy',b); $('brainTxt').textContent=txt; }
+
+  async function send(id){
+    const text=$(id).value.trim(); if(!text||busy) return;
+    if(!document.body.classList.contains('chatting')){
+      document.body.classList.add('chatting'); hero.classList.add('gone'); convo.classList.add('on'); dock.style.display='block';
+    }
+    $('ta0').value=''; $('ta1').value=''; autosize($('ta0')); autosize($('ta1'));
+    stream.appendChild(el(`<div class="u"></div>`)).textContent=text;
+    busy=true; tg(); down();
+    await turn(text); busy=false; tg(); $('ta1').focus();
+  }
+
+  async function turn(text){
+    const isCode=/python|kod|sträng|reverse|vänd/i.test(text);
+    const isReason=/bevisa|irrationell|matematik|roten|reasoning/i.test(text);
+    const isFile=/cv|downloads|hitta|sök|fil/i.test(text);
+    const isJob=/påminn|kl 17|paus|schemalägg/i.test(text);
+    const route=isCode?'kod':(isFile||isJob)?'dator':'chatt';
+
+    const turnEl=el(`<div class="turn"><div class="tl"></div></div>`); stream.appendChild(turnEl);
+    const tl=turnEl.querySelector('.tl'); down();
+    setBrain(true,'gemma4 · arbetar');
+    const step=(icon,labelHtml,detail)=>{ const s=el(`<div class="step run"><div class="rail"><div class="nodea">${icon}</div><div class="conn"></div></div><div class="c"><div class="lbl">${labelHtml}</div>${detail?`<div class="det">${detail}</div>`:''}</div></div>`); tl.appendChild(s); down(); return s; };
+    const finish=s=>{ s.classList.remove('run'); s.classList.add('done'); s.querySelector('.nodea').textContent='✓'; };
+
+    const s1=step('<span class="spin">◔</span>','Tänker — tolkar förfrågan'); await sleep(650); finish(s1);
+
+    if(isCode){
+      const s2=step('🔀','Konsulterar <span class="ex">qwen2.5-coder:14b</span>','kodspecialist'); await sleep(950); finish(s2);
+      await answer(turnEl,route,`En kort funktion som vänder en sträng:`,`def reverse(s):\n    return s[::-1]\n\nreverse("hej")  # "jeh"`);
+    } else if(isReason){
+      const s2=step('🔀','Konsulterar <span class="ex">qwen3:14b</span>','reasoning'); await sleep(900); finish(s2);
+      const s3=step('🔬','Dubbelkollar <span class="ex">deepseek-r1</span>','djup reasoning'); await sleep(850); finish(s3);
+      await answer(turnEl,route,`Antag √2 = p/q i lägsta form ⇒ p² = 2q², alltså är p jämnt ⇒ p = 2k ⇒ q² = 2k² ⇒ q jämnt. Men då delar 2 både p och q — motsägelse mot "lägsta form". Alltså är √2 irrationellt. ∎`);
+    } else if(isFile){
+      const s2=step('⚡','Kör verktyg <b>search_files</b>','query: "CV" · root: ~ · *.pdf'); await sleep(900); finish(s2);
+      await answer(turnEl,route,`Hittade tre filer i din hemkatalog:\n\n• Downloads/Lucas_CV.pdf — 184 kB, 30 maj\n• Downloads/Lucas_CV_2024.pdf\n• Documents/CV/old_cv.pdf\n\nVill du att jag öppnar den senaste?`);
+    } else if(isJob){
+      const s2=step('⏰','Schemalägger via <b>add_job</b>','dagligen 17:00 · påminnelse'); await sleep(700); finish(s2);
+      await answer(turnEl,route,`Klart — påminnelsen "ta en paus" körs dagligen kl 17:00. Du hittar den under ⏰ jobb.`);
+    } else {
+      await sleep(300);
+      await answer(turnEl,route,`Jag kör helt lokalt och kan koda, styra datorn, söka och resonera — och kopplar in en specialistmodell när det behövs. Säg bara vad du vill göra.`);
+    }
+    setBrain(false,'gemma4 · redo'); down();
+  }
+
+  async function answer(turnEl,route,text,code){
+    const a=el(`<div class="ans"><div class="rail"><div class="mk">✦</div></div><div class="body"><div class="rbadge">${route}</div><div class="prose"><span class="cur"></span></div></div></div>`);
+    turnEl.appendChild(a); const prose=a.querySelector('.prose'), c=prose.querySelector('.cur'); down();
+    for(let i=0;i<text.length;i++){ prose.insertBefore(document.createTextNode(text[i]),c); if(i%2===0){down(); await sleep(7);} }
+    if(code){ const cb=el(`<div class="codeblk"></div>`); a.querySelector('.body').appendChild(cb); for(let i=0;i<code.length;i++){ cb.appendChild(document.createTextNode(code[i])); if(i%2===0){down(); await sleep(6);} } }
+    c.remove(); down();
+  }
+</script>
+</body>
+</html>

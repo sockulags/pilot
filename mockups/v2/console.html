@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pilot — Console</title>
+<style>
+  :root {
+    --bg: #0c0c0e;
+    --bg-2: #111114;
+    --panel: #141417;
+    --panel-2: #18181c;
+    --border: #232328;
+    --border-2: #2c2c33;
+    --text: #ECECEC;
+    --dim: #9a9aa2;
+    --dim-2: #6a6a72;
+    --accent: #e0866a;          /* warm coral — Claude Code nod */
+    --accent-soft: rgba(224,134,106,0.14);
+    --green: #7bd88f;
+    --cyan: #5fc8d8;
+    --violet: #b08cff;
+    --red: #f87171;
+    --add: #7bd88f; --del: #f0857c;
+    --mono: "SF Mono", ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.55 var(--sans); -webkit-font-smoothing: antialiased; overflow: hidden; }
+  button { font: inherit; cursor: pointer; color: inherit; border: none; background: none; }
+  kbd { font: 11px var(--mono); background: var(--panel-2); border: 1px solid var(--border-2); border-bottom-width: 2px; border-radius: 5px; padding: 1px 5px; color: var(--dim); }
+  ::-webkit-scrollbar { width: 9px; height: 9px; } ::-webkit-scrollbar-thumb { background: #26262c; border-radius: 8px; }
+
+  /* device toggle */
+  .devbar { position: fixed; top: 12px; right: 14px; z-index: 60; display: flex; gap: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 9px; padding: 3px; }
+  .devbar button { font: 11px var(--mono); color: var(--dim); padding: 4px 9px; border-radius: 6px; }
+  .devbar button.on { background: var(--panel-2); color: var(--text); }
+
+  .shell { height: 100vh; display: flex; flex-direction: column; max-width: 980px; margin: 0 auto; border-left: 1px solid var(--border); border-right: 1px solid var(--border); transition: max-width .25s; }
+  body.m .shell { max-width: 420px; border-radius: 0; }
+
+  /* top */
+  .top { display: flex; align-items: center; gap: 10px; padding: 11px 16px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+  .dotrow { display: flex; gap: 6px; } .dotrow i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  .dotrow i:nth-child(1){ background:#ff5f57; } .dotrow i:nth-child(2){ background:#febc2e; } .dotrow i:nth-child(3){ background:#28c840; }
+  .top .title { font: 12px var(--mono); color: var(--dim); }
+  .top .title b { color: var(--text); }
+  .top .spacer { flex: 1; }
+  .top .cmdk { display: flex; align-items: center; gap: 7px; font: 11px var(--mono); color: var(--dim); border: 1px solid var(--border); border-radius: 8px; padding: 5px 9px; transition: .12s; }
+  .top .cmdk:hover { border-color: var(--border-2); color: var(--text); }
+
+  /* scroll */
+  .scroll { flex: 1; overflow-y: auto; padding: 18px 18px 8px; }
+  body.m .scroll { padding: 14px 12px 8px; }
+  .stream { display: flex; flex-direction: column; gap: 4px; }
+
+  /* welcome */
+  .welcome { padding: 4vh 4px 2vh; }
+  .welcome pre { font: 12px/1.35 var(--mono); color: var(--accent); margin-bottom: 14px; }
+  .welcome .h { font-size: 18px; font-weight: 650; letter-spacing: -.2px; }
+  .welcome .s { color: var(--dim); margin: 6px 0 18px; max-width: 520px; }
+  .runs { display: flex; flex-direction: column; gap: 2px; max-width: 560px; }
+  .run { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-radius: 9px; text-align: left; transition: .12s; border: 1px solid transparent; }
+  .run:hover { background: var(--panel); border-color: var(--border); }
+  .run .pr { font: 12px var(--mono); color: var(--accent); }
+  .run .tx { font-size: 13.5px; }
+  .run .tx .d { color: var(--dim); font-size: 12px; }
+  .run .k { margin-left: auto; font: 11px var(--mono); color: var(--dim-2); }
+
+  /* user line */
+  .uline { display: flex; gap: 9px; padding: 14px 0 6px; align-items: baseline; }
+  .uline .ps { font: 13px var(--mono); color: var(--accent); flex-shrink: 0; }
+  .uline .tx { font-size: 14.5px; }
+
+  /* assistant block */
+  .ablock { padding: 2px 0 10px 0; }
+  .meta { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .rb { font: 10px var(--mono); letter-spacing: .04em; text-transform: uppercase; padding: 2px 7px; border-radius: 5px; border: 1px solid var(--border-2); color: var(--dim); }
+  .rb.code { color: var(--violet); border-color: rgba(176,140,255,.35); }
+  .rb.computer { color: var(--cyan); border-color: rgba(95,200,216,.35); }
+  .rb.chat { color: var(--dim); }
+  .meta .mdl { font: 11px var(--mono); color: var(--dim-2); }
+
+  /* thinking cycling line */
+  .think { display: flex; align-items: center; gap: 9px; font: 13px var(--mono); color: var(--dim); padding: 3px 0; }
+  .think .sp { color: var(--accent); animation: spin 1s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* tool call (Claude Code style) */
+  .tool { font: 12.5px var(--mono); padding: 3px 0; }
+  .tool .hd { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .tool .hd .bullet { color: var(--green); }
+  .tool .hd .fn { color: var(--text); } .tool .hd .fn .args { color: var(--dim); }
+  .tool .hd .chev { margin-left: auto; color: var(--dim-2); transition: .15s; }
+  .tool.open .hd .chev { transform: rotate(90deg); }
+  .tool .out { padding: 4px 0 4px 14px; border-left: 1px solid var(--border); margin: 4px 0 4px 4px; color: var(--dim); display: none; }
+  .tool.open .out { display: block; }
+  .tool .out .row { display: flex; gap: 10px; } .tool .out .row .f { color: var(--text); } .tool .out .row .m { color: var(--dim-2); }
+  .tool .lead { color: var(--dim-2); }
+
+  /* consult line */
+  .consult { font: 12.5px var(--mono); color: var(--cyan); padding: 3px 0; display: flex; align-items: center; gap: 8px; }
+  .consult .ex { color: var(--violet); }
+
+  /* prose answer */
+  .ans { font-size: 14.5px; line-height: 1.65; padding: 6px 0 2px; max-width: 680px; }
+  .ans code { font: 12.5px var(--mono); background: var(--panel-2); padding: 1px 6px; border-radius: 5px; }
+  .cur { display: inline-block; width: 8px; height: 15px; background: var(--accent); vertical-align: -2px; margin-left: 1px; animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* diff block */
+  .diff { font: 12.5px/1.5 var(--mono); border: 1px solid var(--border); border-radius: 9px; overflow: hidden; margin: 8px 0; max-width: 680px; }
+  .diff .dh { background: var(--panel-2); padding: 6px 11px; color: var(--dim); display: flex; gap: 8px; border-bottom: 1px solid var(--border); }
+  .diff .dh .file { color: var(--text); }
+  .diff .ln { padding: 1px 11px; white-space: pre; }
+  .diff .ln.add { background: rgba(123,216,143,.10); color: var(--add); }
+  .diff .ln.del { background: rgba(240,133,124,.10); color: var(--del); }
+  .diff .ln.ctx { color: var(--dim); }
+
+  /* result */
+  .res { border: 1px solid rgba(123,216,143,.3); background: rgba(123,216,143,.06); border-radius: 9px; padding: 9px 13px; margin: 8px 0; max-width: 680px; }
+  .res .rh { font: 10px var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--green); }
+
+  /* composer */
+  .composer { border-top: 1px solid var(--border); background: var(--bg-2); padding: 12px 16px; position: relative; }
+  body.m .composer { padding: 10px 12px; }
+  .inwrap { display: flex; align-items: flex-end; gap: 10px; background: var(--panel); border: 1px solid var(--border-2); border-radius: 12px; padding: 9px 9px 9px 13px; transition: .15s; }
+  .inwrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .inwrap .gt { font: 14px var(--mono); color: var(--accent); padding-bottom: 5px; }
+  .inwrap textarea { flex: 1; background: none; border: none; resize: none; outline: none; color: var(--text); font: 14px var(--mono); max-height: 140px; padding: 4px 0; }
+  .inwrap textarea::placeholder { color: var(--dim-2); }
+  .inwrap .go { width: 34px; height: 34px; border-radius: 9px; background: var(--accent); color: #1a0f0a; font-weight: 800; display: grid; place-items: center; flex-shrink: 0; transition: .12s; }
+  .inwrap .go:disabled { background: var(--border-2); color: var(--dim-2); }
+  .inwrap .go:not(:disabled):hover { filter: brightness(1.1); }
+
+  /* slash autocomplete */
+  .slash { position: absolute; left: 16px; right: 16px; bottom: 100%; margin-bottom: 8px; background: var(--panel); border: 1px solid var(--border-2); border-radius: 11px; overflow: hidden; box-shadow: 0 -10px 30px rgba(0,0,0,.4); display: none; }
+  .slash.on { display: block; }
+  .slash .si { display: flex; align-items: center; gap: 10px; padding: 9px 13px; cursor: pointer; }
+  .slash .si:hover, .slash .si.sel { background: var(--panel-2); }
+  .slash .si .c { font: 12.5px var(--mono); color: var(--accent); min-width: 96px; }
+  .slash .si .d { font-size: 12.5px; color: var(--dim); }
+
+  /* status line (Claude Code style) */
+  .status { display: flex; align-items: center; gap: 16px; padding: 6px 16px; border-top: 1px solid var(--border); background: var(--bg); font: 11px var(--mono); color: var(--dim-2); }
+  body.m .status { gap: 10px; padding: 6px 12px; overflow-x: auto; white-space: nowrap; }
+  .status .seg { display: flex; align-items: center; gap: 6px; }
+  .status .seg .led { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 7px var(--green); }
+  .status b { color: var(--dim); font-weight: 600; }
+  .status .right { margin-left: auto; }
+  body.m .status .hidem { display: none; }
+
+  /* command palette */
+  .palette-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 70; display: none; align-items: flex-start; justify-content: center; padding-top: 12vh; }
+  .palette-scrim.on { display: flex; }
+  .palette { width: 560px; max-width: 92vw; background: var(--panel); border: 1px solid var(--border-2); border-radius: 14px; overflow: hidden; box-shadow: 0 30px 80px rgba(0,0,0,.6); }
+  .palette input { width: 100%; background: none; border: none; outline: none; color: var(--text); font: 15px var(--sans); padding: 16px 18px; border-bottom: 1px solid var(--border); }
+  .palette input::placeholder { color: var(--dim-2); }
+  .palette .list { max-height: 340px; overflow-y: auto; padding: 6px; }
+  .palette .grp { font: 10px var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--dim-2); padding: 10px 12px 4px; }
+  .palette .it { display: flex; align-items: center; gap: 12px; padding: 9px 12px; border-radius: 9px; cursor: pointer; }
+  .palette .it:hover, .palette .it.sel { background: var(--panel-2); }
+  .palette .it .ic { width: 22px; text-align: center; }
+  .palette .it .nm { font-size: 13.5px; } .palette .it .nm .sub { color: var(--dim); font-size: 12px; }
+  .palette .it .hint { margin-left: auto; font: 11px var(--mono); color: var(--dim-2); }
+</style>
+</head>
+<body>
+<div class="devbar">
+  <button id="dvD" class="on" onclick="setDevice(false)">🖥 Desktop</button>
+  <button id="dvM" onclick="setDevice(true)">📱 Mobil</button>
+</div>
+
+<div class="shell">
+  <div class="top">
+    <div class="dotrow"><i></i><i></i><i></i></div>
+    <div class="title">pilot — <b>~/Code/pilot</b></div>
+    <div class="spacer"></div>
+    <button class="cmdk" onclick="openPalette()">⌘K&nbsp;&nbsp;Kommandon</button>
+  </div>
+
+  <div class="scroll" id="scroll">
+    <div class="stream" id="stream">
+      <div class="welcome" id="welcome">
+        <pre>   ___  _ _      _
+  | _ \(_) |___ | |_     lokal AI · orkestrerad
+  |  _/| | / _ \|  _|    gemma4 + experter
+  |_|  |_|_\___/ \__|    skriv, styr, koda</pre>
+        <div class="h">Redo. Skriv en order, eller <kbd>/</kbd> för kommandon.</div>
+        <div class="s">Pilot kör lokalt via Ollama. Front-hjärnan gemma4 konsulterar specialistmodeller, kör verktyg och svarar — du ser varje steg inline.</div>
+        <div class="runs">
+          <button class="run" onclick="quick('Vänd strängen \'hej\' i Python')"><span class="pr">⌨ code</span><span class="tx">Vänd en sträng i Python<span class="d"> — konsulterar qwen2.5-coder</span></span><span class="k">↵</span></button>
+          <button class="run" onclick="quick('Hitta mitt CV i Downloads')"><span class="pr">🔎 dator</span><span class="tx">Hitta mitt CV i hemkatalogen<span class="d"> — search_files</span></span><span class="k">↵</span></button>
+          <button class="run" onclick="quick('Lägg till en config-flagga för vision i backend')"><span class="pr">✎ edit</span><span class="tx">Redigera en fil<span class="d"> — visar diff</span></span><span class="k">↵</span></button>
+          <button class="run" onclick="quick('Påminn mig kl 17 att ta en paus')"><span class="pr">⏰ job</span><span class="tx">Schemalägg en påminnelse</span><span class="k">↵</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer">
+    <div class="slash" id="slash"></div>
+    <div class="inwrap">
+      <span class="gt">❯</span>
+      <textarea id="ta" rows="1" placeholder="Skriv en order…  ( / för kommandon )" oninput="onInput()" onkeydown="onKey(event)"></textarea>
+      <button class="go" id="go" disabled onclick="send()">➤</button>
+    </div>
+  </div>
+
+  <div class="status">
+    <span class="seg led-seg"><span class="led"></span> ansluten</span>
+    <span class="seg hidem"><b id="stCwd">~/Code/pilot</b></span>
+    <span class="seg"><b id="stModel">gemma4 · auto</b></span>
+    <span class="seg hidem">läge <b id="stRoute">auto</b></span>
+    <span class="seg right">⌘K kommandon · / slash · <kbd>esc</kbd> avbryt</span>
+  </div>
+</div>
+
+<!-- command palette -->
+<div class="palette-scrim" id="paletteScrim" onclick="if(event.target===this)closePalette()">
+  <div class="palette">
+    <input id="palInput" placeholder="Sök kommando, modell, projekt…" oninput="renderPalette()" onkeydown="palKey(event)" />
+    <div class="list" id="palList"></div>
+  </div>
+</div>
+
+<script>
+  const $=id=>document.getElementById(id);
+  const scroll=$('scroll'),stream=$('stream'),ta=$('ta'),go=$('go'),slash=$('slash');
+  let busy=false; const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  function el(h){ const t=document.createElement('template'); t.innerHTML=h.trim(); return t.content.firstElementChild; }
+  function down(){ scroll.scrollTop=scroll.scrollHeight; }
+  function autosize(){ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,140)+'px'; }
+  function tg(){ go.disabled=!ta.value.trim()||busy; }
+  function quick(t){ ta.value=t; autosize(); tg(); ta.focus(); }
+
+  /* responsive */
+  let manual=null;
+  function applyResp(){ if(manual!==null) return; document.body.classList.toggle('m', innerWidth<760); }
+  function setDevice(m){ manual=m; document.body.classList.toggle('m',m); $('dvM').classList.toggle('on',m); $('dvD').classList.toggle('on',!m); }
+  addEventListener('resize',applyResp); applyResp();
+
+  /* slash autocomplete */
+  const SLASH=[
+    {c:'/model',d:'Byt modell-policy (auto eller pinnad)'},
+    {c:'/route',d:'Tvinga läge: chat · dator · kod'},
+    {c:'/job',d:'Schemalägg en påminnelse eller uppgift'},
+    {c:'/project',d:'Byt aktivt projekt'},
+    {c:'/agent',d:'Kod-agent: lokal · claude · codex'},
+    {c:'/memory',d:'Visa & sök långtidsminnet'},
+    {c:'/clear',d:'Ny konversation'},
+  ];
+  function onInput(){ autosize(); tg(); const v=ta.value;
+    if(v.startsWith('/')){ const q=v.slice(1).toLowerCase(); const m=SLASH.filter(s=>s.c.slice(1).startsWith(q));
+      slash.innerHTML=m.map((s,i)=>`<div class="si ${i===0?'sel':''}" onclick="ta.value='${s.c} ';slash.classList.remove('on');ta.focus();tg();"><span class="c">${s.c}</span><span class="d">${s.d}</span></div>`).join('');
+      slash.classList.toggle('on', m.length>0);
+    } else slash.classList.remove('on');
+  }
+  function onKey(e){ if(e.key==='Escape'){ slash.classList.remove('on'); }
+    if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); if(slash.classList.contains('on')){ const sel=slash.querySelector('.si.sel')||slash.querySelector('.si'); if(sel){ sel.click(); return; } } send(); } }
+
+  /* command palette */
+  const PAL=[
+    {g:'Läge',ic:'⟂',nm:'Auto',sub:'Pilot väljer rutt',hint:'/route',act:()=>setRoute('auto')},
+    {g:'Läge',ic:'💬',nm:'Chatt',hint:'/route chat',act:()=>setRoute('chat')},
+    {g:'Läge',ic:'🖥',nm:'Dator',hint:'/route computer',act:()=>setRoute('computer')},
+    {g:'Läge',ic:'⌨',nm:'Kod',hint:'/route code',act:()=>setRoute('code')},
+    {g:'Modell',ic:'🧠',nm:'Auto',sub:'gemma4 front-hjärna',hint:'/model auto',act:()=>setModel('gemma4 · auto')},
+    {g:'Modell',ic:'🧠',nm:'qwen2.5-coder:14b',sub:'kod',hint:'/model coder',act:()=>setModel('qwen2.5-coder')},
+    {g:'Modell',ic:'🧠',nm:'qwen3:14b',sub:'reasoning',hint:'/model qwen3',act:()=>setModel('qwen3:14b')},
+    {g:'Modell',ic:'🧠',nm:'deepseek-r1:14b',sub:'djup reasoning',hint:'/model deepseek',act:()=>setModel('deepseek-r1')},
+    {g:'Projekt',ic:'📁',nm:'pilot',sub:'C:\\Users\\lucas\\Code\\pilot',hint:'aktiv',act:()=>setCwd('~/Code/pilot')},
+    {g:'Projekt',ic:'📁',nm:'cv_builder',sub:'C:\\Users\\lucas\\Code\\cv_builder',hint:'',act:()=>setCwd('~/Code/cv_builder')},
+    {g:'Åtgärd',ic:'⏰',nm:'Schemalagda jobb',sub:'påminnelser & uppgifter',hint:'/job',act:()=>alert('Öppnar jobb')},
+    {g:'Åtgärd',ic:'💾',nm:'Långtidsminne',sub:'128 sparade fakta',hint:'/memory',act:()=>alert('Öppnar minne')},
+    {g:'Åtgärd',ic:'＋',nm:'Ny konversation',hint:'/clear',act:()=>location.reload()},
+  ];
+  let palSel=0, palFiltered=PAL;
+  function openPalette(){ $('paletteScrim').classList.add('on'); $('palInput').value=''; palSel=0; renderPalette(); $('palInput').focus(); }
+  function closePalette(){ $('paletteScrim').classList.remove('on'); }
+  function renderPalette(){ const q=$('palInput').value.toLowerCase();
+    palFiltered=PAL.filter(p=>(p.nm+p.g+(p.sub||'')+p.hint).toLowerCase().includes(q));
+    if(palSel>=palFiltered.length) palSel=0;
+    let html='',last=''; palFiltered.forEach((p,i)=>{ if(p.g!==last){ html+=`<div class="grp">${p.g}</div>`; last=p.g; }
+      html+=`<div class="it ${i===palSel?'sel':''}" data-i="${i}" onmouseenter="palSel=${i};paintSel()" onclick="palRun(${i})"><span class="ic">${p.ic}</span><span class="nm">${p.nm}${p.sub?` <span class="sub">${p.sub}</span>`:''}</span><span class="hint">${p.hint}</span></div>`; });
+    $('palList').innerHTML=html||`<div class="grp">Inga träffar</div>`;
+  }
+  function paintSel(){ [...$('palList').querySelectorAll('.it')].forEach(it=>it.classList.toggle('sel',+it.dataset.i===palSel)); }
+  function palRun(i){ palFiltered[i]?.act?.(); closePalette(); }
+  function palKey(e){ if(e.key==='ArrowDown'){e.preventDefault();palSel=Math.min(palSel+1,palFiltered.length-1);paintSel();}
+    else if(e.key==='ArrowUp'){e.preventDefault();palSel=Math.max(palSel-1,0);paintSel();}
+    else if(e.key==='Enter'){e.preventDefault();palRun(palSel);} else if(e.key==='Escape')closePalette(); }
+  addEventListener('keydown',e=>{ if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){ e.preventDefault(); openPalette(); } });
+  function setRoute(r){ $('stRoute').textContent=r; }
+  function setModel(m){ $('stModel').textContent=m; }
+  function setCwd(c){ $('stCwd').textContent=c; document.querySelector('.top .title b').textContent=c; }
+
+  /* ---- simulated turn ---- */
+  const THINKWORDS=['Tänker','Tolkar','Planerar','Resonerar','Väljer verktyg'];
+  async function send(){
+    const text=ta.value.trim(); if(!text||busy) return;
+    if(text==='/clear'){ location.reload(); return; }
+    $('welcome')?.remove(); slash.classList.remove('on');
+    stream.appendChild(el(`<div class="uline"><span class="ps">❯</span><span class="tx"></span></div>`)).querySelector('.tx').textContent=text;
+    ta.value=''; autosize(); busy=true; tg(); down();
+    await turn(text); busy=false; tg();
+  }
+
+  async function turn(text){
+    const isEdit=/redigera|lägg till|config|flagga|fil i backend|edit/i.test(text);
+    const isCode=!isEdit && /python|kod|sträng|reverse|vänd/i.test(text);
+    const isFile=/cv|downloads|hitta|sök/i.test(text);
+    const isJob=/påminn|kl 17|paus|schemalägg/i.test(text);
+    const route=(isEdit||isCode)?'code':(isFile||isJob)?'computer':'chat';
+    const rl={code:'⌨ kod',computer:'🖥 dator',chat:'💬 chatt'}[route];
+
+    const b=el(`<div class="ablock"><div class="meta"><span class="rb ${route}">${rl}</span><span class="mdl">🧠 gemma4 · auto</span></div></div>`);
+    stream.appendChild(b); down();
+
+    // thinking
+    const th=el(`<div class="think"><span class="sp">✻</span><span class="w">Tänker…</span></div>`); b.appendChild(th); down();
+    for(let i=0;i<3;i++){ th.querySelector('.w').textContent=THINKWORDS[i%THINKWORDS.length]+'…'; await sleep(420); }
+
+    if(isEdit){
+      th.remove();
+      addConsult(b,'qwen2.5-coder:14b'); await sleep(800);
+      const tool=addTool(b,'read_file','path: "backend/config.py"',[['backend/config.py','142 rader']]); await sleep(600);
+      addAnswerStart(b);
+      const ans=b.querySelector('.ans');
+      await type(ans,`Lägger till en miljöstyrd flagga ${'`'}VISION_ENABLED${'`'} i config:`);
+      b.appendChild(el(`<div class="diff"><div class="dh"><span>✎</span><span class="file">backend/config.py</span><span style="margin-left:auto;color:var(--add)">+3</span><span style="color:var(--del)">-1</span></div>
+        <div class="ln ctx">  MAX_AGENT_STEPS = env_int("MAX_AGENT_STEPS", 20)</div>
+        <div class="ln del">- VISION_ENABLED = True</div>
+        <div class="ln add">+ VISION_ENABLED = env_bool("VISION_ENABLED", False)</div>
+        <div class="ln add">+ VISION_MODEL = env("OLLAMA_VISION_MODEL", "gemma4")</div>
+        <div class="ln add">+ # opt-in: text-perception är default-vägen</div>
+        <div class="ln ctx">  BACKEND_PORT = env_int("BACKEND_PORT", 8000)</div></div>`));
+      b.appendChild(el(`<div class="res"><div class="rh">Klart</div>Flaggan är opt-in. Sätt <code>VISION_ENABLED=true</code> i .env för att aktivera.</div>`));
+      down();
+    } else if(isCode){
+      addConsult(b,'qwen2.5-coder:14b'); await sleep(950);
+      th.remove();
+      addAnswerStart(b); const ans=b.querySelector('.ans');
+      await type(ans,`En kort funktion som vänder en sträng:`);
+      const d=el(`<div class="diff"><div class="dh"><span class="file">reverse.py</span></div></div>`); b.appendChild(d);
+      ['def reverse(s):','    return s[::-1]','','reverse("hej")  # -> "jeh"'].forEach(l=>d.appendChild(el(`<div class="ln ctx">${l||' '}</div>`)));
+      down();
+    } else if(isFile){
+      th.remove();
+      const tool=addTool(b,'search_files','query: "CV", root: "~", globs: ["*.pdf"]',
+        [['Downloads/Lucas_CV.pdf','184 kB · 30 maj'],['Downloads/Lucas_CV_2024.pdf','12 nov 2024'],['Documents/CV/old_cv.pdf','']]);
+      tool.classList.add('open'); await sleep(900);
+      addAnswerStart(b); const ans=b.querySelector('.ans');
+      await type(ans,`Hittade 3 filer i din hemkatalog. Den senaste är ${'`'}Downloads/Lucas_CV.pdf${'`'} (184 kB, 30 maj). Vill du att jag öppnar den?`);
+    } else if(isJob){
+      th.remove();
+      addTool(b,'add_job','kind: "reminder", schedule: daily 17:00, text: "ta en paus"',[['nästa körning','idag 17:00']]);
+      await sleep(500);
+      addAnswerStart(b); const ans=b.querySelector('.ans');
+      await type(ans,`Klart — påminnelsen "ta en paus" är schemalagd dagligen kl 17:00. Du hittar den under ⏰ Jobb.`);
+    } else {
+      th.remove();
+      addAnswerStart(b); const ans=b.querySelector('.ans');
+      await type(ans,`Jag kör lokalt och kan koda, styra datorn, söka på webben, läsa filer och schemalägga. Skriv ${'`'}/${'`'} för kommandon eller tryck ⌘K.`);
+    }
+    b.querySelector('.cur')?.remove(); down();
+  }
+
+  function addConsult(b,model){ b.appendChild(el(`<div class="consult">↳ frågar specialist <span class="ex">${model}</span></div>`)); down(); }
+  function addTool(b,fn,args,rows){
+    const t=el(`<div class="tool open"><div class="hd"><span class="bullet">⏺</span><span class="fn">${fn}<span class="args">(${args})</span></span><span class="chev">›</span></div><div class="out"></div></div>`);
+    t.querySelector('.hd').onclick=()=>t.classList.toggle('open');
+    const out=t.querySelector('.out'); out.appendChild(el(`<div class="lead">⎿ ${rows.length} ${rows.length===1?'rad':'träffar'}</div>`));
+    rows.forEach(([f,m])=>out.appendChild(el(`<div class="row"><span class="f">${f}</span><span class="m">${m}</span></div>`)));
+    b.appendChild(t); down(); return t;
+  }
+  function addAnswerStart(b){ b.appendChild(el(`<div class="ans"><span class="cur"></span></div>`)); down(); }
+  async function type(node,text){ const c=node.querySelector('.cur'); for(let i=0;i<text.length;i++){ const n=document.createTextNode(text[i]); c?node.insertBefore(n,c):node.appendChild(n); if(i%2===0){down(); await sleep(7);} } }
+</script>
+</body>
+</html>

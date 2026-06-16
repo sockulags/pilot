@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pilot — Canvas</title>
+<style>
+  :root {
+    --bg: #0a0b0f;
+    --panel: #101218;
+    --panel-2: #151823;
+    --panel-3: #1a1e2b;
+    --border: #20242f;
+    --border-2: #2a2f3d;
+    --text: #eef1f7;
+    --dim: #8a91a3;
+    --dim-2: #5b6275;
+    --accent: #7c8cff;
+    --accent-soft: rgba(124,140,255,0.13);
+    --cyan: #45d3e0;
+    --violet: #ad8cff;
+    --green: #46d997;
+    --amber: #f6c453;
+    --add:#46d997; --del:#f0857c;
+    --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.55 var(--sans); -webkit-font-smoothing: antialiased; overflow: hidden; }
+  button { font: inherit; cursor: pointer; color: inherit; border: none; background: none; }
+  ::-webkit-scrollbar { width: 9px; height: 9px; } ::-webkit-scrollbar-thumb { background: #232834; border-radius: 8px; }
+
+  .devbar { position: fixed; top: 12px; right: 14px; z-index: 60; display: flex; gap: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 9px; padding: 3px; }
+  .devbar button { font: 11px var(--mono); color: var(--dim); padding: 4px 9px; border-radius: 6px; }
+  .devbar button.on { background: var(--panel-2); color: var(--text); }
+
+  .app { height: 100vh; display: grid; grid-template-columns: minmax(0,1fr) minmax(0, 0.85fr); transition: grid-template-columns .3s; }
+  .app.solo { grid-template-columns: minmax(0,1fr) 0; }
+  body.m .app { grid-template-columns: 1fr; }
+
+  /* ─── conversation column ─── */
+  .conv { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--border); }
+  body.m .conv { border-right: none; }
+  .chead { display: flex; align-items: center; gap: 10px; padding: 13px 18px; border-bottom: 1px solid var(--border); }
+  .logo { width: 30px; height: 30px; border-radius: 9px; background: linear-gradient(135deg, var(--accent), var(--violet)); display: grid; place-items: center; font-weight: 800; color: #fff; }
+  .chead .nm { font-weight: 700; letter-spacing: -.2px; }
+  .chead .proj { font: 11px var(--mono); color: var(--dim); border: 1px solid var(--border); border-radius: 7px; padding: 3px 8px; }
+  .chead .sp { flex: 1; }
+  .chead .conn { font: 11px var(--mono); color: var(--dim); display: flex; align-items: center; gap: 6px; }
+  .chead .conn .led { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 7px var(--green); }
+  .chead .ic { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: var(--dim); transition: .12s; }
+  .chead .ic:hover { background: var(--panel); color: var(--text); }
+
+  .cscroll { flex: 1; overflow-y: auto; padding: 20px 18px 10px; }
+  .stream { display: flex; flex-direction: column; gap: 16px; max-width: 640px; margin: 0 auto; }
+
+  .welcome { padding: 5vh 0 2vh; }
+  .welcome .h { font-size: 23px; font-weight: 750; letter-spacing: -.4px; }
+  .welcome .h .g { background: linear-gradient(110deg,var(--accent),var(--cyan)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .welcome .s { color: var(--dim); margin: 8px 0 20px; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  body.m .cards { grid-template-columns: 1fr; }
+  .card { text-align: left; background: var(--panel); border: 1px solid var(--border); border-radius: 13px; padding: 13px 14px; transition: .15s; }
+  .card:hover { transform: translateY(-2px); border-color: var(--border-2); background: var(--panel-2); }
+  .card .e { font-size: 17px; } .card .t { font-weight: 600; margin: 7px 0 2px; font-size: 13.5px; } .card .d { font-size: 12px; color: var(--dim); }
+
+  .u { align-self: flex-end; max-width: 82%; background: linear-gradient(135deg,var(--accent),var(--violet)); color: #fff; padding: 10px 14px; border-radius: 15px 15px 4px 15px; }
+  .a { display: flex; flex-direction: column; gap: 7px; }
+  .ah { display: flex; align-items: center; gap: 8px; }
+  .ava { width: 26px; height: 26px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--border); display: grid; place-items: center; font-size: 13px; }
+  .rb { font: 10px var(--mono); text-transform: uppercase; letter-spacing: .05em; padding: 2px 7px; border-radius: 5px; border: 1px solid var(--border-2); color: var(--dim); }
+  .rb.code { color: var(--violet); border-color: rgba(173,140,255,.4); }
+  .rb.computer { color: var(--cyan); border-color: rgba(69,211,224,.4); }
+  .ab { background: var(--panel); border: 1px solid var(--border); border-radius: 4px 14px 14px 14px; padding: 12px 15px; line-height: 1.6; }
+  .ab code { font: 12.5px var(--mono); background: var(--panel-3); padding: 1px 6px; border-radius: 5px; }
+  .cur { display: inline-block; width: 7px; height: 14px; background: var(--accent); vertical-align: -2px; margin-left: 1px; animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* inline trace chips that point to the stage */
+  .trace { display: flex; flex-direction: column; gap: 6px; }
+  .tchip { display: flex; align-items: center; gap: 9px; font: 12px var(--mono); color: var(--dim); background: var(--panel); border: 1px solid var(--border); border-radius: 9px; padding: 7px 11px; cursor: pointer; transition: .12s; }
+  .tchip:hover { border-color: var(--border-2); color: var(--text); }
+  .tchip .i { width: 16px; text-align: center; }
+  .tchip.act .i { color: var(--cyan); }
+  .tchip.run .i { color: var(--violet); }
+  .tchip.done .i { color: var(--green); }
+  .tchip .open { margin-left: auto; font-size: 10px; color: var(--dim-2); }
+  .tchip .spin { display:inline-block; animation: spin 1s linear infinite; color: var(--amber); } @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* composer */
+  .comp { border-top: 1px solid var(--border); padding: 12px 18px; }
+  .compi { max-width: 640px; margin: 0 auto; }
+  .modes { display: flex; gap: 6px; margin-bottom: 9px; flex-wrap: wrap; align-items: center; }
+  .modes .lab { font: 11px var(--mono); color: var(--dim-2); }
+  .mode { font: 11.5px var(--mono); color: var(--dim); border: 1px solid var(--border); border-radius: 999px; padding: 3px 11px; transition: .12s; }
+  .mode:hover { color: var(--text); border-color: var(--border-2); }
+  .mode.on { background: var(--accent-soft); border-color: rgba(124,140,255,.45); color: #c3caff; }
+  .inw { display: flex; align-items: flex-end; gap: 9px; background: var(--panel); border: 1px solid var(--border-2); border-radius: 14px; padding: 9px 9px 9px 14px; transition: .15s; }
+  .inw:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .inw textarea { flex: 1; background: none; border: none; resize: none; outline: none; color: var(--text); font: inherit; max-height: 130px; padding: 5px 0; }
+  .inw .go { width: 36px; height: 36px; border-radius: 10px; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 15px; flex-shrink: 0; transition: .12s; }
+  .inw .go:disabled { background: var(--border-2); color: var(--dim-2); }
+  .inw .go:not(:disabled):hover { transform: scale(1.05); }
+
+  /* ─── stage column ─── */
+  .stage { background: var(--bg); display: flex; flex-direction: column; min-width: 0; }
+  .app.solo .stage { display: none; }
+  .shead { display: flex; align-items: center; gap: 9px; padding: 13px 18px; border-bottom: 1px solid var(--border); }
+  .shead .t { font: 11px var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--dim); }
+  .shead .pill { margin-left: auto; font: 10.5px var(--mono); color: var(--dim); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; }
+  .sbody { flex: 1; overflow-y: auto; padding: 18px; }
+
+  .stage-empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--dim-2); text-align: center; padding: 24px; }
+  .stage-empty .ring { width: 64px; height: 64px; border-radius: 18px; border: 1px dashed var(--border-2); display: grid; place-items: center; font-size: 24px; }
+  .stage-empty .t { font-size: 13px; color: var(--dim); max-width: 240px; }
+
+  .panecard { background: var(--panel); border: 1px solid var(--border); border-radius: 13px; overflow: hidden; margin-bottom: 14px; animation: rise .35s cubic-bezier(.2,.9,.3,1); }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+  .pc-h { display: flex; align-items: center; gap: 8px; padding: 9px 13px; border-bottom: 1px solid var(--border); font: 11.5px var(--mono); color: var(--dim); }
+  .pc-h .nm { color: var(--text); } .pc-h .tag { margin-left: auto; font-size: 10px; padding: 2px 7px; border-radius: 5px; }
+  .pc-b { padding: 13px; }
+
+  /* graph */
+  .ggraph { position: relative; height: 200px; }
+  .ggraph svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .gn { position: absolute; transform: translate(-50%,-50%); text-align: center; }
+  .gn .o { width: 46px; height: 46px; border-radius: 13px; display: grid; place-items: center; font-size: 16px; border: 1.5px solid var(--border); background: var(--panel-2); margin: 0 auto 4px; transition: .3s; }
+  .gn.c .o { width: 56px; height: 56px; border-color: rgba(124,140,255,.5); background: radial-gradient(circle at 50% 40%, var(--accent-soft), var(--panel-2)); box-shadow: 0 0 20px rgba(124,140,255,.25); }
+  .gn .l { font: 9.5px var(--mono); color: var(--dim); }
+  .gn.active .o { border-color: var(--violet); box-shadow: 0 0 22px rgba(173,140,255,.5); transform: scale(1.08); }
+  .ge { stroke: var(--border); stroke-width: 1.5; fill: none; transition:.3s; }
+  .ge.active { stroke: var(--violet); stroke-width: 2.5; stroke-dasharray: 5 4; animation: flow .6s linear infinite; filter: drop-shadow(0 0 4px var(--violet)); }
+  @keyframes flow { to { stroke-dashoffset: -18; } }
+
+  /* diff */
+  .diff { font: 12px/1.55 var(--mono); }
+  .diff .ln { padding: 1px 11px; white-space: pre-wrap; }
+  .diff .ln.add { background: rgba(70,217,151,.12); color: var(--add); }
+  .diff .ln.del { background: rgba(240,133,124,.12); color: var(--del); }
+  .diff .ln.ctx { color: var(--dim); }
+
+  /* screenshot */
+  .shot { border-radius: 9px; overflow: hidden; border: 1px solid var(--border); }
+  .shot .bar { background: #1c2230; padding: 6px 10px; display: flex; gap: 6px; align-items: center; }
+  .shot .bar i { width: 9px; height: 9px; border-radius: 50%; } .shot .bar i:nth-child(1){background:#ff5f57}.shot .bar i:nth-child(2){background:#febc2e}.shot .bar i:nth-child(3){background:#28c840}
+  .shot .bar .u { margin-left: 8px; font: 10px var(--mono); color: var(--dim); background:#0f131c; padding:2px 8px; border-radius:5px; }
+  .shot .win { background: linear-gradient(160deg,#0e1422,#0b0f18); padding: 16px; min-height: 150px; position: relative; }
+  .shot .note { background: #f7f4e9; color: #222; border-radius: 5px; padding: 10px; font: 12px var(--mono); width: 70%; box-shadow: 0 8px 20px rgba(0,0,0,.4); }
+  .shot .mark { position: absolute; border: 2px solid var(--cyan); border-radius: 5px; box-shadow: 0 0 0 3px rgba(69,211,224,.2); }
+  .shot .mark .tagn { position: absolute; top: -9px; left: -2px; background: var(--cyan); color: #042; font: 9px var(--mono); padding: 0 4px; border-radius: 3px; }
+
+  /* file results */
+  .frow { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; }
+  .frow:hover { background: var(--panel-2); }
+  .frow .fi { color: var(--cyan); }
+  .frow .fn { font: 12.5px var(--mono); } .frow .fm { margin-left: auto; font: 11px var(--mono); color: var(--dim-2); }
+
+  /* job calendar */
+  .jcal { display: grid; grid-template-columns: repeat(7,1fr); gap: 4px; }
+  .jcal .d { aspect-ratio: 1; border-radius: 7px; background: var(--panel-2); display: grid; place-items: center; font: 11px var(--mono); color: var(--dim); position: relative; }
+  .jcal .d.has { background: var(--accent-soft); color: #c3caff; border: 1px solid rgba(124,140,255,.4); }
+  .jcal .d.has::after { content:""; position:absolute; bottom:4px; width:4px; height:4px; border-radius:50%; background: var(--accent); }
+
+  /* mobile stage as bottom sheet */
+  body.m .stage { position: fixed; inset: 0; top: auto; height: 78vh; z-index: 40; background: var(--panel); border-top: 1px solid var(--border-2); border-radius: 20px 20px 0 0; transform: translateY(100%); transition: transform .3s cubic-bezier(.2,.9,.3,1); box-shadow: 0 -20px 50px rgba(0,0,0,.5); display: flex; }
+  body.m .stage.up { transform: none; }
+  body.m .app.solo .stage { display: flex; }
+  .msheet-grip { display: none; }
+  body.m .msheet-grip { display: block; width: 40px; height: 4px; border-radius: 4px; background: var(--border-2); margin: 8px auto 0; }
+  body.m .shead .close-m { display: grid; }
+  .shead .close-m { display: none; width: 28px; height: 28px; border-radius: 7px; place-items: center; color: var(--dim); }
+</style>
+</head>
+<body>
+<div class="devbar"><button id="dvD" class="on" onclick="setDevice(false)">🖥 Desktop</button><button id="dvM" onclick="setDevice(true)">📱 Mobil</button></div>
+
+<div class="app solo" id="app">
+  <!-- conversation -->
+  <section class="conv">
+    <header class="chead">
+      <div class="logo">✦</div><span class="nm">Pilot</span>
+      <span class="proj">📁 pilot</span>
+      <span class="sp"></span>
+      <span class="conn"><span class="led"></span> ansluten</span>
+      <button class="ic" title="Jobb" onclick="alert('Jobb')">⏰</button>
+      <button class="ic" title="Ny" onclick="location.reload()">＋</button>
+    </header>
+    <div class="cscroll" id="scroll">
+      <div class="stream" id="stream">
+        <div class="welcome" id="welcome">
+          <div class="h">Vad bygger vi,<br><span class="g">Lucas?</span></div>
+          <p class="s">Konversationen lever här. Allt Pilot <em>gör</em> — diffar, skärmdumpar, sökträffar, modell-hand-offs — målas upp på scenen bredvid.</p>
+          <div class="cards">
+            <button class="card" onclick="quick('Lägg till en vision-flagga i backend/config.py')"><div class="e">✎</div><div class="t">Redigera kod</div><div class="d">scen visar diff</div></button>
+            <button class="card" onclick="quick('Öppna Anteckningar och skriv Hej')"><div class="e">🖥</div><div class="t">Styr datorn</div><div class="d">scen visar skärmen</div></button>
+            <button class="card" onclick="quick('Hitta mitt CV i Downloads')"><div class="e">🔎</div><div class="t">Hitta filer</div><div class="d">scen visar träffar</div></button>
+            <button class="card" onclick="quick('Bevisa att roten ur 2 är irrationell')"><div class="e">🧠</div><div class="t">Svår reasoning</div><div class="d">scen visar orkestrering</div></button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="comp">
+      <div class="compi">
+        <div class="modes">
+          <span class="lab">läge</span>
+          <button class="mode on" data-r="auto">auto</button><button class="mode" data-r="chat">chatt</button><button class="mode" data-r="computer">dator</button><button class="mode" data-r="code">kod</button>
+          <span class="lab" style="margin-left:8px">🧠 gemma4 · auto</span>
+        </div>
+        <div class="inw">
+          <textarea id="ta" rows="1" placeholder="Skriv till Pilot…" oninput="autosize();tg()" onkeydown="onKey(event)"></textarea>
+          <button class="go" id="go" disabled onclick="send()">➤</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- stage -->
+  <aside class="stage" id="stage">
+    <div class="msheet-grip"></div>
+    <header class="shead">
+      <span class="t" id="stageTitle">Scen</span>
+      <span class="pill" id="stagePill">tom</span>
+      <button class="close-m" onclick="hideStage()">✕</button>
+    </header>
+    <div class="sbody" id="sbody">
+      <div class="stage-empty" id="stageEmpty"><div class="ring">✦</div><div class="t">Scenen vaknar när Pilot gör något — den anpassar sig efter uppgiften.</div></div>
+    </div>
+  </aside>
+</div>
+
+<script>
+  const $=id=>document.getElementById(id);
+  const app=$('app'),scroll=$('scroll'),stream=$('stream'),ta=$('ta'),go=$('go'),stage=$('stage'),sbody=$('sbody');
+  let busy=false; const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  function el(h){ const t=document.createElement('template'); t.innerHTML=h.trim(); return t.content.firstElementChild; }
+  function down(){ scroll.scrollTop=scroll.scrollHeight; }
+  function autosize(){ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,130)+'px'; }
+  function tg(){ go.disabled=!ta.value.trim()||busy; }
+  function quick(t){ ta.value=t; autosize(); tg(); ta.focus(); }
+  function onKey(e){ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); send(); } }
+  document.querySelector('.modes').addEventListener('click',e=>{const b=e.target.closest('.mode'); if(!b)return; document.querySelectorAll('.mode').forEach(x=>x.classList.remove('on')); b.classList.add('on');});
+
+  let manual=null;
+  function applyResp(){ if(manual!==null) return; document.body.classList.toggle('m', innerWidth<860); }
+  function setDevice(m){ manual=m; document.body.classList.toggle('m',m); $('dvM').classList.toggle('on',m); $('dvD').classList.toggle('on',!m); if(!m) stage.classList.remove('up'); }
+  addEventListener('resize',applyResp); applyResp();
+
+  function openStage(title,pill){ app.classList.remove('solo'); $('stageEmpty')?.remove(); $('stageTitle').textContent=title; $('stagePill').textContent=pill;
+    if(document.body.classList.contains('m')){ app.classList.add('solo'); stage.classList.add('up'); } }
+  function hideStage(){ stage.classList.remove('up'); }
+  function stageCard(headHtml,bodyHtml){ const c=el(`<div class="panecard"><div class="pc-h">${headHtml}</div><div class="pc-b">${bodyHtml}</div></div>`); sbody.appendChild(c); sbody.scrollTop=sbody.scrollHeight; return c; }
+  function stageReplace(){ sbody.innerHTML=''; }
+
+  async function send(){
+    const text=ta.value.trim(); if(!text||busy) return;
+    $('welcome')?.remove();
+    stream.appendChild(el(`<div class="u"></div>`)).textContent=text;
+    ta.value=''; autosize(); busy=true; tg(); down();
+    await turn(text); busy=false; tg();
+  }
+
+  async function turn(text){
+    const isEdit=/redigera|lägg till|flagga|config/i.test(text);
+    const isComp=/öppna|anteckningar|skriv|klicka|dator/i.test(text) && !isEdit;
+    const isFile=/cv|downloads|hitta|sök|fil/i.test(text);
+    const isReason=/bevisa|irrationell|matematik|reasoning|roten/i.test(text);
+    const route=(isEdit)?'code':(isComp||isFile)?'computer':(isReason)?'chat':'chat';
+    const rl={code:'⌨ Kod',computer:'🖥 Dator',chat:'💬 Chatt'}[route];
+
+    const a=el(`<div class="a"><div class="ah"><div class="ava">✦</div><span class="rb ${route}">${rl}</span><span style="font:11px var(--mono);color:var(--dim)">🧠 gemma4</span></div>
+      <div class="trace"></div></div>`);
+    stream.appendChild(a); const trace=a.querySelector('.trace'); down();
+    const tchip=(cls,icon,label)=>{ const c=el(`<div class="tchip ${cls}"><span class="i">${icon}</span><span>${label}</span><span class="open">scen →</span></div>`); trace.appendChild(c); down(); return c; };
+
+    tchip('run','<span class="spin">✻</span>','Tänker…'); await sleep(600);
+
+    stageReplace();
+    if(isEdit){
+      openStage('Diff','backend/config.py');
+      const c=tchip('act','🔀','Konsulterar qwen2.5-coder'); await sleep(800); c.querySelector('.i').textContent='⌨'; c.classList.remove('act');
+      const card=stageCard(`<span>✎</span><span class="nm">backend/config.py</span><span class="tag" style="background:rgba(70,217,151,.15);color:var(--add)">+3 −1</span>`,`<div class="diff" id="dz"></div>`);
+      const dz=card.querySelector('#dz');
+      const lines=[['ctx','  MAX_AGENT_STEPS = env_int("MAX_AGENT_STEPS", 20)'],['del','- VISION_ENABLED = True'],['add','+ VISION_ENABLED = env_bool("VISION_ENABLED", False)'],['add','+ VISION_MODEL = env("OLLAMA_VISION_MODEL", "gemma4")'],['add','+ # opt-in: text-perception är default'],['ctx','  BACKEND_PORT = env_int("BACKEND_PORT", 8000)']];
+      for(const [k,t] of lines){ dz.appendChild(el(`<div class="ln ${k}">${t}</div>`)); await sleep(140); }
+      tchip('done','✓','Skrev backend/config.py');
+      await answer(a,`Klart. Jag la till en opt-in-flagga ${'`'}VISION_ENABLED${'`'} (default av) — diffen ser du på scenen. Sätt ${'`'}VISION_ENABLED=true${'`'} i .env för att slå på den.`);
+    } else if(isComp){
+      openStage('Skärm','live · UI Automation');
+      tchip('act','📸','Perception (Set-of-Marks)'); await sleep(700);
+      stageCard(`<span>🖥</span><span class="nm">Anteckningar</span><span class="tag" style="background:rgba(69,211,224,.15);color:var(--cyan)">live</span>`,
+        `<div class="shot"><div class="bar"><i></i><i></i><i></i><span class="u">Untitled — Anteckningar</span></div>
+          <div class="win"><div class="mark" style="left:16px;top:16px;right:16px;height:46px"><span class="tagn">[1] redigeringsyta</span></div>
+          <div class="note" style="margin-top:34px">Hej_</div></div></div>`);
+      tchip('act','⌨','type_text("Hej")'); await sleep(700);
+      tchip('done','✓','UIA bekräftade texten');
+      await answer(a,`Öppnade Anteckningar och skrev "Hej". Jag klickade på redigeringsytan ([1]) via element-listan — ingen gissad pixel — och bekräftade texten med UI Automation.`);
+    } else if(isFile){
+      openStage('Sökträffar','search_files · ~');
+      tchip('act','⚡','search_files("CV", ~, *.pdf)'); await sleep(850);
+      stageCard(`<span>🔎</span><span class="nm">3 träffar</span><span class="tag" style="color:var(--dim)">~/</span>`,
+        [['Downloads/Lucas_CV.pdf','184 kB · 30 maj'],['Downloads/Lucas_CV_2024.pdf','12 nov 2024'],['Documents/CV/old_cv.pdf','2023']].map(([f,m])=>`<div class="frow"><span class="fi">📄</span><span class="fn">${f}</span><span class="fm">${m}</span></div>`).join(''));
+      tchip('done','✓','3 filer hittade');
+      await answer(a,`Tre CV-filer i din hemkatalog (se scenen). Senast: ${'`'}Downloads/Lucas_CV.pdf${'`'}. Vill du öppna den?`);
+    } else if(isReason){
+      openStage('Orkestrering','live · 2 experter');
+      stageCard(`<span>🧠</span><span class="nm">Modell-hand-offs</span><span class="tag" style="color:var(--violet)">live</span>`,buildGraph());
+      const gn=(id)=>document.getElementById(id);
+      tchip('act','🔀','Frågar qwen3:14b'); gn('cn-reason').classList.add('active'); gn('ce-reason').classList.add('active'); await sleep(1000);
+      gn('cn-reason').classList.remove('active'); gn('ce-reason').classList.remove('active');
+      tchip('act','🔬','Dubbelkollar deepseek-r1'); gn('cn-deep').classList.add('active'); gn('ce-deep').classList.add('active'); await sleep(900);
+      gn('cn-deep').classList.remove('active'); gn('ce-deep').classList.remove('active');
+      tchip('done','✓','Syntetiserade svaret');
+      await answer(a,`Antag √2 = p/q i lägsta form ⇒ p² = 2q² ⇒ p jämnt ⇒ p=2k ⇒ q² = 2k² ⇒ q jämnt. Då delar 2 både p och q — motsägelse. Alltså är √2 irrationellt. ∎`);
+    } else {
+      await answer(a,`Jag kör lokalt och kan koda, styra datorn, söka och resonera. Be mig göra något konkret så väcker jag scenen till liv.`);
+    }
+  }
+
+  function buildGraph(){
+    return `<div class="ggraph">
+      <svg viewBox="0 0 300 200" preserveAspectRatio="none">
+        <path class="ge" id="ce-coder" d="M150,100 L250,45"></path>
+        <path class="ge" id="ce-reason" d="M150,100 L255,150"></path>
+        <path class="ge" id="ce-deep" d="M150,100 L55,155"></path>
+        <path class="ge" id="ce-embed" d="M150,100 L50,48"></path>
+      </svg>
+      <div class="gn c" style="left:50%;top:50%"><div class="o">✦</div><div class="l">gemma4</div></div>
+      <div class="gn" id="cn-coder" style="left:83%;top:22%"><div class="o">⌨</div><div class="l">coder</div></div>
+      <div class="gn" id="cn-reason" style="left:85%;top:75%"><div class="o">🧠</div><div class="l">qwen3</div></div>
+      <div class="gn" id="cn-deep" style="left:18%;top:78%"><div class="o">🔬</div><div class="l">deepseek</div></div>
+      <div class="gn" id="cn-embed" style="left:16%;top:24%"><div class="o">💾</div><div class="l">nomic</div></div>
+    </div>`;
+  }
+
+  async function answer(a,text){
+    const b=el(`<div class="ab"><span class="cur"></span></div>`); a.appendChild(b); down();
+    const c=b.querySelector('.cur');
+    for(let i=0;i<text.length;i++){ b.insertBefore(document.createTextNode(text[i]),c); if(i%2===0){down(); await sleep(7);} }
+    c.remove(); down();
+  }
+</script>
+</body>
+</html>

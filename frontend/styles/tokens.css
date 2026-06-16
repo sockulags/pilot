@@ -1,0 +1,54 @@
+:root {
+  /* backgrounds */
+  --bg:       #0a0b0e;
+  --bg-soft:  #0e0f13;
+  --panel:    #14151b;
+  --panel-2:  #1a1b22;
+
+  /* borders */
+  --border:   #21222c;
+  --border-2: #2c2d39;
+
+  /* text */
+  --text:     #f0f1f5;
+  --dim:      #888b99;
+  --dim-2:    #585b69;
+
+  /* accent palette */
+  --accent:   #7c8cff;
+  --cyan:     #4fd6e0;
+  --green:    #54d98c;
+  --violet:   #b69cff;
+  --amber:    #f6c453;
+  --yellow:   #f6c453;
+  --blue:     #4fd6e0;
+
+  /* semantic */
+  --add:      #54d98c;
+  --del:      #f0857c;
+  --red:      #f0857c;
+  --muted:    #888b99;
+  --surface:  #1a1b22;
+
+  /* gradient */
+  --grad: linear-gradient(110deg, #7c8cff, #4fd6e0);
+
+  /* typography */
+  --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  --sans: -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* radii */
+  --r-xs:   5px;
+  --r-sm:   7px;
+  --r-md:   9px;
+  --r-lg:   11px;
+  --r-xl:   13px;
+  --r-2xl:  16px;
+  --r-pill: 999px;
+
+  /* shadows */
+  --shadow-sm:  0 4px 16px rgba(0,0,0,.3);
+  --shadow-md:  0 12px 44px rgba(0,0,0,.35);
+  --shadow-lg:  0 16px 40px rgba(0,0,0,.5);
+  --shadow-xl:  0 30px 80px rgba(0,0,0,.6);
+}

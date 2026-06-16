@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pilot — Frontend v2</title>
+<style>
+  :root {
+    --bg:#08080a; --panel:#131318; --panel-2:#17171d; --border:#202027; --border-2:#2b2b34;
+    --text:#f2f2f4; --dim:#8d8d97; --dim-2:#5c5c66;
+    --accent:#8b7bff; --cyan:#4fd6e0; --coral:#e0866a; --indigo:#7c8cff; --violet:#b69cff; --green:#54d98c;
+    --mono: ui-monospace,"Cascadia Code",Consolas,monospace;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background: radial-gradient(900px 460px at 78% -8%, rgba(139,123,255,.13), transparent 60%), var(--bg); color:var(--text); font:15px/1.6 -apple-system,"Segoe UI",Roboto,sans-serif; -webkit-font-smoothing:antialiased; min-height:100vh; padding:46px 24px 70px; }
+  .wrap { max-width:1060px; margin:0 auto; }
+  .brand { display:flex; align-items:center; gap:13px; margin-bottom:10px; }
+  .logo { width:42px; height:42px; border-radius:12px; background:linear-gradient(120deg,var(--accent),var(--cyan)); display:grid; place-items:center; color:#07070a; font-weight:900; font-size:20px; }
+  h1 { font-size:26px; letter-spacing:-.5px; }
+  .lede { color:var(--dim); max-width:720px; margin:14px 0 8px; }
+  .lede b { color:var(--text); }
+  .back { display:inline-block; margin-top:6px; font:12px var(--mono); color:var(--dim); border:1px solid var(--border); border-radius:7px; padding:4px 9px; text-decoration:none; }
+  .back:hover { color:var(--text); border-color:var(--border-2); }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.12em; color:var(--dim); margin:38px 0 14px; }
+
+  .note { display:flex; gap:12px; flex-wrap:wrap; }
+  .pill { font:12px var(--mono); color:var(--dim); border:1px solid var(--border); border-radius:999px; padding:6px 13px; }
+  .pill b { color:var(--text); }
+
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:18px; margin-top:4px; }
+  .card { background:linear-gradient(180deg,var(--panel),var(--panel-2)); border:1px solid var(--border); border-radius:17px; overflow:hidden; text-decoration:none; color:inherit; transition:.18s; display:flex; flex-direction:column; }
+  .card:hover { transform:translateY(-4px); box-shadow:0 20px 50px rgba(0,0,0,.45); }
+  .card.console:hover { border-color:var(--coral); } .card.canvas:hover { border-color:var(--indigo); } .card.focus:hover { border-color:var(--violet); }
+  .thumb { height:120px; position:relative; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:center; font:12px var(--mono); }
+  .thumb.console { background:#0c0c0e; color:var(--coral); }
+  .thumb.canvas { background:linear-gradient(135deg,#0a0b0f,#151823); }
+  .thumb.focus { background:radial-gradient(400px 160px at 50% 120%, rgba(139,123,255,.2), transparent), #08080a; }
+  .thumb .tag { position:absolute; top:11px; left:13px; font:11px var(--mono); color:var(--dim-2); }
+  .b { padding:17px 18px 19px; display:flex; flex-direction:column; flex:1; }
+  .b .h { font-size:19px; font-weight:730; letter-spacing:-.3px; }
+  .b .sub { font:12px var(--mono); margin:3px 0 11px; }
+  .console .sub { color:var(--coral); } .canvas .sub { color:var(--indigo); } .focus .sub { color:var(--violet); }
+  .b .d { color:var(--dim); font-size:13.5px; flex:1; }
+  .b .feat { margin-top:13px; display:flex; flex-wrap:wrap; gap:6px; }
+  .b .feat span { font:10.5px var(--mono); color:var(--dim); border:1px solid var(--border); border-radius:6px; padding:2px 7px; }
+  .b .open { margin-top:14px; font-size:13.5px; font-weight:600; }
+  .console .open { color:var(--coral); } .canvas .open { color:var(--indigo); } .focus .open { color:var(--violet); }
+  footer { color:var(--dim-2); font-size:12.5px; margin-top:46px; text-align:center; }
+  .tip { margin-top:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand"><div class="logo">✦</div><h1>Pilot — tre förenade riktningar</h1></div>
+  <p class="lede">Förslagen från runda 1 (Workspace, Calm, Mission Control) sammansmälta till <b>en responsiv familj</b> — Calm blir helt enkelt mobilläget av varje. Med tydliga lån från <b>Claude Code</b> och <b>Codex</b>: monospace, slash-kommandon, kommandopalett, inline tool-calls, diffar och statusrad. Var och en är desktop <em>och</em> mobil i samma fil — växla med knapparna uppe till höger i mockupen.</p>
+  <a class="back" href="../index.html">← runda 1</a>
+  <p style="margin:14px 0 0"><a href="../v3/index.html" style="display:inline-flex;gap:8px;align-items:center;color:#07070c;text-decoration:none;background:linear-gradient(120deg,var(--accent),var(--cyan));padding:9px 16px;border-radius:10px;font-weight:700;font-size:14px">→ Runda 3: B+C-hybrid, tre twists (senaste)</a></p>
+
+  <h2>Gemensam DNA i alla tre</h2>
+  <div class="note">
+    <span class="pill">🧠 <b>Orkestrering synlig</b> — experter tänds live</span>
+    <span class="pill">⌨ <b>Slash & ⌘K</b></span>
+    <span class="pill">📱 <b>Responsiv</b> desktop→mobil</span>
+    <span class="pill">✎ <b>Diff & tool-calls</b> inline</span>
+    <span class="pill">◐ <b>Minimalt chrome</b></span>
+  </div>
+
+  <h2 style="margin-top:30px">Tre förslag — klicka och testa</h2>
+  <div class="grid">
+    <a class="card console" href="console.html">
+      <div class="thumb console"><span class="tag">A</span>❯ pilot ▍</div>
+      <div class="b">
+        <div class="h">Console</div><div class="sub">terminal-native · à la Claude Code</div>
+        <div class="d">Tangentbordsförst. Kommandopalett (⌘K), slash-autocomplete, inline tool-calls som fälls ut, diffar med +/−, och en statusrad nederst med modell · läge · cwd. Pilot som proffsverktyg.</div>
+        <div class="feat"><span>⌘K</span><span>/slash</span><span>diff</span><span>statusrad</span><span>monospace</span></div>
+        <div class="open">Öppna →</div>
+      </div>
+    </a>
+    <a class="card canvas" href="canvas.html">
+      <div class="thumb canvas"><span class="tag">B</span>💬 ⟷ 🎬</div>
+      <div class="b">
+        <div class="h">Canvas</div><div class="sub">adaptiv split · scen som byter skepnad</div>
+        <div class="d">Konversation till vänster, en <em>scen</em> till höger som anpassar sig: diff vid kodredigering, skärmdump vid datorstyrning, sökträffar, eller orkestreringsgraf vid reasoning. På mobil blir scenen ett svep-upp-ark.</div>
+        <div class="feat"><span>split-vy</span><span>diff</span><span>skärm</span><span>graf</span><span>bottom-sheet</span></div>
+        <div class="open">Öppna →</div>
+      </div>
+    </a>
+    <a class="card focus" href="focus.html">
+      <div class="thumb focus"><span class="tag">C</span>◌ skriv…</div>
+      <div class="b">
+        <div class="h">Focus</div><div class="sub">komposör-centrerad · ultraminimal</div>
+        <div class="d">Inmatningen är hjälten — centrerad i tomt läge, dockar nedåt när samtalet börjar. Lägespiller bor i komposören, noll toppchrome. Arbetet visas som en lugn tidslinje. Som om Linear/Vercel byggt en lokal agent.</div>
+        <div class="feat"><span>hero-input</span><span>tidslinje</span><span>front-brain</span><span>whitespace</span></div>
+        <div class="open">Öppna →</div>
+      </div>
+    </a>
+  </div>
+
+  <footer>Statiska, fristående HTML-mockuper · simulerade flöden · ingen backend krävs<div class="tip">Tips: skicka "vänd en sträng", "hitta mitt CV", "bevisa att roten ur 2 är irrationell" eller "lägg till en vision-flagga i config" för att se olika flöden.</div></footer>
+</div>
+</body>
+</html>

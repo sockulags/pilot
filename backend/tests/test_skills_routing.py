@@ -71,6 +71,27 @@ class ToolArgGuardTests(unittest.TestCase):
         out = asyncio.run(execute_tool("read_file", {}, lambda e: None))
         self.assertIn("requires argument", out)
 
+    def test_web_research_execute_tool_result_is_structured(self):
+        from agents import loop
+        from tool_results import ToolResult
+
+        async def fake_web_research_result(query, task="", min_sources=3):
+            return ToolResult(
+                ok=True,
+                kind="web_research",
+                text="structured text",
+                data={"query": query},
+                sources=[{"title": "Source", "url": "https://example.com"}],
+            )
+
+        with mock.patch.object(loop, "web_research_result", new=fake_web_research_result):
+            result = asyncio.run(loop.execute_tool_result("web_research", {"query": "Volvo"}, lambda e: None))
+
+        self.assertTrue(result.ok)
+        self.assertEqual("web_research", result.kind)
+        self.assertEqual("structured text", result.to_text())
+        self.assertEqual([{"title": "Source", "url": "https://example.com"}], result.sources)
+
 
 class FriendlyAgentErrorTests(unittest.TestCase):
     def test_usage_limit_is_humanised(self):

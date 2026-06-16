@@ -444,6 +444,9 @@ async def run_coordinator(
             notes.append(f"Blocked: {block}")
             continue
         args = agent_loop.apply_project_cwd_to_args(tool, args, project_cwd)
+        tool, args, repair_note = agent_loop.repair_web_tool_call(tool, args, task)
+        if repair_note:
+            emit(make_event("thinking", content=repair_note))
         emit(make_event("action", tool=tool, args=args))
         try:
             result = await agent_loop.execute_tool(tool, args, emit)

@@ -29,6 +29,7 @@ from agents.coordinator import run_coordinator
 from agents.gateway import refine_query
 from agents.orchestrator import classify_turn, compose_reply, should_offload_code
 from codex_logs import summarize_codex_session
+from diagnostics import append_turn_diagnostic
 from config import (
     OLLAMA_MODEL,
     OLLAMA_MODELS,
@@ -250,7 +251,12 @@ async def websocket_endpoint(websocket: WebSocket):
         coordinator_model = OLLAMA_MODEL if model_mode == "auto" else tools_capable_model(model_mode)
 
         def emit(event: dict):
-            send({**event, "turn": turn, "route": route})
+            enriched = {**event, "turn": turn, "route": route}
+            diagnostic_events.append(enriched)
+            send(enriched)
+
+        diagnostic_events: list[dict] = []
+        turn_status = "done"
 
         emit({
             "type": "turn_start",
@@ -294,6 +300,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 coordinator_model=coordinator_model, intent_hint=intent,
                 memories=memories, session_id=session_id,
             )
+            turn_status = outcome.status
             if outcome.status == "needs_input":
                 # The coordinator judged the request too vague — its clarifying
                 # question IS the reply; no synthesis, no orchestration ran.
@@ -310,6 +317,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
         else:  # explicit offload to the external coding agent
             if not cwd:
+                turn_status = "blocked"
                 msg = ("Välj en projektmapp först (dropdown ovanför inmatningen) för att "
                        "offloada till kodagenten.")
                 emit({"type": "assistant_delta", "content": msg})
@@ -335,6 +343,19 @@ async def websocket_endpoint(websocket: WebSocket):
                     )
 
         persist()
+        turn_status = _diagnostic_turn_status(diagnostic_events, turn_status, abort.is_set())
+        try:
+            append_turn_diagnostic(
+                session_id=session_id,
+                turn=turn,
+                route=route,
+                model=coordinator_model,
+                events=diagnostic_events,
+                status=turn_status,
+                final_source=_final_source(diagnostic_events),
+            )
+        except OSError:
+            pass
 
     try:
         while True:
@@ -483,6 +504,23 @@ def _with_refined_prompt(refined: str, original: str) -> str:
     if refined.strip() == original.strip():
         return original
     return f"{refined}\n\n(User's original request: {original})"
+
+
+def _final_source(events: list[dict]) -> str | None:
+    for event in reversed(events):
+        if event.get("type") == "action" and event.get("tool"):
+            return str(event["tool"])
+        if event.get("type") == "consult" and event.get("model"):
+            return f"consult:{event['model']}"
+    return None
+
+
+def _diagnostic_turn_status(events: list[dict], default: str, aborted: bool) -> str:
+    if aborted and default == "done":
+        return "aborted"
+    if any(event.get("type") == "error" for event in events) and default == "done":
+        return "error"
+    return default
 
 
 def _friendly_agent_error(text: str) -> str | None:
