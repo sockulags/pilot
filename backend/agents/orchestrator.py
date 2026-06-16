@@ -191,11 +191,40 @@ def route_project_bound_message(user_message: str, project: str | None) -> dict 
     if not any(term in text for term in PROJECT_GITHUB_TERMS):
         return None
 
+    # GitHub/repo requests go to the computer route so the coordinator can use the
+    # native gh tools (github_issues/prs/repo) — NOT the code agent. Reading a
+    # repo's issues should never dead-end on Codex's usage limit (session
+    # 42cdda5a). Actual code edits still reach the code route via the classifier.
     return {
-        "route": "code",
-        "prompt": user_message.strip(),
-        "thinking": "project GitHub/repository request with an active project; routing to code",
+        "route": "computer",
+        "task": user_message.strip(),
+        "thinking": "GitHub/repository request with an active project; using local gh tools",
     }
+
+
+# Explicit signals that the user wants to offload code work to the cloud agent.
+# Default is local-first ("offloada när jag vill, annars lokalt"): a code turn
+# only reaches the external agent when the user forces the code route (Läge) or
+# says so here.
+OFFLOAD_TERMS = (
+    "offload", "offloada", "delegera", "delegate", "använd codex", "anvand codex",
+    "använd claude", "anvand claude", "kör codex", "kor codex", "kör claude",
+    "kor claude", "med codex", "med claude", "claude code", "låt codex", "lat codex",
+    "låt claude", "lat claude",
+)
+
+
+def should_offload_code(route_mode: str, user_message: str) -> bool:
+    """Whether a code-classified turn should go to the external coding agent.
+
+    True only on an explicit signal: the user forced the code route via the Läge
+    toggle, or asked for offload/Codex/Claude in the message. Otherwise the turn
+    is handled locally by the coordinator.
+    """
+    if route_mode == "code":
+        return True
+    text = f" {user_message.lower()} "
+    return any(term in text for term in OFFLOAD_TERMS)
 
 
 def _normalize_decision(decision: dict, user_message: str, model_mode: str = "auto") -> dict:

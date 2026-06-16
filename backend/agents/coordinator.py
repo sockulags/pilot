@@ -37,6 +37,7 @@ from config import (
     OLLAMA_MODELS,
 )
 from memory import save_memory
+from skill_library import format_skills, search_skills
 from tools import registry
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,10 @@ def _system_prompt(intent_hint: str) -> str:
         "and specialist models listed below — describe them; never claim you have none. "
         "Never claim to have run a tool, searched, or navigated unless you actually "
         "took that action this turn; do not invent a 'technical error' to excuse not "
-        f"acting — either act, or answer honestly.\n{intent_hint}\n\n"
+        "acting — either act, or answer honestly.\n"
+        "This is a Windows machine: in run_command use Windows/PowerShell commands "
+        "(dir, Get-ChildItem, cd) — never 'pwd' or 'ls'; prefer the file tools "
+        f"(list_dir/read_file/search_files) over shell for inspecting files.\n{intent_hint}\n\n"
         "Take your next step by EITHER calling exactly one of the provided "
         "tools/functions, OR responding with a single JSON object: "
         '{"action": "clarify|consult|perceive|tool|remember|answer", '
@@ -114,8 +118,14 @@ def _build_decision_context(
     experts: dict[str, dict],
     notes: list[str],
     memories: str = "",
+    skills: str = "",
 ) -> str:
     parts = []
+    if skills:
+        parts.append(
+            "Relevant know-how for this kind of request — follow it (it tells you "
+            f"which tool to use and how):\n{skills}\n"
+        )
     if memories:
         parts.append(
             "Long-term memory about the user (recalled — use if relevant, don't "
@@ -354,6 +364,8 @@ async def run_coordinator(
     # Tools-capable models drive their decisions via native function-calling;
     # others (and a tools-rejecting endpoint) fall back to the JSON action path.
     use_tools = bool(OLLAMA_MODELS.get(coordinator_model, {}).get("tools"))
+    # Retrieve task-relevant skills once (the "how" layer); injected each step.
+    skills = format_skills(await search_skills(task))
 
     notes: list[str] = []  # human-readable evidence gathered this turn (grounds the reply)
     history: list[dict] = []  # for perceive() + desktop-tool safety gating
@@ -364,7 +376,7 @@ async def run_coordinator(
 
     while steps < COORDINATOR_MAX_STEPS and not abort.is_set():
         steps += 1
-        context = _build_decision_context(task, conversation, experts, notes, memories)
+        context = _build_decision_context(task, conversation, experts, notes, memories, skills)
         try:
             decision = await _decide_step(coordinator_model, system, context, experts, use_tools)
         except Exception as exc:
