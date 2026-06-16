@@ -163,6 +163,11 @@ function preview(text: string, max = 72) {
   return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
 }
 
+function modelLabel(mode: string, models: ModelOption[]) {
+  if (mode === "auto") return "Auto";
+  return models.find((model) => model.id === mode)?.label ?? mode;
+}
+
 function approximateTokens(transcript: TranscriptItem[]) {
   return transcript.reduce((sum, item) => {
     const text = item.kind === "user" ? item.text : `${item.text} ${item.summary ?? ""}`;
@@ -172,9 +177,17 @@ function approximateTokens(transcript: TranscriptItem[]) {
 
 function ContextModal({
   transcript,
+  compacted,
+  hiddenCount,
+  onCompactView,
+  onClearContext,
   onClose,
 }: {
   transcript: TranscriptItem[];
+  compacted: boolean;
+  hiddenCount: number;
+  onCompactView: () => void;
+  onClearContext: () => void;
   onClose: () => void;
 }) {
   const total = approximateTokens(transcript);
@@ -204,6 +217,13 @@ function ContextModal({
           <div className="ctxrow"><span className="sw" style={{ background: "var(--violet)" }} /><span className="nm2">Skills</span><span className="tk">{skills} tok</span></div>
           <div className="ctxrow"><span className="sw" style={{ background: "var(--green)" }} /><span className="nm2">Samtal</span><span className="tk">{conversation} tok</span></div>
           <div className="ctxrow" style={{ borderBottom: "none" }}><span className="sw" style={{ background: "var(--panel-2)" }} /><span className="nm2">Totalt</span><span className="tk">{total} tok · {percent}% av 8k</span></div>
+          <p className="ctxhint">
+            {compacted ? `Fokusvy aktiv. ${hiddenCount} äldre inlägg är dolda i UI:t, men finns kvar i den underliggande sessionen.` : "Fokusvy visar bara de senaste turerna för att minska visuellt brus utan att kasta bort sessionen."}
+          </p>
+          <div className="ctxacts">
+            <button onClick={onCompactView}>{compacted ? "Uppdatera fokusvy" : "Kompaktera vy"}</button>
+            <button className="danger" onClick={onClearContext}>Ny konversation</button>
+          </div>
         </div>
       </div>
     </div>
@@ -213,12 +233,22 @@ function ContextModal({
 function Drawer({
   transcript,
   selectedProject,
+  agent,
+  modelMode,
+  models,
+  routeMode,
+  wsStatus,
   onClose,
   onOpenControls,
   onReset,
 }: {
   transcript: TranscriptItem[];
   selectedProject: Project | null;
+  agent: Agent;
+  modelMode: string;
+  models: ModelOption[];
+  routeMode: string;
+  wsStatus: WsStatus;
   onClose: () => void;
   onOpenControls: () => void;
   onReset: () => void;
@@ -226,22 +256,40 @@ function Drawer({
   const [query, setQuery] = useState("");
   const items = transcript.filter((item): item is Extract<TranscriptItem, { kind: "user" }> => item.kind === "user");
   const filtered = items.filter((item) => item.text.toLowerCase().includes(query.toLowerCase()));
+  const lastPrompt = items.at(-1);
 
   return (
     <>
       <div className="drawer-scrim on" onClick={onClose} />
-      <aside className="drawer on">
+      <aside className="drawer open">
         <div className="dh">
           <div className="t">Session</div>
           <button className="x" onClick={onClose}>✕</button>
         </div>
         <button className="newbtn" onClick={onReset}>＋ Ny konversation</button>
-        <input className="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filtrera tidigare prompts…" />
-        <div className="list">
-          <button className="ses-item on" onClick={onOpenControls}>
+        <div className="dsect">
+          <div className="seclabel">Aktiv nu</div>
+          <button className="ses-item on dsession" onClick={onOpenControls}>
             <div className="st">{selectedProject?.name ?? "Inget projekt valt"}</div>
             <div className="sm">{selectedProject?.path ?? "Öppna kontrollpanelen för projekt, modell och agent."}</div>
+            <div className="pillrow">
+              <span className="microtag">{agent === "claude" ? "Claude Code" : "Codex"}</span>
+              <span className="microtag">{modelLabel(modelMode, models)}</span>
+              <span className="microtag">{routeMode === "auto" ? "Auto route" : routeMode}</span>
+            </div>
           </button>
+          <div className="dmeta">
+            <div className="sessionstat"><span>Status</span><b>{STATUS_LABEL[wsStatus]}</b></div>
+            <div className="sessionstat"><span>Turer</span><b>{items.length}</b></div>
+            <div className="sessionstat"><span>Senast</span><b>{lastPrompt ? `Tur ${lastPrompt.turn}` : "Tom"}</b></div>
+          </div>
+        </div>
+        <div className="dsect">
+          <div className="seclabel">Sök i historik</div>
+          <input className="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filtrera tidigare prompts…" />
+        </div>
+        <div className="list">
+          <div className="seclabel">Senaste prompts</div>
           {filtered.map((item) => (
             <button key={item.id} className="ses-item">
               <div className="st">{preview(item.text)}</div>
@@ -268,6 +316,7 @@ export default function Home() {
   const [controlsOpen, setControlsOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+  const [focusView, setFocusView] = useState<number | null>(null);
   const [running, _setRunning] = useState(false);
   const [wsStatus, setWsStatus] = useState<WsStatus>("disconnected");
   const wsRef = useRef<WebSocket | null>(null);
@@ -459,6 +508,7 @@ export default function Home() {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     turnRef.current += 1;
+    setFocusView(null);
     setTranscript((prev) => [...prev, { kind: "user", id: idRef.current++, turn: turnRef.current, text }]);
     setRunning(true);
     ws.send(JSON.stringify({ type: "message", text }));
@@ -477,6 +527,7 @@ export default function Home() {
     sessionIdRef.current = nextSessionId;
     turnRef.current = 0;
     idRef.current = 0;
+    setFocusView(null);
     setTranscript([]);
     setRunning(false);
     if (ws?.readyState === WebSocket.OPEN) {
@@ -525,6 +576,8 @@ export default function Home() {
 
   const selectedProjectObject = projects.find((project) => project.path === selectedProject) ?? null;
   const hasConversation = transcript.length > 0;
+  const visibleTranscript = focusView ? transcript.slice(-focusView) : transcript;
+  const hiddenCount = transcript.length - visibleTranscript.length;
 
   return (
     <>
@@ -536,13 +589,18 @@ export default function Home() {
           </button>
           <div className="mk">✦</div>
           <div className="nm">Pilot</div>
+          <div className="headpills">
           <button className="crumb" onClick={() => setControlsOpen(true)}>
             {selectedProjectObject?.name ?? "Välj projekt"}
           </button>
+            <button className="crumb soft" onClick={() => setControlsOpen(true)}>
+              {routeMode === "auto" ? "Auto route" : routeMode}
+            </button>
+          </div>
           <div className="sp" />
           <button className="brain" onClick={() => setContextOpen(true)}>
             <span className="orb" />
-            <span id="brainTxt">{modelMode === "auto" ? "auto orchestration" : modelMode}</span>
+            <span id="brainTxt">{modelMode === "auto" ? "auto orchestration" : modelLabel(modelMode, models)}</span>
           </button>
           <div className={`agent${agentMenuOpen ? " open" : ""}`}>
             <button className="agent-trigger" onClick={() => setAgentMenuOpen((value) => !value)}>
@@ -584,7 +642,7 @@ export default function Home() {
             </section>
           ) : (
             <section className="conv on">
-              <Transcript items={transcript} />
+              <Transcript items={visibleTranscript} />
             </section>
           )}
         </div>
@@ -600,6 +658,11 @@ export default function Home() {
         <Drawer
           transcript={transcript}
           selectedProject={selectedProjectObject}
+          agent={agent}
+          modelMode={modelMode}
+          models={models}
+          routeMode={routeMode}
+          wsStatus={wsStatus}
           onClose={() => setDrawerOpen(false)}
           onOpenControls={() => {
             setControlsOpen(true);
@@ -637,7 +700,19 @@ export default function Home() {
         </div>
       )}
 
-      {contextOpen && <ContextModal transcript={transcript} onClose={() => setContextOpen(false)} />}
+      {contextOpen && (
+        <ContextModal
+          transcript={transcript}
+          compacted={focusView !== null}
+          hiddenCount={Math.max(0, hiddenCount)}
+          onCompactView={() => setFocusView(Math.min(8, transcript.length))}
+          onClearContext={() => {
+            setContextOpen(false);
+            handleReset();
+          }}
+          onClose={() => setContextOpen(false)}
+        />
+      )}
       {jobsOpen && <JobsPanel jobs={jobs} onClose={() => setJobsOpen(false)} onAdd={addJob} onPause={pauseJob} onResume={resumeJob} onDelete={deleteJob} />}
     </>
   );

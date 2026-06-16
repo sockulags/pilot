@@ -10,18 +10,28 @@ const ROUTE_LABEL: Record<Route, string> = {
   code: "kod",
 };
 
+async function copyText(value: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+  } catch {}
+}
+
 function artifactForEvent(event: TurnEvent) {
   if (event.type === "screenshot" && event.image) {
+    const source = `data:image/png;base64,${event.image}`;
     return (
       <div className="art">
         <div className="ah">
           <span>▣</span>
           <span className="nm">Skärmbild</span>
           <span className="tg" style={{ background: "rgba(79,214,224,.15)", color: "var(--cyan)" }}>live</span>
+          <div className="acts">
+            <button onClick={() => window.open(source, "_blank", "noopener,noreferrer")}>Öppna</button>
+          </div>
         </div>
         <div className="ab">
           <img
-            src={`data:image/png;base64,${event.image}`}
+            src={source}
             alt="screenshot"
             style={{ width: "100%", borderRadius: 9, border: "1px solid var(--border)" }}
           />
@@ -38,6 +48,9 @@ function artifactForEvent(event: TurnEvent) {
           <span>▣</span>
           <span className="nm">{isCommand ? "Kommandoutdata" : "Resultat"}</span>
           <span className="tg" style={{ color: "var(--dim)" }}>{isCommand ? "term" : "text"}</span>
+          <div className="acts">
+            <button onClick={() => copyText(event.content ?? "")}>Kopiera</button>
+          </div>
         </div>
         <div className="ab">
           <div className={isCommand ? "term" : "prose"}>
@@ -55,6 +68,9 @@ function artifactForEvent(event: TurnEvent) {
           <span>▣</span>
           <span className="nm">Fel</span>
           <span className="tg" style={{ background: "rgba(240,133,124,.15)", color: "var(--del)" }}>error</span>
+          <div className="acts">
+            <button onClick={() => copyText(event.content ?? "")}>Kopiera</button>
+          </div>
         </div>
         <div className="ab">
           <div className="term" style={{ color: "var(--del)" }}>
@@ -122,6 +138,8 @@ function AssistantTurn({ item }: { item: Extract<TranscriptItem, { kind: "assist
   const artifactEvents = item.events
     .filter((event) => event.type === "screenshot" || event.type === "result" || event.type === "error")
     .slice(-3);
+  const toolCount = item.events.filter((event) => event.type === "action").length;
+  const expertCount = item.events.filter((event) => event.type === "consult" || event.type === "expert").length;
 
   return (
     <div className="turn">
@@ -131,7 +149,12 @@ function AssistantTurn({ item }: { item: Extract<TranscriptItem, { kind: "assist
       </div>
       <div className="body">
         <Insyn events={item.events} done={item.done} />
-        {item.route && <div className={`rbadge${!item.done && item.events.length === 0 ? " clarify" : ""}`}>{ROUTE_LABEL[item.route]}</div>}
+        <div className="fu">
+          {item.route && <div className={`rbadge${!item.done && item.events.length === 0 ? " clarify" : ""}`}>{ROUTE_LABEL[item.route]}</div>}
+          {item.model && <div className="rbadge">{item.model}</div>}
+          {toolCount > 0 && <div className="rbadge">{toolCount} verktyg</div>}
+          {expertCount > 0 && <div className="rbadge">{expertCount} experter</div>}
+        </div>
         {item.text && (
           <div style={{ position: "relative" }}>
             <Markdown>{item.text}</Markdown>
