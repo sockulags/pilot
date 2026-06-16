@@ -56,6 +56,22 @@ class OffloadDecisionTests(unittest.TestCase):
         self.assertTrue(should_offload_code("auto", "offloada det till claude"))
 
 
+class ToolArgGuardTests(unittest.TestCase):
+    """A tool called without its required args returns a clear, model-actionable
+    error instead of crashing on args[...] (the web_search {} -> KeyError bug)."""
+
+    def test_web_search_without_query_is_clear_error(self):
+        from agents.loop import execute_tool
+        out = asyncio.run(execute_tool("web_search", {}, lambda e: None))
+        self.assertIn("requires argument", out)
+        self.assertIn("query", out)
+
+    def test_read_file_without_path_is_clear_error(self):
+        from agents.loop import execute_tool
+        out = asyncio.run(execute_tool("read_file", {}, lambda e: None))
+        self.assertIn("requires argument", out)
+
+
 class FriendlyAgentErrorTests(unittest.TestCase):
     def test_usage_limit_is_humanised(self):
         from api.ws import _friendly_agent_error

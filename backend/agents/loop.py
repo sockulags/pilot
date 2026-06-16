@@ -337,6 +337,16 @@ def deterministic_completion_summary(tool: str, result: str) -> str | None:
 
 
 async def execute_tool(tool: str, args: dict, emit: Callable[[dict], None]) -> str:
+    args = args or {}
+    # Validate required args up front: a missing one returns a clear, model-
+    # actionable message (so the model retries WITH the arg) instead of crashing
+    # on args["x"] with a cryptic KeyError — e.g. web_search called with {}.
+    spec = registry.get(tool)
+    if spec:
+        missing = [r for r in spec.required if args.get(r) in (None, "")]
+        if missing:
+            return f"{tool} requires argument(s): {', '.join(missing)} — provide them and call again."
+
     if tool == "screenshot":
         img = screenshot()
         emit(make_event("screenshot", image=img))
