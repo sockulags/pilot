@@ -238,6 +238,26 @@ class WebSocketCodeTurnTests(unittest.TestCase):
         self.assertTrue(any(event["type"] == "done" for event in events))
 
 
+class DiagnosticStatusTests(unittest.TestCase):
+    def test_diagnostic_turn_status_upgrades_done_to_error_when_error_event_exists(self):
+        from api.ws import _diagnostic_turn_status
+
+        status = _diagnostic_turn_status(
+            [{"type": "assistant_delta", "content": "partial"}, {"type": "error", "content": "boom"}],
+            "done",
+            False,
+        )
+
+        self.assertEqual("error", status)
+
+    def test_diagnostic_turn_status_marks_aborted_when_abort_flag_is_set(self):
+        from api.ws import _diagnostic_turn_status
+
+        status = _diagnostic_turn_status([{"type": "done"}], "done", True)
+
+        self.assertEqual("aborted", status)
+
+
 class CodexCliResolverTests(unittest.TestCase):
     def test_resolve_prefers_bundled_codex_over_windowsapps_path(self):
         import tools.codex_cli as codex_cli

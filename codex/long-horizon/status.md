@@ -1,0 +1,23 @@
+# Status
+
+- Current milestone: Milestone 5 - Final verification, commit, and reporting
+- Completed milestones:
+  - Milestone 1 - Plan, inspect, and classify work
+  - Milestone 2 - Parallel investigations
+  - Milestone 3 - Controller review fixes and integration
+  - Milestone 4 - Design-system rollout and visual match
+- Active blockers: none
+- Subagents used:
+  - `019ed267-c926-7b31-ad38-40353d82b778` - backend review explorer - `DONE_WITH_CONCERNS`
+  - `019ed267-dd0b-7d63-b52a-5e2aac24a327` - frontend gap explorer - `DONE_WITH_CONCERNS`
+  - `019ed267-e994-70e3-9acc-cf232903f9f1` - model findings worker - `DONE_WITH_CONCERNS`
+- Last validation commands and results:
+  - `cd backend; uv run python -m unittest tests.test_web_research tests.test_skills_routing tests.test_diagnostics tests.test_traceability` -> 31 tests passed
+  - `cd frontend; pnpm lint` -> passed
+  - `cd frontend; pnpm build` -> passed
+  - Browser QA on `http://localhost:3000/` -> shell loads, hero renders, websocket connects, prompt-to-conversation flow works, controls modal opens
+- Known issues:
+  - Existing uncommitted user changes were integrated in place and must remain part of the commit.
+  - Browser QA confirmed structural parity and interaction flow, not pixel-perfect full-page parity.
+- Next action:
+  - Run broad repo verification, inspect final diff, stage, and commit.

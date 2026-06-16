@@ -20,7 +20,7 @@ class RegistryDerivationTests(unittest.TestCase):
                 "click_element", "click", "type_text", "key_press", "hotkey", "scroll",
                 # New tools (Fas C)
                 "search_files", "github_issues", "github_prs", "github_repo",
-                "web_search", "fetch_url",
+                "web_research", "web_search", "fetch_url",
             },
             registry.coordinator_tool_names(),
         )
@@ -41,7 +41,7 @@ class RegistryDerivationTests(unittest.TestCase):
             {
                 "list_dir", "read_file", "find_file", "list_windows", "focus_window",
                 "search_files", "github_issues", "github_prs", "github_repo",
-                "web_search", "fetch_url",
+                "web_research", "web_search", "fetch_url",
             },
             registry.deterministic_tool_names(),
         )

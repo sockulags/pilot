@@ -7,7 +7,7 @@ from .codex_cli import run_codex_cli
 from .os_tools import active_window_title, list_dir, read_file, find_file, list_windows, focus_window
 from .search import search_files
 from .github import github_issues, github_prs, github_repo
-from .web import web_search, fetch_url
+from .web import web_search, fetch_url, web_research, web_research_result
 
 __all__ = [
     "screenshot",
@@ -35,4 +35,6 @@ __all__ = [
     "github_repo",
     "web_search",
     "fetch_url",
+    "web_research",
+    "web_research_result",
 ]

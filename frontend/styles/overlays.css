@@ -1,0 +1,43 @@
+/* ── scrim backdrop ───────────────────────────────────────── */
+.scrim {
+  position: fixed; inset: 0;
+  background: rgba(5,5,8,.7); backdrop-filter: blur(4px);
+  z-index: 90; display: none; align-items: center; justify-content: center;
+  padding: 5vh 22px;
+}
+.scrim.on { display: flex; }
+
+/* ── modal ────────────────────────────────────────────────── */
+.modal {
+  width: 920px; max-width: 100%; max-height: 90vh;
+  background: var(--panel); border: 1px solid var(--border-2);
+  border-radius: var(--r-2xl); overflow: hidden;
+  display: flex; flex-direction: column;
+  box-shadow: var(--shadow-xl);
+}
+.modal.narrow { width: 560px; }
+
+.modal .mh {
+  display: flex; align-items: center; gap: 9px;
+  padding: 13px 16px; border-bottom: 1px solid var(--border);
+  font: 12px var(--mono); color: var(--dim);
+}
+.modal .mh .nm { color: var(--text); font-size: 13.5px; }
+.modal .mh .x  { margin-left: auto; width: 28px; height: 28px; border-radius: var(--r-sm); display: grid; place-items: center; }
+.modal .mh .x:hover { background: var(--panel-2); color: var(--text); }
+
+.modal .mb { padding: 18px; overflow: auto; }
+
+/* ── context breakdown (inside modal) ────────────────────── */
+.ctxbar      { display: flex; height: 12px; border-radius: 6px; overflow: hidden; margin: 4px 0 16px; background: var(--panel-2); }
+.ctxbar span { height: 100%; }
+
+.ctxrow      { display: flex; align-items: center; gap: 10px; padding: 8px 2px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.ctxrow .sw  { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
+.ctxrow .nm2 { color: var(--text); }
+.ctxrow .tk  { margin-left: auto; font: 11.5px var(--mono); color: var(--dim); }
+
+.ctxacts         { display: flex; gap: 8px; margin-top: 16px; }
+.ctxacts button  { flex: 1; padding: 10px; border-radius: 10px; border: 1px solid var(--border-2); color: var(--text); font-size: 13px; font-weight: 600; transition: .12s; }
+.ctxacts button:hover { background: var(--panel-2); }
+.ctxacts button.danger:hover { border-color: var(--del); color: var(--del); }

@@ -1,0 +1,30 @@
+/* animated top hairline — slides while busy */
+@keyframes slide {
+  to { background-position: 200% 0; }
+}
+
+/* brain orb pulse */
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50%       { transform: scale(1.45); }
+}
+
+/* insyn step spinner */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* artifact card entrance */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+}
+
+/* text cursor blink */
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* graph edge flow */
+@keyframes flow {
+  to { stroke-dashoffset: -18; }
+}

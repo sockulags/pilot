@@ -1,18 +1,41 @@
 "use client";
 
-import { useState, KeyboardEvent } from "react";
+import { useEffect, useRef, useState, KeyboardEvent } from "react";
 
 interface Props {
   onSend: (text: string) => void;
+  onAbort?: () => void;
+  onOpenContext?: () => void;
   disabled: boolean;
+  running?: boolean;
+  placeholder?: string;
 }
 
-export default function ChatInput({ onSend, disabled }: Props) {
+function autosize(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  el.style.height = "0px";
+  el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
+}
+
+export default function ChatInput({
+  onSend,
+  onAbort,
+  onOpenContext,
+  disabled,
+  running = false,
+  placeholder = "Be Pilot om något, eller ge en tydlig uppgift…",
+}: Props) {
   const [value, setValue] = useState("");
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    autosize(ref.current);
+  }, [value]);
 
   const submit = () => {
-    if (!value.trim() || disabled) return;
-    onSend(value.trim());
+    const text = value.trim();
+    if (!text || disabled || running) return;
+    onSend(text);
     setValue("");
   };
 
@@ -24,45 +47,45 @@ export default function ChatInput({ onSend, disabled }: Props) {
   };
 
   return (
-    <div style={{ display: "flex", gap: "0.5rem" }}>
-      <textarea
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={onKey}
-        disabled={disabled}
-        placeholder="Skriv ett meddelande... (Enter för att skicka, Shift+Enter för ny rad)"
-        rows={3}
-        style={{
-          flex: 1,
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          borderRadius: 8,
-          color: "var(--text)",
-          padding: "0.625rem 0.75rem",
-          fontSize: "0.95rem",
-          resize: "vertical",
-          outline: "none",
-          fontFamily: "inherit",
-        }}
-      />
-      <button
-        onClick={submit}
-        disabled={disabled || !value.trim()}
-        style={{
-          alignSelf: "flex-end",
-          padding: "0.625rem 1.25rem",
-          background: disabled || !value.trim() ? "var(--border)" : "var(--accent)",
-          color: "var(--text)",
-          border: "none",
-          borderRadius: 8,
-          cursor: disabled || !value.trim() ? "not-allowed" : "pointer",
-          fontWeight: 600,
-          fontSize: "0.9rem",
-          whiteSpace: "nowrap",
-        }}
-      >
-        Skicka
-      </button>
+    <div className="composer">
+      <div className="box">
+        <div className="l1">
+          <textarea
+            ref={ref}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={onKey}
+            disabled={disabled || running}
+            placeholder={placeholder}
+            rows={1}
+          />
+          <button
+            type="button"
+            className={`send${running ? " stop" : ""}`}
+            disabled={!running && (disabled || !value.trim())}
+            onClick={running ? onAbort : submit}
+            title={running ? "Avbryt pågående körning" : "Skicka"}
+          >
+            {running ? "■" : "➜"}
+          </button>
+        </div>
+        <div className="l2">
+          <button type="button" className="mini" title="Bilagor stöds inte ännu" disabled>
+            ＋
+          </button>
+          <button type="button" className="mini" title="Röststyrning stöds inte ännu" disabled>
+            ◉
+          </button>
+          <button type="button" className="ctxm" onClick={onOpenContext}>
+            <span className="ring" />
+            <span className="lbl">Kontext</span>
+          </button>
+          <span className="sp2" />
+          <span className="hint">
+            {running ? "Pilot arbetar…" : "Enter skickar · Shift+Enter ny rad"}
+          </span>
+        </div>
+      </div>
     </div>
   );
 }
