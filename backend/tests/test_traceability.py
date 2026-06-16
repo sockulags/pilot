@@ -110,7 +110,7 @@ class CodexLogTests(unittest.TestCase):
 
 
 class RoutingAndCwdTests(unittest.TestCase):
-    def test_project_github_request_is_forced_to_code_route(self):
+    def test_project_github_request_routes_to_local_gh_tools(self):
         from agents.orchestrator import route_project_bound_message
 
         decision = route_project_bound_message(
@@ -118,8 +118,9 @@ class RoutingAndCwdTests(unittest.TestCase):
             project="CV_Builder",
         )
 
-        self.assertEqual("code", decision["route"])
-        self.assertIn("gh", decision["prompt"])
+        # GitHub requests now go to the computer route (native gh tools), not Codex.
+        self.assertEqual("computer", decision["route"])
+        self.assertIn("gh", decision["task"])
 
     def test_agent_loop_injects_project_cwd_into_run_command(self):
         asyncio.run(self._agent_loop_injects_project_cwd_into_run_command())

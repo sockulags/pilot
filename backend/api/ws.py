@@ -27,7 +27,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from agents.coordinator import run_coordinator
 from agents.gateway import refine_query
-from agents.orchestrator import classify_turn, compose_reply
+from agents.orchestrator import classify_turn, compose_reply, should_offload_code
 from codex_logs import summarize_codex_session
 from config import (
     OLLAMA_MODEL,
@@ -259,20 +259,36 @@ async def websocket_endpoint(websocket: WebSocket):
             "model": coordinator_model,
         })
 
-        if route in ("chat", "computer"):
-            # Both run through the in-turn coordinator: gemma4 (or the pinned
-            # model) auto-orchestrates over the installed experts, perception and
-            # OS tools, then compose_reply synthesises the final answer — grounded
-            # in what was gathered, or plain conversational when nothing was.
+        # Local-first: a code turn only reaches the external agent on an explicit
+        # offload signal (Läge=code, or "use codex/claude" in the message). All
+        # other turns — chat, computer, and a locally-kept code turn — run through
+        # the in-turn coordinator.
+        offload = route == "code" and should_offload_code(route_mode, text)
+
+        if not offload:
+            # gemma4 (or the pinned model) auto-orchestrates over the installed
+            # experts, perception and OS tools, then compose_reply synthesises the
+            # answer — grounded in what was gathered, or plain chat when nothing was.
             if cwd:
                 emit({"type": "context", "content": f"Working directory: {cwd}"})
-            intent = (
-                "The user wants you to do something on this computer or find something out; "
-                "act or consult when it helps."
-                if route == "computer"
-                else "The user's message looks conversational; consult an expert or use a "
-                "tool only when it clearly improves the answer, otherwise just answer."
-            )
+            if route == "computer":
+                intent = (
+                    "The user wants you to do something on this computer or find something "
+                    "out; act or consult when it helps."
+                )
+            elif route == "code":
+                intent = (
+                    "The user wants to work on the active project's code/files. Inspect with "
+                    "read_file/list_dir/search_files, use run_command for tests, git and "
+                    "builds, and consult the coder model for code. Work locally — do not "
+                    "offload unless the user explicitly asks."
+                )
+            else:
+                intent = (
+                    "The user's message looks conversational. If they ask you to find "
+                    "something out, look something up, or do something on the computer, USE "
+                    "the right tool rather than just describing it; otherwise just answer."
+                )
             outcome = await run_coordinator(
                 text, emit, abort, prior, project_cwd=cwd,
                 coordinator_model=coordinator_model, intent_hint=intent,
@@ -292,18 +308,18 @@ async def websocket_endpoint(websocket: WebSocket):
                 conversation.append({"role": "assistant", "content": reply or outcome.detail or "Klar"})
                 emit({"type": "done"})
 
-        elif route == "code":
+        else:  # explicit offload to the external coding agent
             if not cwd:
-                msg = "Välj en projektmapp först (dropdown ovanför inmatningen)."
+                msg = ("Välj en projektmapp först (dropdown ovanför inmatningen) för att "
+                       "offloada till kodagenten.")
                 emit({"type": "assistant_delta", "content": msg})
                 conversation.append({"role": "assistant", "content": msg})
                 emit({"type": "done"})
             else:
                 # Refine/translate the instruction (English pivot) before the
                 # external agent; keep the user's verbatim words alongside.
-                code_prompt = _with_refined_prompt(
-                    await refine_query(prior, decision["prompt"]), decision["prompt"]
-                )
+                prompt = decision.get("prompt", text)
+                code_prompt = _with_refined_prompt(await refine_query(prior, prompt), prompt)
                 if agent == "codex":
                     emit({"type": "thinking", "content": f"Codex i {cwd}..."})
                     emit({"type": "context", "content": f"Working directory: {cwd}"})
@@ -469,6 +485,32 @@ def _with_refined_prompt(refined: str, original: str) -> str:
     return f"{refined}\n\n(User's original request: {original})"
 
 
+def _friendly_agent_error(text: str) -> str | None:
+    """Turn a raw coding-agent failure into a clear, actionable message.
+
+    The external agents surface things like a raw usage-limit JSON or
+    "[Codex exited 2 with no events]" — dumping those at the user (session
+    42cdda5a) is useless. Map the known ones to a Swedish message that points at
+    the local fallback. Returns None for unrecognised text (shown as-is)."""
+    t = (text or "").lower()
+    if any(k in t for k in ("usage limit", "rate limit", "quota", "too many requests", "429")):
+        return (
+            "Kodagenten har nått sin användningsgräns just nu. Jag kan ta det lokalt "
+            "istället — be mig läsa/ändra filerna direkt, eller försök igen senare."
+        )
+    if "not logged in" in t or "/login" in t or "apikeysource" in t:
+        return (
+            "Kodagenten är inte inloggad. Logga in på dess CLI en gång, eller låt mig "
+            "ta uppgiften lokalt istället."
+        )
+    if ("exited" in t and "no events" in t) or "no output" in t:
+        return (
+            "Kodagenten avslutades utan svar (troligen otillgänglig eller slut på krediter). "
+            "Jag kan ta det lokalt istället."
+        )
+    return None
+
+
 async def _run_code_turn(
     runner,
     prompt,
@@ -505,12 +547,21 @@ async def _run_code_turn(
                 result_text = ev.get("text", "")
             elif etype == "error":
                 error_text = ev.get("text", "")
-                emit({"type": "error", "content": error_text})
+                emit({"type": "error", "content": _friendly_agent_error(error_text) or error_text})
     except Exception as exc:
         error_text = f"{type(exc).__name__}: {exc}"
-        emit({"type": "error", "content": error_text})
+        emit({"type": "error", "content": _friendly_agent_error(error_text) or error_text})
 
-    reply = "".join(parts).strip() or result_text or error_text or "(no output)"
+    streamed = "".join(parts).strip()
+    # Prefer real output; otherwise surface a friendly message instead of raw
+    # usage-limit JSON / "exited with no events".
+    reply = (
+        streamed
+        or _friendly_agent_error(error_text or result_text or "")
+        or result_text
+        or error_text
+        or "(no output)"
+    )
     message = {
         "role": "assistant",
         "content": reply,
