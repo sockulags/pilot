@@ -1,6 +1,6 @@
 # Status
 
-- Current milestone: Milestone 5 - Final verification, commit, and reporting
+- Current milestone: Parallel follow-up - three low-cost subagent tracks
 - Completed milestones:
   - Milestone 1 - Plan, inspect, and classify work
   - Milestone 2 - Parallel investigations
@@ -11,13 +11,17 @@
   - `019ed267-c926-7b31-ad38-40353d82b778` - backend review explorer - `DONE_WITH_CONCERNS`
   - `019ed267-dd0b-7d63-b52a-5e2aac24a327` - frontend gap explorer - `DONE_WITH_CONCERNS`
   - `019ed267-e994-70e3-9acc-cf232903f9f1` - model findings worker - `DONE_WITH_CONCERNS`
+  - `019ed276-db28-7230-8cb8-705fd9bf4840` - fidelity audit worker - `DONE`
+  - `019ed277-147b-7020-9dde-13625260c759` - productization backlog worker - `DONE`
+  - `019ed277-4e58-7f00-aa1b-cee50c3bc0df` - model validation-plan worker - `DONE`
 - Last validation commands and results:
   - `cd backend; uv run python -m unittest tests.test_web_research tests.test_skills_routing tests.test_diagnostics tests.test_traceability` -> 31 tests passed
   - `cd frontend; pnpm lint` -> passed
   - `cd frontend; pnpm build` -> passed
   - Browser QA on `http://localhost:3000/` -> shell loads, hero renders, websocket connects, prompt-to-conversation flow works, controls modal opens
+  - `git status --short` -> clean after commit `07eb359`
 - Known issues:
-  - Existing uncommitted user changes were integrated in place and must remain part of the commit.
   - Browser QA confirmed structural parity and interaction flow, not pixel-perfect full-page parity.
+  - The three current follow-up tracks are documentation-first sidecars; integration work remains a separate next pass.
 - Next action:
-  - Run broad repo verification, inspect final diff, stage, and commit.
+  - Use the three new docs to choose the next implementation/integration pass.

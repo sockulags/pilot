@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, CSSProperties } from "react";
+import { useState } from "react";
 import type { Project, Agent, ModelOption } from "@/app/page";
 
 interface Props {
@@ -30,26 +30,6 @@ const AGENTS: { id: Agent; label: string }[] = [
   { id: "codex", label: "Codex" },
 ];
 
-const btn: CSSProperties = {
-  background: "none",
-  color: "var(--muted)",
-  border: "1px solid var(--border)",
-  borderRadius: 6,
-  padding: "0.3rem 0.5rem",
-  cursor: "pointer",
-  fontSize: "0.78rem",
-  whiteSpace: "nowrap",
-};
-
-const field: CSSProperties = {
-  background: "var(--surface)",
-  color: "var(--text)",
-  border: "1px solid var(--border)",
-  borderRadius: 6,
-  padding: "0.3rem 0.5rem",
-  fontSize: "0.8rem",
-};
-
 export default function ProjectBar({ projects, selected, agent, modelMode, models, routeMode, onSelect, onAdd, onRemove, onSelectAgent, onSelectModel, onSelectRoute }: Props) {
   const [adding, setAdding] = useState(false);
   const [path, setPath] = useState("");
@@ -64,89 +44,80 @@ export default function ProjectBar({ projects, selected, agent, modelMode, model
   };
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
-      <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>Projekt:</span>
-      <select
-        value={selectedProj?.id ?? ""}
-        onChange={(e) => onSelect(e.target.value)}
-        style={{ ...field, maxWidth: 260 }}
-      >
-        <option value="">— inget valt —</option>
-        {projects.map((p) => (
-          <option key={p.id} value={p.id} title={p.path}>
-            {p.name}
-          </option>
-        ))}
-      </select>
-
-      {selectedProj && (
-        <button onClick={() => onRemove(selectedProj.id)} title="Ta bort projekt" style={btn}>
-          ✕
-        </button>
-      )}
-
-      {adding ? (
-        <span style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
-          <input
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                submitAdd();
-              } else if (e.key === "Escape") {
-                setAdding(false);
-                setPath("");
-              }
-            }}
-            placeholder="C:\\sökväg\\till\\projekt"
-            autoFocus
-            style={{ ...field, width: 240 }}
-          />
-          <button onClick={submitAdd} style={{ ...btn, color: "var(--accent)" }}>
-            Lägg till
-          </button>
-        </span>
-      ) : (
-        <button onClick={() => setAdding(true)} style={btn}>
-          ＋ Projekt
-        </button>
-      )}
-
-      {selectedProj && (
-        <span
-          title={selectedProj.path}
-          style={{ color: "var(--muted)", fontFamily: "monospace", fontSize: "0.72rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 240 }}
+    <div className="control-grid">
+      <section className="control-card">
+        <div className="control-head">
+          <span className="seclabel">Projekt</span>
+          {selectedProj && (
+            <button className="control-pill danger" onClick={() => onRemove(selectedProj.id)} title="Ta bort projekt">
+              Ta bort
+            </button>
+          )}
+        </div>
+        <select
+          value={selectedProj?.id ?? ""}
+          onChange={(e) => onSelect(e.target.value)}
+          className="fld"
         >
-          {selectedProj.path}
-        </span>
-      )}
+          <option value="">— inget valt —</option>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id} title={p.path}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        {selectedProj && <div className="pathline" title={selectedProj.path}>{selectedProj.path}</div>}
+        {adding ? (
+          <div className="addrow">
+            <input
+              value={path}
+              onChange={(e) => setPath(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  submitAdd();
+                } else if (e.key === "Escape") {
+                  setAdding(false);
+                  setPath("");
+                }
+              }}
+              placeholder="C:\\sökväg\\till\\projekt"
+              autoFocus
+              className="fld"
+            />
+            <button className="control-pill on" onClick={submitAdd}>Lägg till</button>
+          </div>
+        ) : (
+          <button className="control-pill" onClick={() => setAdding(true)}>＋ Lägg till projekt</button>
+        )}
+      </section>
 
-      <span style={{ marginLeft: "auto", display: "flex", gap: "0.25rem", alignItems: "center" }}>
-        <span style={{ color: "var(--muted)", fontSize: "0.8rem" }} title="Auto = Pilot väljer rutt per fråga. Annars tvingas läget.">Läge:</span>
-        {ROUTE_MODES.map((r) => (
-          <button
-            key={r.id}
-            onClick={() => onSelectRoute(r.id)}
-            style={{
-              ...btn,
-              ...(routeMode === r.id
-                ? { color: "var(--text)", borderColor: "var(--accent)", background: "rgba(99,102,241,0.12)" }
-                : {}),
-            }}
-          >
-            {r.label}
-          </button>
-        ))}
-      </span>
+      <section className="control-card">
+        <div className="control-head">
+          <span className="seclabel" title="Auto = Pilot väljer rutt per fråga. Annars tvingas läget.">Rutt</span>
+        </div>
+        <div className="control-inline">
+          {ROUTE_MODES.map((r) => (
+            <button
+              key={r.id}
+              onClick={() => onSelectRoute(r.id)}
+              className={`control-pill${routeMode === r.id ? " on" : ""}`}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+      </section>
 
-      <span style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
-        <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>Modell:</span>
+      <section className="control-card">
+        <div className="control-head">
+          <span className="seclabel">Modell</span>
+        </div>
         <select
           value={modelMode}
           onChange={(e) => onSelectModel(e.target.value)}
           title="Auto = Pilot väljer bästa lokala modell per fråga. Annars låses modellen."
-          style={{ ...field, maxWidth: 200 }}
+          className="fld"
         >
           <option value="auto">Auto (väljer själv)</option>
           {models.map((m) => (
@@ -155,26 +126,36 @@ export default function ProjectBar({ projects, selected, agent, modelMode, model
             </option>
           ))}
         </select>
-      </span>
+        <div className="control-list">
+          {models.slice(0, 3).map((m) => (
+            <div key={m.id} className="mrow">
+              <div className="mi">◔</div>
+              <div>
+                <div className="mt">{m.label}</div>
+                <div className="ms">{m.hint}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
 
-      <span style={{ display: "flex", gap: "0.25rem", alignItems: "center" }}>
-        <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>Agent:</span>
-        {AGENTS.map((a) => (
-          <button
-            key={a.id}
-            onClick={() => onSelectAgent(a.id)}
-            title={`Kör kod-uppgifter med ${a.label}`}
-            style={{
-              ...btn,
-              ...(agent === a.id
-                ? { color: "var(--text)", borderColor: "var(--accent)", background: "rgba(99,102,241,0.12)" }
-                : {}),
-            }}
-          >
-            {a.label}
-          </button>
-        ))}
-      </span>
+      <section className="control-card">
+        <div className="control-head">
+          <span className="seclabel">Agent</span>
+        </div>
+        <div className="control-inline">
+          {AGENTS.map((a) => (
+            <button
+              key={a.id}
+              onClick={() => onSelectAgent(a.id)}
+              title={`Kör kod-uppgifter med ${a.label}`}
+              className={`control-pill${agent === a.id ? " on" : ""}`}
+            >
+              {a.label}
+            </button>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

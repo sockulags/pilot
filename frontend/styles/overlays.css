@@ -36,8 +36,77 @@
 .ctxrow .sw  { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
 .ctxrow .nm2 { color: var(--text); }
 .ctxrow .tk  { margin-left: auto; font: 11.5px var(--mono); color: var(--dim); }
+.ctxhint     { margin-top: 14px; color: var(--dim); font-size: 12.5px; line-height: 1.5; }
 
 .ctxacts         { display: flex; gap: 8px; margin-top: 16px; }
 .ctxacts button  { flex: 1; padding: 10px; border-radius: 10px; border: 1px solid var(--border-2); color: var(--text); font-size: 13px; font-weight: 600; transition: .12s; }
 .ctxacts button:hover { background: var(--panel-2); }
 .ctxacts button.danger:hover { border-color: var(--del); color: var(--del); }
+
+.control-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.control-card {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(20,21,27,.55);
+  padding: 14px;
+}
+
+.control-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.control-inline,
+.addrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.control-list {
+  margin-top: 12px;
+}
+
+.control-pill {
+  color: var(--dim);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 7px 12px;
+  font: 12px var(--mono);
+  transition: .12s;
+}
+
+.control-pill:hover {
+  color: var(--text);
+  border-color: var(--border-2);
+}
+
+.control-pill.on {
+  color: var(--text);
+  border-color: rgba(124,140,255,.42);
+  background: rgba(124,140,255,.1);
+}
+
+.control-pill.danger:hover {
+  border-color: var(--del);
+  color: var(--del);
+}
+
+.pathline {
+  margin: 10px 0 12px;
+  color: var(--dim-2);
+  font: 11px/1.5 var(--mono);
+  word-break: break-all;
+}
+
+@media (max-width: 820px) {
+  .control-grid { grid-template-columns: 1fr; }
+}
