@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -54,7 +55,7 @@ def _has_requirement(name: str, evidence: tuple[dict, ...]) -> bool:
         return any(
             item.get("ok")
             and item.get("tool") == "web_research"
-            and "sources fetched:" in str(item.get("text", "")).lower()
+            and _sources_fetched_count(str(item.get("text", ""))) > 0
             for item in evidence
         )
     if name == "verified_artifact":
@@ -72,6 +73,11 @@ def _has_requirement(name: str, evidence: tuple[dict, ...]) -> bool:
     return False
 
 
+def _sources_fetched_count(text: str) -> int:
+    match = re.search(r"(?im)^\s*sources fetched:\s*(\d+)\s*$", text)
+    return int(match.group(1)) if match else 0
+
+
 _CONTRACTS: dict[str, TaskContract] = {
     "research": TaskContract(
         intent="research",
@@ -79,9 +85,16 @@ _CONTRACTS: dict[str, TaskContract] = {
             EvidenceRequirement("source_evidence", "source evidence from web_research"),
         ),
         allowed_tools=frozenset({"web_research", "web_search", "fetch_url"}),
-        completion_criteria="At least one successful web_research result with fetched sources.",
+        completion_criteria=(
+            "Derive focused search queries, run web_research, fetch the requested "
+            "minimum source count where possible, and preserve source URLs."
+        ),
         failure_criteria="Web research fails or no readable sources can be fetched.",
-        final_answer_requirements="Cite or summarize the fetched sources and avoid unsupported claims.",
+        final_answer_requirements=(
+            "Write a synthesized answer, not raw web_research(...) logs. Cite the "
+            "fetched source URLs, give a recommendation when the question asks for "
+            "one, and explicitly say when sources are weak, too few, or unavailable."
+        ),
     ),
     "create_file": TaskContract(
         intent="create_file",
