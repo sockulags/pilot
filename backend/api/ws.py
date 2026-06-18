@@ -390,10 +390,16 @@ async def websocket_endpoint(websocket: WebSocket):
                     reply = _append_verified_artifact_paths(reply, outcome.runtime_state)
                     emit({"type": "assistant_delta", "content": reply})
                 else:
-                    reply = await _stream_text(reply_source, emit, abort)
+                    if grounding is not None:
+                        reply = await _collect_text(reply_source, abort)
+                        reply = _guard_tool_backed_reply(reply, outcome)
+                        if reply:
+                            emit({"type": "assistant_delta", "content": reply})
+                    else:
+                        reply = await _stream_text(reply_source, emit, abort)
                 conversation.append({
                     "role": "assistant",
-                    "content": reply or outcome.detail or "Klar",
+                    "content": reply or _fallback_visible_reply(outcome),
                     "meta": _turn_meta(
                         turn, route, coordinator_model, diagnostic_events,
                         outcome.status, task_context.intent,
@@ -735,6 +741,66 @@ def _missing_file_output_reply(action_log: str) -> str:
         "verifiering har körts."
         f"{suffix}"
     )
+
+
+def _fallback_visible_reply(outcome) -> str:
+    return (
+        str(getattr(outcome, "detail", "") or "").strip()
+        or str(getattr(outcome, "action_log", "") or "").strip()
+        or "Klar"
+    )
+
+
+def _guard_tool_backed_reply(reply: str, outcome) -> str:
+    text = (reply or "").strip()
+    if not text or _is_low_information_reply(text) or _looks_like_raw_tool_log(text):
+        return _evidence_summary_reply(outcome)
+    return text
+
+
+def _is_low_information_reply(text: str) -> bool:
+    return text.strip().lower() in {"klar", "klart", "klar.", "klart."}
+
+
+def _looks_like_raw_tool_log(text: str) -> bool:
+    return bool(
+        "web_research(" in text
+        or "run_command(" in text
+        or "read_file(" in text
+        or text.lstrip().startswith("- web_research")
+        or "Research results for" in text
+    )
+
+
+def _evidence_summary_reply(outcome) -> str:
+    state = getattr(outcome, "runtime_state", None)
+    if state is not None:
+        sources = getattr(state, "sources", [])
+        if sources:
+            urls = []
+            for source in sources:
+                urls.extend(source.get("urls") or [])
+            fetched = sources[0].get("sources_fetched")
+            source_count = f"{fetched} källor" if fetched is not None else "källor"
+            if urls:
+                return f"Jag hämtade {source_count}. Källor: {', '.join(urls)}"
+            return f"Jag hämtade {source_count}."
+        artifacts = [
+            str(artifact.get("path") or "").strip()
+            for artifact in getattr(state, "artifacts", [])
+            if artifact.get("verified") and str(artifact.get("path") or "").strip()
+        ]
+        if artifacts:
+            return "\n".join(f"Verifierad fil: `{path}`" for path in artifacts)
+        files_read = [str(path) for path in getattr(state, "files_read", []) if str(path)]
+        if files_read:
+            return "Jag läste relevanta filer med read_file: " + ", ".join(files_read)
+        commands = getattr(state, "commands", [])
+        if commands:
+            command = str(commands[-1].get("cmd") or "").strip()
+            summary = str(commands[-1].get("summary") or "").strip()
+            return f"Körde kommando: `{command}`\n\n{summary}".strip()
+    return _fallback_visible_reply(outcome)
 
 
 def _write_fallback_markdown_report(

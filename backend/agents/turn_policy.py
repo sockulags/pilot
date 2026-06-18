@@ -320,6 +320,8 @@ def _looks_like_file_output(text: str) -> bool:
     lowered = text.lower()
     if any(token in lowered for token in ("html-fil", "html file", "csv", "graf")):
         return True
+    if any(token in lowered for token in ("markdownrapport", "md-rapport", "rapportfil")):
+        return True
     if re.search(r"\b(skapa|skriv|spara|write|create|save)\b", lowered) and re.search(
         r"\b(fil|file|rapport|rapportfil|report|markdown|md)\b", lowered
     ):
