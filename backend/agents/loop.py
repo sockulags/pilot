@@ -6,6 +6,7 @@ from typing import AsyncGenerator, Callable
 from agents.router import route_next_action, analyze_screenshot, vision_done_summary
 from agents.perception import perceive_screen
 from agents.safety import unsafe_tool_block_reason
+from agents.runtime_state import RuntimeState
 from agents.turn_policy import build_task_context, web_query
 from tools import (
     screenshot, get_screen_size,
@@ -44,6 +45,7 @@ class LoopOutcome:
     status: str  # "done" | "blocked" | "aborted" | "max_steps" | "error"
     action_log: str = ""
     detail: str = ""
+    runtime_state: RuntimeState | None = None
 
 
 def render_action_log(history: list[dict]) -> str:
@@ -67,6 +69,7 @@ async def run_agent_loop(
     model: str | None = None,
 ) -> LoopOutcome:
     history: list[dict] = []
+    runtime_state = RuntimeState()
     failed_tools: set[str] = set()
     command_counts: dict[tuple[str, str], int] = {}
     desktop_target_hint = ""
@@ -90,7 +93,8 @@ async def run_agent_loop(
             )
         except Exception as e:
             emit(make_event("error", content=f"Router error: {e}"))
-            return LoopOutcome("error", render_action_log(history), f"Router error: {e}")
+            runtime_state.record_error(f"Router error: {e}")
+            return LoopOutcome("error", render_action_log(history), f"Router error: {e}", runtime_state)
 
         tool = decision.get("tool", "done")
         args = decision.get("args", {})
@@ -117,7 +121,8 @@ async def run_agent_loop(
                 )
             except Exception as e:
                 emit(make_event("error", content=f"Router error: {e}"))
-                return LoopOutcome("error", render_action_log(history), f"Router error: {e}")
+                runtime_state.record_error(f"Router error: {e}")
+                return LoopOutcome("error", render_action_log(history), f"Router error: {e}", runtime_state)
             tool = decision.get("tool", "done")
             args = decision.get("args", {})
             thinking = decision.get("thinking", "")
@@ -133,20 +138,22 @@ async def run_agent_loop(
                 continue
 
             if abort_event.is_set():
-                return LoopOutcome("aborted", render_action_log(history))
-            return LoopOutcome("done", render_action_log(history), str(args.get("summary", "")))
+                return LoopOutcome("aborted", render_action_log(history), runtime_state=runtime_state)
+            return LoopOutcome("done", render_action_log(history), str(args.get("summary", "")), runtime_state)
 
         block_reason = unsafe_tool_block_reason(tool, task, screen_observation)
         if block_reason:
             emit(make_event("error", content=block_reason))
             history.append({"type": "blocked", "content": block_reason})
-            return LoopOutcome("blocked", render_action_log(history), block_reason)
+            runtime_state.record_error(block_reason, tool, args)
+            return LoopOutcome("blocked", render_action_log(history), block_reason, runtime_state)
 
         focus_block_reason = desktop_focus_block_reason(tool, desktop_target_hint)
         if focus_block_reason:
             emit(make_event("error", content=focus_block_reason))
             history.append({"type": "blocked", "content": focus_block_reason})
-            return LoopOutcome("blocked", render_action_log(history), focus_block_reason)
+            runtime_state.record_error(focus_block_reason, tool, args)
+            return LoopOutcome("blocked", render_action_log(history), focus_block_reason, runtime_state)
 
         args = apply_project_cwd_to_args(tool, args, project_cwd)
         tool, args, repair_note = repair_web_tool_call(tool, args, task)
@@ -163,7 +170,8 @@ async def run_agent_loop(
                 )
                 emit(make_event("error", content=block_reason))
                 history.append({"type": "blocked", "content": block_reason})
-                return LoopOutcome("blocked", render_action_log(history), block_reason)
+                runtime_state.record_error(block_reason, tool, args)
+                return LoopOutcome("blocked", render_action_log(history), block_reason, runtime_state)
             command_counts[command_key] = command_counts.get(command_key, 0) + 1
 
         emit(make_event("action", tool=tool, args=args))
@@ -176,6 +184,7 @@ async def run_agent_loop(
             emit(make_event("error", content=result))
 
         tool_ok = tool_execution_succeeded(tool, result)
+        runtime_state.record_tool_result(tool, args, result, tool_ok)
         if not tool_ok:
             failed_tools.add(tool)
             emit(make_event("error", content=result))
@@ -189,19 +198,20 @@ async def run_agent_loop(
         if not completion_summary and tool_ok:
             completion_summary = deterministic_completion_summary(tool, result)
         if completion_summary:
-            return LoopOutcome("done", render_action_log(history), completion_summary)
+            return LoopOutcome("done", render_action_log(history), completion_summary, runtime_state)
 
         if tool in POST_ACTION_OBSERVE_TOOLS:
             last_observation = await perceive(task, history, emit)
 
         if abort_event.is_set():
-            return LoopOutcome("aborted", render_action_log(history))
+            return LoopOutcome("aborted", render_action_log(history), runtime_state=runtime_state)
 
         await asyncio.sleep(0.3)
 
     return LoopOutcome(
         "aborted" if abort_event.is_set() else "max_steps",
         render_action_log(history),
+        runtime_state=runtime_state,
     )
 
 

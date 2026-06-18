@@ -14,6 +14,7 @@ which small local models handle far more reliably.
 """
 
 import logging
+import json
 from typing import AsyncGenerator
 
 import httpx
@@ -306,14 +307,23 @@ def _build_reply_messages(conversation: list[dict], outcome=None, memories: str 
         for m in _recent(conversation, limit=20)
     )
     if outcome is not None:
+        structured = getattr(outcome, "runtime_state", None)
+        structured_text = (
+            json.dumps(structured.to_prompt_dict(), ensure_ascii=False)
+            if structured is not None
+            else "{}"
+        )
         messages.append({
             "role": "user",
             "content": (
-                "Underlag jag (assistenten) samlade denna tur (expertsvar, "
-                "skärmobservationer, verktygsresultat):\n"
+                "Strukturerat underlag jag (assistenten) samlade denna tur:\n"
+                f"{structured_text}\n\n"
+                "Textlogg för bakåtkompatibilitet (expertsvar, skärmobservationer, "
+                "verktygsresultat):\n"
                 f"{outcome.action_log or '(inget registrerades)'}\n\n"
                 f"Status: {outcome.status}\n\n"
-                "Väv ihop detta till ett svar på användarens språk. Hitta inte på "
+                "Väv ihop detta till ett svar på användarens språk. Använd det "
+                "strukturerade underlaget som primär evidens och hitta inte på "
                 "resultat som inte syns ovan."
             ),
         })

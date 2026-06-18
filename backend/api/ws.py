@@ -382,6 +382,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "meta": _turn_meta(
                         turn, route, coordinator_model, diagnostic_events,
                         outcome.status, task_context.intent,
+                        runtime_state=outcome.runtime_state,
                     ),
                 })
                 emit({"type": "done"})
@@ -611,8 +612,9 @@ def _turn_meta(
     events: list[dict],
     status: str,
     intent: str = "",
+    runtime_state=None,
 ) -> dict:
-    return {
+    meta = {
         "turn": turn,
         "route": route,
         "model": model,
@@ -625,6 +627,9 @@ def _turn_meta(
         "status": status,
         "intent": intent,
     }
+    if runtime_state is not None:
+        meta.update(runtime_state.to_meta())
+    return meta
 
 
 def _reply_model(coordinator_model: str) -> str:
