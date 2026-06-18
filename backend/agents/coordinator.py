@@ -356,6 +356,8 @@ async def run_coordinator(
     intent_hint: str = "",
     memories: str = "",
     session_id: str | None = None,
+    required_first_tool: dict | None = None,
+    require_file_output: bool = False,
 ) -> LoopOutcome:
     """Run the in-turn coordinator loop. See module docstring."""
     coordinator_model = coordinator_model or OLLAMA_MODEL
@@ -373,6 +375,24 @@ async def run_coordinator(
     consulted: set[str] = set()
     refined: str | None = None  # English-pivot instruction, computed lazily on first consult
     steps = 0
+    file_output_done = False
+
+    if required_first_tool and not abort.is_set():
+        tool = str(required_first_tool.get("tool") or "").strip()
+        args = dict(required_first_tool.get("args") or {})
+        if tool in registry.coordinator_tool_names():
+            args = agent_loop.apply_project_cwd_to_args(tool, args, project_cwd)
+            emit(make_event("action", tool=tool, args=args))
+            try:
+                result = await agent_loop.execute_tool(tool, args, emit)
+            except Exception as exc:
+                result = f"Error executing {tool}: {exc}"
+                emit(make_event("error", content=result))
+            notes.append(f"{tool}({args}) -> {result[:800]}")
+            if tool == "run_command" and _command_writes_file(str(args.get("cmd") or args.get("command") or "")):
+                file_output_done = True
+        else:
+            notes.append(f"(required first tool {tool!r} unavailable; skipped)")
 
     while steps < COORDINATOR_MAX_STEPS and not abort.is_set():
         steps += 1
@@ -391,6 +411,12 @@ async def run_coordinator(
             emit(make_event("thinking", content=thinking))
 
         if action == "answer":
+            if require_file_output and not file_output_done:
+                notes.append(
+                    "The user requested a local output file, but no file-writing command "
+                    "has run yet. Use run_command to write the file and verify it before answering."
+                )
+                continue
             return LoopOutcome("done", _render_notes(notes))
 
         if action == "clarify":
@@ -454,6 +480,8 @@ async def run_coordinator(
             result = f"Error executing {tool}: {exc}"
             emit(make_event("error", content=result))
         notes.append(f"{tool}({args}) -> {result[:800]}")
+        if tool == "run_command" and _command_writes_file(str(args.get("cmd") or args.get("command") or "")):
+            file_output_done = True
         if tool in agent_loop.POST_ACTION_OBSERVE_TOOLS:
             last_observation = await agent_loop.perceive(task, history, emit)
         await asyncio.sleep(0.2)
@@ -466,3 +494,20 @@ async def run_coordinator(
 
 def _render_notes(notes: list[str]) -> str:
     return "\n".join(f"- {n}" for n in notes[-15:]) if notes else ""
+
+
+def _command_writes_file(cmd: str) -> bool:
+    lowered = cmd.lower()
+    return any(
+        token in lowered
+        for token in (
+            "set-content",
+            "out-file",
+            "new-item",
+            " add-content",
+            ">>",
+            ">",
+            "tee-object",
+            "python -c",
+        )
+    )

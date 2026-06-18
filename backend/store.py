@@ -79,6 +79,8 @@ def save_session(
 ) -> None:
     if not is_valid_session_id(session_id):
         return
+    if turn <= 0 and not messages:
+        return
     os.makedirs(SESSIONS_DIR, exist_ok=True)
     payload = {
         "messages": messages,

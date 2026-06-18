@@ -468,11 +468,11 @@ class ConfigAndMcpTests(unittest.TestCase):
         self.assertIn("OLLAMA_VISION_ENABLED", text)
         self.assertIn("OLLAMA_BASE_URL", text)
 
-    def test_backend_env_file_contains_gemma4_vision_defaults(self):
+    def test_backend_env_file_contains_validated_model_defaults(self):
         text = (Path(__file__).parents[1] / ".env").read_text(encoding="utf-8")
 
-        self.assertIn("OLLAMA_MODEL=gemma4:latest", text)
-        self.assertIn("OLLAMA_VISION_MODEL=gemma4:latest", text)
+        self.assertIn("OLLAMA_MODEL=gemma4:12b", text)
+        self.assertIn("OLLAMA_VISION_MODEL=qwen3.5:9b", text)
 
     def test_mcp_manifest_includes_os_tools(self):
         from api.mcp import tools_manifest

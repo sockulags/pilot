@@ -20,9 +20,9 @@ PROJECTS_FILE = os.getenv(
 PILOT_PROJECT_ROOTS = os.getenv("PILOT_PROJECT_ROOTS", "")
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma4:latest")
-OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "gemma4:latest")
-OLLAMA_FALLBACK_MODEL = os.getenv("OLLAMA_FALLBACK_MODEL", "qwen3:14b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma4:12b")
+OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "qwen3.5:9b")
+OLLAMA_FALLBACK_MODEL = os.getenv("OLLAMA_FALLBACK_MODEL", "gpt-oss:20b")
 
 # --- Long-term memory (semantic retrieval) ----------------------------------
 # Embeddings model for the cross-session memory store (agents-agnostic facts and
@@ -51,27 +51,38 @@ JOBS_TICK_SECONDS = int(os.getenv("JOBS_TICK_SECONDS", "20"))
 # The orchestrator picks the best local model for each turn ("auto"), or the
 # user pins one via the UI toggle / `/model <id>`. Each entry carries a hint the
 # auto-picker shows the classifier, and a `tools` flag: only tools-capable
-# models may drive the JSON tool router (the computer route). deepseek-r1 is a
-# reasoning model with NO tool support, so it is chat/reasoning only.
+# models may drive the JSON tool router (the computer route). deepseek-r1 has
+# tool metadata in Ollama, but in practice it is unreliable for tool-routing in
+# this app, so it remains pinned/manual reasoning only.
 OLLAMA_MODELS: dict[str, dict] = {
-    "gemma4:latest": {
-        "label": "Gemma 4",
-        "hint": "Snabb allmän chatt, vardagsfrågor och korta svar",
+    "gemma4:12b": {
+        "label": "Gemma 4 12B",
+        "hint": "Standardmodell för svensk chatt, gateway och stabila svar",
         "tools": True,
     },
-    "qwen3:14b": {
-        "label": "Qwen3 14B",
-        "hint": "Starkt allmänt resonemang och flerstegsuppgifter",
+    "gpt-oss:20b": {
+        "label": "GPT-OSS 20B",
+        "hint": "Starkt allmänt resonemang, research och sammanvägning",
+        "tools": True,
+    },
+    "qwen3.5:9b": {
+        "label": "Qwen3.5 9B",
+        "hint": "Snabb tools-capable modell med fungerande vision",
         "tools": True,
     },
     "deepseek-r1:14b": {
         "label": "DeepSeek-R1 14B",
-        "hint": "Djupt resonemang, matematik och klurig analys",
+        "hint": "Manuellt djupt resonemang, matematik och klurig analys",
         "tools": False,
+    },
+    "devstral:latest": {
+        "label": "Devstral",
+        "hint": "Agentiskt repoarbete och längre koduppgifter",
+        "tools": True,
     },
     "qwen2.5-coder:14b": {
         "label": "Qwen2.5 Coder",
-        "hint": "Kod, teknik och programmeringsfrågor",
+        "hint": "Snabb kod, teknik och programmeringsfrågor",
         "tools": True,
     },
 }
@@ -88,11 +99,12 @@ OLLAMA_ROUTER_MODEL = os.getenv("OLLAMA_ROUTER_MODEL", OLLAMA_MODEL)
 # refinement is the only added call, and only fires on an actual hand-off
 # (expert consult / code), never on trivial chat.
 #
-# This role NEEDS a model that is strong at the user's language: gemma4:8b
-# mistranslates Swedish badly ("vänd en sträng" -> "watering a vine"), whereas
-# gemma4:12b and qwen3:14b translate it faithfully. Defaults to gemma4:12b; if
-# it's not installed, refine_query fails open to the verbatim request (safe, no
-# corruption). Point this at llama3.1/gpt-oss/etc. once pulled.
+# This role NEEDS a model that is strong at the user's language. Local testing
+# showed gemma4:12b translates Swedish faithfully and returns usable content for
+# short refinement prompts, while some thinking-heavy models can spend the whole
+# short response budget in their thinking field. If the gateway model is not
+# installed, refine_query fails open to the verbatim request (safe, no
+# corruption).
 OLLAMA_GATEWAY_MODEL = os.getenv("OLLAMA_GATEWAY_MODEL", "gemma4:12b")
 GATEWAY_REFINE_ENABLED = os.getenv("GATEWAY_REFINE_ENABLED", "true").lower() == "true"
 
@@ -125,10 +137,10 @@ def resolve_answer_model(model_mode: str | None, suggested: str | None) -> str:
         return suggested  # type: ignore[return-value]
     return OLLAMA_MODEL
 
-# Set to "true" only when OLLAMA_VISION_MODEL is actually a multimodal model
-# (e.g. llava, llama3.2-vision, minicpm-v). gemma4 is text-only, so this
-# defaults to false — the done-summary falls back to text_done_summary instead.
-OLLAMA_VISION_ENABLED = os.getenv("OLLAMA_VISION_ENABLED", "false").lower() == "true"
+# Set to "true" only when OLLAMA_VISION_MODEL is actually a multimodal model.
+# qwen3.5:9b is the current local default because it accepted image input and
+# correctly identified a smoke-test image.
+OLLAMA_VISION_ENABLED = os.getenv("OLLAMA_VISION_ENABLED", "true").lower() == "true"
 
 # Path/name of the Claude CLI binary. tools/codex.py resolves this: an absolute
 # path wins, then PATH, then the Claude desktop app's bundled CLI (Windows MSIX).

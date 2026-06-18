@@ -19,6 +19,7 @@ from typing import AsyncGenerator
 import httpx
 
 from agents.json_utils import extract_json_object
+from agents.turn_policy import deterministic_route, sanitize_final_reply
 from config import (
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
@@ -125,6 +126,10 @@ async def classify_turn(
     regardless of which model ends up answering.
     """
     auto = model_mode == "auto"
+
+    deterministic = deterministic_route(conversation, user_message, project, model_mode)
+    if deterministic:
+        return deterministic
 
     forced = route_project_bound_message(user_message, project)
     if forced:
@@ -254,7 +259,7 @@ async def _stream_ollama_chat(
         async with client.stream(
             "POST",
             f"{OLLAMA_BASE_URL}/api/chat",
-            json={"model": model or OLLAMA_MODEL, "messages": messages, "stream": True},
+            json=_chat_payload(messages, model, stream=True),
         ) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
@@ -264,6 +269,17 @@ async def _stream_ollama_chat(
                 piece = chunk.get("message", {}).get("content", "")
                 if piece:
                     yield piece
+
+
+def _chat_payload(messages: list[dict], model: str | None = None, stream: bool = True) -> dict:
+    return {
+        "model": model or OLLAMA_MODEL,
+        "messages": messages,
+        "stream": stream,
+        # Final answers should be user-visible content, not hidden thinking.
+        "think": False,
+        "options": {"temperature": 0.2},
+    }
 
 
 def _build_reply_messages(conversation: list[dict], outcome=None, memories: str = "") -> list[dict]:
@@ -323,12 +339,20 @@ async def compose_reply(
     so the message is never lost.
     """
     messages = _build_reply_messages(conversation, outcome, memories)
-    yielded = False
+    parts: list[str] = []
     try:
         async for piece in _stream_ollama_chat(messages, model):
-            yielded = True
-            yield piece
+            parts.append(piece)
     except Exception as exc:
         logger.warning("compose_reply request failed: %s", exc)
-        if not yielded:
-            yield _fallback_reply(outcome, exc)
+        if not parts:
+            parts.append(_fallback_reply(outcome, exc))
+    raw = "".join(parts)
+    if not raw.strip():
+        raw = _fallback_reply(outcome, RuntimeError("empty model reply"))
+    cleaned = sanitize_final_reply(
+        raw,
+        had_actions=bool(getattr(outcome, "action_log", "") if outcome is not None else False),
+        needs_tools=outcome is not None,
+    )
+    yield cleaned or _fallback_reply(outcome, RuntimeError("empty sanitized reply"))

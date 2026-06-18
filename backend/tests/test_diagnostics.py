@@ -19,7 +19,7 @@ class TurnDiagnosticsTests(unittest.TestCase):
                     session_id="s1",
                     turn=2,
                     route="computer",
-                    model="gemma4:latest",
+                    model="gemma4:12b",
                     events=[
                         {
                             "type": "action",
@@ -43,7 +43,7 @@ class TurnDiagnosticsTests(unittest.TestCase):
         self.assertEqual("s1", row["session_id"])
         self.assertEqual(2, row["turn"])
         self.assertEqual("computer", row["route"])
-        self.assertEqual("gemma4:latest", row["model"])
+        self.assertEqual("gemma4:12b", row["model"])
         self.assertEqual("done", row["status"])
         self.assertEqual("web_research", row["final_source"])
         self.assertEqual("web_research", row["tools"][0]["tool"])
