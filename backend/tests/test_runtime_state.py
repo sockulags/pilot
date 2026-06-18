@@ -42,6 +42,30 @@ class RuntimeStateTests(unittest.TestCase):
         self.assertEqual("pilot runtime state", state.sources[0]["query"])
         self.assertEqual([{"path": "report.md", "verified": True}], state.artifacts)
         self.assertTrue(all(item["ok"] for item in state.evidence_items))
+        self.assertIn("risk_level", state.actions[0])
+        self.assertIn("side_effects", state.actions[0])
+        self.assertEqual("low", state.actions[0]["risk_level"])
+        self.assertFalse(state.actions[0]["side_effects"])
+        self.assertTrue(state.actions[1]["side_effects"])
+
+    def test_records_confirmation_required_audit_event_without_execution(self):
+        from agents.runtime_state import RuntimeState
+
+        state = RuntimeState()
+
+        state.record_confirmation_required(
+            "run_command",
+            {"cmd": "Remove-Item -Recurse .\\data"},
+            "destructive command requires confirmation",
+        )
+
+        self.assertEqual("confirmation_required", state.actions[0]["decision"])
+        self.assertEqual("run_command", state.actions[0]["tool"])
+        self.assertEqual("high", state.actions[0]["risk_level"])
+        self.assertTrue(state.actions[0]["side_effects"])
+        self.assertIn("Remove-Item", state.actions[0]["args"]["cmd"])
+        self.assertFalse(state.evidence_items[0]["ok"])
+        self.assertEqual("confirmation_required", state.evidence_items[0]["decision"])
 
     def test_contract_status_is_serialized_for_metadata(self):
         from agents.runtime_state import RuntimeState

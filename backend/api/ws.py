@@ -342,7 +342,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 # The coordinator judged the request too vague — its clarifying
                 # question IS the reply; no synthesis, no orchestration ran.
                 emit({"type": "assistant_delta", "content": outcome.detail})
-                conversation.append({"role": "assistant", "content": outcome.detail})
+                conversation.append({
+                    "role": "assistant",
+                    "content": outcome.detail,
+                    "meta": _turn_meta(
+                        turn, route, coordinator_model, diagnostic_events,
+                        outcome.status, task_context.intent,
+                        runtime_state=outcome.runtime_state,
+                    ),
+                })
                 emit({"type": "done"})
             else:
                 grounding = outcome if (outcome.action_log or task_context.needs_tools) else None

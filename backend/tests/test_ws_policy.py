@@ -79,6 +79,36 @@ class WebSocketPolicyTests(unittest.TestCase):
         self.assertIn("C:\\repo\\report.html", reply)
         self.assertEqual(reply, _append_verified_artifact_paths(reply, state))
 
+    def test_turn_meta_includes_confirmation_audit_evidence(self):
+        from agents.runtime_state import RuntimeState
+        from api.ws import _turn_meta
+
+        state = RuntimeState()
+        state.record_confirmation_required(
+            "run_command",
+            {"cmd": "Remove-Item -Recurse .\\data"},
+            "Bekräftelse krävs innan jag kör run_command.",
+        )
+
+        meta = _turn_meta(
+            4,
+            "computer",
+            "gemma4:12b",
+            [{
+                "type": "confirmation_required",
+                "tool": "run_command",
+                "args": {"cmd": "Remove-Item -Recurse .\\data"},
+            }],
+            "needs_input",
+            "computer_action",
+            runtime_state=state,
+        )
+
+        self.assertEqual("needs_input", meta["status"])
+        self.assertEqual("confirmation_required", meta["runtime_state"]["actions"][0]["decision"])
+        self.assertEqual("high", meta["runtime_state"]["actions"][0]["risk_level"])
+        self.assertTrue(meta["runtime_state"]["actions"][0]["side_effects"])
+
     def test_fallback_markdown_report_writes_file(self):
         from api.ws import _write_fallback_markdown_report
 

@@ -142,6 +142,9 @@ class AgentLoopTests(unittest.TestCase):
     def test_blocks_third_identical_command(self):
         asyncio.run(self._blocks_third_identical_command())
 
+    def test_agent_loop_requires_confirmation_for_high_risk_command(self):
+        asyncio.run(self._agent_loop_requires_confirmation_for_high_risk_command())
+
     def test_run_command_result_includes_cwd_for_history(self):
         asyncio.run(self._run_command_result_includes_cwd_for_history())
 
@@ -233,6 +236,28 @@ class AgentLoopTests(unittest.TestCase):
         self.assertEqual(["dir", "dir"], executed)
         self.assertEqual("blocked", outcome.status)
         self.assertIn("Repeated command blocked", outcome.detail)
+
+    async def _agent_loop_requires_confirmation_for_high_risk_command(self):
+        from agents import loop
+
+        events: list[dict] = []
+        executed: list[str] = []
+
+        async def fake_route(*args, **kwargs):
+            return {"tool": "run_command", "args": {"cmd": "Remove-Item -Recurse .\\data"}, "thinking": "delete"}
+
+        async def fake_execute(tool, args, emit):
+            executed.append(tool)
+            return "should not execute"
+
+        with self._patched(loop, route_next_action=fake_route, execute_tool=fake_execute, asyncio_sleep=True):
+            outcome = await loop.run_agent_loop("Ta bort data", events.append, asyncio.Event())
+
+        self.assertEqual([], executed)
+        self.assertEqual("needs_input", outcome.status)
+        self.assertIn("bekräft", outcome.detail.lower())
+        self.assertEqual("confirmation_required", outcome.runtime_state.actions[0]["decision"])
+        self.assertTrue(any(e["type"] == "confirmation_required" for e in events))
 
     async def _run_command_result_includes_cwd_for_history(self):
         from agents import loop

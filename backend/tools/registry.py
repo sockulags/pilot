@@ -40,6 +40,8 @@ class ToolSpec:
     observe_after: bool = False  # re-perceive the screen after running
     deterministic: bool = False  # result directly answers; the loop may stop
     needs_perception: bool = False  # requires a prior screen perception
+    risk_level: str = "low"  # low|medium|high
+    side_effects: bool = False  # whether the tool can alter local/external state
 
     # Which surfaces expose this tool:
     coordinator: bool = True  # offered to the in-turn coordinator (front brain)
@@ -105,6 +107,8 @@ REGISTRY: tuple[ToolSpec, ...] = (
         category="shell",
         unsafe=True,
         streaming=True,
+        risk_level="medium",
+        side_effects=True,
         mcp_facing=True,
     ),
     # --- Desktop windows -----------------------------------------------------
@@ -116,6 +120,8 @@ REGISTRY: tuple[ToolSpec, ...] = (
         params={},
         category="desktop",
         deterministic=True,
+        risk_level="medium",
+        side_effects=True,
         mcp_facing=True,
     ),
     ToolSpec(
@@ -138,6 +144,8 @@ REGISTRY: tuple[ToolSpec, ...] = (
         required=("name",),
         category="desktop",
         observe_after=True,
+        risk_level="medium",
+        side_effects=True,
         mcp_facing=True,
     ),
     # --- Screen perception / pointer ----------------------------------------
@@ -174,6 +182,8 @@ REGISTRY: tuple[ToolSpec, ...] = (
         desktop=True,
         observe_after=True,
         needs_perception=True,
+        risk_level="medium",
+        side_effects=True,
     ),
     ToolSpec(
         name="click",
@@ -189,6 +199,8 @@ REGISTRY: tuple[ToolSpec, ...] = (
         category="desktop",
         desktop=True,
         observe_after=True,
+        risk_level="medium",
+        side_effects=True,
         mcp_facing=True,
         mcp_name="pilot_click",
     ),
@@ -205,6 +217,8 @@ REGISTRY: tuple[ToolSpec, ...] = (
         category="desktop",
         desktop=True,
         observe_after=True,
+        risk_level="medium",
+        side_effects=True,
         mcp_facing=True,
         mcp_name="pilot_type",
     ),
@@ -218,6 +232,8 @@ REGISTRY: tuple[ToolSpec, ...] = (
         category="desktop",
         desktop=True,
         observe_after=True,
+        risk_level="medium",
+        side_effects=True,
     ),
     ToolSpec(
         name="hotkey",
@@ -230,6 +246,8 @@ REGISTRY: tuple[ToolSpec, ...] = (
         category="desktop",
         desktop=True,
         observe_after=True,
+        risk_level="medium",
+        side_effects=True,
     ),
     ToolSpec(
         name="scroll",
@@ -245,6 +263,8 @@ REGISTRY: tuple[ToolSpec, ...] = (
         category="desktop",
         desktop=True,
         observe_after=True,
+        risk_level="medium",
+        side_effects=True,
     ),
     ToolSpec(
         name="move_mouse",
@@ -260,6 +280,8 @@ REGISTRY: tuple[ToolSpec, ...] = (
         desktop=True,
         observe_after=True,  # was in POST_ACTION_OBSERVE_TOOLS (a desktop action)
         coordinator=False,  # not exposed to the coordinator (matches prior allowlist)
+        risk_level="medium",
+        side_effects=True,
     ),
     # --- File search ---------------------------------------------------------
     ToolSpec(
@@ -379,6 +401,8 @@ REGISTRY: tuple[ToolSpec, ...] = (
         category="code",
         streaming=True,
         coordinator=False,
+        risk_level="high",
+        side_effects=True,
     ),
 )
 
@@ -411,6 +435,83 @@ def get(name: str) -> ToolSpec | None:
     if spec:
         return spec
     return next((s for s in _EXTERNAL if s.name == name), None)
+
+
+def confirmation_required(tool: str, args: dict | None = None) -> bool:
+    spec = get(tool)
+    if not spec:
+        return True
+    args = args or {}
+    if tool == "run_command":
+        return _command_requires_confirmation(str(args.get("cmd") or args.get("command") or ""))
+    if tool == "read_file":
+        return _path_requires_confirmation(str(args.get("path") or ""))
+    return spec.risk_level == "high"
+
+
+def risk_level_for(tool: str, args: dict | None = None) -> str:
+    spec = get(tool)
+    if not spec:
+        return "high"
+    if confirmation_required(tool, args):
+        return "high"
+    return spec.risk_level
+
+
+def side_effects_for(tool: str) -> bool:
+    spec = get(tool)
+    return True if spec is None else bool(spec.side_effects)
+
+
+def confirmation_reason(tool: str, args: dict | None = None) -> str:
+    if tool == "run_command":
+        return "High-risk shell command requires confirmation."
+    return f"High-risk tool {tool!r} requires confirmation."
+
+
+def _command_requires_confirmation(cmd: str) -> bool:
+    lowered = f" {cmd.lower()} "
+    high_risk_tokens = (
+        " remove-item ",
+        " set-content ",
+        " out-file ",
+        " add-content ",
+        " new-item ",
+        " tee-object ",
+        " >",
+        ">>",
+        " rm ",
+        " rmdir ",
+        " del ",
+        " erase ",
+        " format ",
+        " npm install",
+        " pnpm install",
+        " yarn add",
+        " pip install",
+        " uv add",
+        " git push",
+        " gh issue close",
+        " gh pr merge",
+        ".env",
+        " id_rsa",
+        " credentials",
+        " secret",
+        " token",
+    )
+    return any(token in lowered for token in high_risk_tokens)
+
+
+def _path_requires_confirmation(path: str) -> bool:
+    lowered = path.lower().replace("\\", "/")
+    sensitive_parts = (
+        ".env",
+        "id_rsa",
+        "credentials",
+        "secret",
+        "token",
+    )
+    return any(part in lowered for part in sensitive_parts)
 
 
 # ---------------------------------------------------------------------------
@@ -512,6 +613,8 @@ def mcp_manifest() -> dict[str, Any]:
             "name": spec.mcp_name or f"pilot_{spec.name}",
             "description": spec.summary,
             "inputSchema": json_schema(spec),
+            "riskLevel": spec.risk_level,
+            "sideEffects": spec.side_effects,
         })
     return {"tools": tools}
 

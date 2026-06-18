@@ -282,6 +282,38 @@ class WebSocketScenarioTests(unittest.TestCase):
         self.assertTrue(result["meta"]["artifacts"])
         self.assertTrue(any(artifact["verified"] for artifact in result["meta"]["artifacts"]))
 
+    def test_confirmation_required_turn_persists_audit_metadata(self):
+        from agents.loop import LoopOutcome
+        from agents.runtime_state import RuntimeState
+
+        state = RuntimeState()
+        state.record_confirmation_required(
+            "run_command",
+            {"cmd": "Remove-Item -Recurse .\\data"},
+            "Bekräftelse krävs innan jag kör run_command.",
+        )
+
+        result = self._run_scenario(
+            session_id="scenario-confirmation",
+            user_text="Ta bort data-mappen",
+            outcome=LoopOutcome(
+                "needs_input",
+                "- confirmation_required: run_command",
+                "Bekräftelse krävs innan jag kör run_command.",
+                runtime_state=state,
+            ),
+            emitted_tools=[(
+                "confirmation_required",
+                {"cmd": "Remove-Item -Recurse .\\data"},
+            )],
+            reply="",
+        )
+
+        self.assertIn("Bekräftelse krävs", result["saved"]["messages"][-1]["content"])
+        self.assertEqual("needs_input", result["meta"]["status"])
+        self.assertEqual("confirmation_required", result["meta"]["runtime_state"]["actions"][0]["decision"])
+        self.assertEqual("high", result["meta"]["runtime_state"]["actions"][0]["risk_level"])
+
     def _run_scenario(
         self,
         session_id: str,
@@ -305,7 +337,9 @@ class WebSocketScenarioTests(unittest.TestCase):
 
         async def fake_run_coordinator(task, emit, abort, *args, **kwargs):
             for tool, tool_args in emitted_tools:
-                emit({"type": "action", "tool": tool, "args": tool_args})
+                event_type = "confirmation_required" if tool == "confirmation_required" else "action"
+                event_tool = "run_command" if tool == "confirmation_required" else tool
+                emit({"type": event_type, "tool": event_tool, "args": tool_args})
             return outcome
 
         async def fake_compose_reply(conversation, grounding=None, model=None, memories=""):

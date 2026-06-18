@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+from tools import registry
+
 
 _EXPLICIT_PATH_ARG_RE = re.compile(
     r"(?:-LiteralPath\s+|(?<![A-Za-z])-Path\s+|Get-Item\s+)(['\"]?)(?P<path>[^'\"\r\n]+?)\1(?:\s|$)",
@@ -44,6 +46,9 @@ class RuntimeState:
             "args": args,
             "ok": bool(ok),
             "summary": text[:1000],
+            "risk_level": registry.risk_level_for(tool, args),
+            "side_effects": registry.side_effects_for(tool),
+            "decision": "allowed" if ok else "failed",
         }
         self.actions.append(action)
         self.evidence_items.append({
@@ -52,6 +57,9 @@ class RuntimeState:
             "ok": bool(ok),
             "text": text,
             "artifact_verified": bool(artifact_verified),
+            "risk_level": action["risk_level"],
+            "side_effects": action["side_effects"],
+            "decision": action["decision"],
         })
         if not ok:
             self.errors.append({"tool": tool, "args": args, "error": text[:1000]})
@@ -86,6 +94,30 @@ class RuntimeState:
         if args:
             error["args"] = dict(args)
         self.errors.append(error)
+
+    def record_confirmation_required(self, tool: str, args: dict | None, reason: str) -> None:
+        args = dict(args or {})
+        action = {
+            "tool": tool,
+            "args": args,
+            "ok": False,
+            "summary": reason,
+            "risk_level": registry.risk_level_for(tool, args),
+            "side_effects": registry.side_effects_for(tool),
+            "decision": "confirmation_required",
+        }
+        self.actions.append(action)
+        self.evidence_items.append({
+            "tool": tool,
+            "args": args,
+            "ok": False,
+            "text": reason,
+            "artifact_verified": False,
+            "risk_level": action["risk_level"],
+            "side_effects": action["side_effects"],
+            "decision": "confirmation_required",
+        })
+        self.errors.append({"tool": tool, "args": args, "error": reason})
 
     def set_contract_result(self, contract, result) -> None:
         self.requirements = {

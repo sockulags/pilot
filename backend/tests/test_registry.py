@@ -5,6 +5,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from tools import registry
+from fastapi.testclient import TestClient
 
 
 class RegistryDerivationTests(unittest.TestCase):
@@ -64,6 +65,14 @@ class RegistryDerivationTests(unittest.TestCase):
         self.assertEqual(["x", "y"], click["inputSchema"]["required"])
         self.assertEqual([], by_name["pilot_list_dir"]["inputSchema"]["required"])
 
+    def test_mcp_manifest_exposes_risk_metadata(self):
+        by_name = {t["name"]: t for t in registry.mcp_manifest()["tools"]}
+
+        self.assertEqual("medium", by_name["pilot_run_command"]["riskLevel"])
+        self.assertTrue(by_name["pilot_run_command"]["sideEffects"])
+        self.assertEqual("low", by_name["pilot_read_file"]["riskLevel"])
+        self.assertFalse(by_name["pilot_read_file"]["sideEffects"])
+
     def test_capability_manifest_lists_real_tools_grouped(self):
         manifest = registry.capability_manifest()
         for needle in ("read_file", "find_file", "run_command", "click_element", "open_app"):
@@ -83,6 +92,49 @@ class RegistryDerivationTests(unittest.TestCase):
         self.assertTrue(all(s["type"] == "function" for s in schemas))
         names = {s["function"]["name"] for s in schemas}
         self.assertEqual(registry.coordinator_tool_names(), names)
+
+    def test_tool_specs_expose_risk_and_side_effect_metadata(self):
+        read_file = registry.get("read_file")
+        run_command = registry.get("run_command")
+        type_text = registry.get("type_text")
+
+        self.assertEqual("low", read_file.risk_level)
+        self.assertFalse(read_file.side_effects)
+        self.assertEqual("medium", run_command.risk_level)
+        self.assertTrue(run_command.side_effects)
+        self.assertEqual("medium", type_text.risk_level)
+        self.assertTrue(type_text.side_effects)
+
+    def test_confirmation_policy_flags_high_risk_commands(self):
+        self.assertTrue(registry.confirmation_required("run_command", {"cmd": "Remove-Item -Recurse .\\data"}))
+        self.assertTrue(registry.confirmation_required("run_command", {"cmd": "Set-Content -Path report.md -Value 'ok'"}))
+        self.assertTrue(registry.confirmation_required("run_command", {"cmd": "npm install left-pad"}))
+        self.assertTrue(registry.confirmation_required("run_command", {"cmd": "Get-Content backend/.env"}))
+        self.assertTrue(registry.confirmation_required("read_file", {"path": "backend/.env"}))
+        self.assertFalse(registry.confirmation_required("run_command", {"cmd": "Get-ChildItem backend"}))
+        self.assertFalse(registry.confirmation_required("read_file", {"path": "README.md"}))
+
+    def test_mcp_call_enforces_confirmation_policy(self):
+        from api.mcp import create_mcp_app
+
+        with TestClient(create_mcp_app()) as client:
+            response = client.post(
+                "/mcp/call",
+                json={
+                    "name": "pilot_run_command",
+                    "arguments": {"cmd": "Remove-Item -Recurse .\\data"},
+                },
+            )
+            read_response = client.post(
+                "/mcp/call",
+                json={
+                    "name": "pilot_read_file",
+                    "arguments": {"path": "backend/.env"},
+                },
+            )
+
+        self.assertEqual("confirmation_required", response.json()["error"])
+        self.assertEqual("confirmation_required", read_response.json()["error"])
 
 
 if __name__ == "__main__":
