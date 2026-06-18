@@ -18,6 +18,23 @@ class TaskContractTests(unittest.TestCase):
         ])
         self.assertTrue(result.satisfied)
         self.assertIn("sources", result.final_answer_requirements.lower())
+        self.assertIn("synthesized answer", result.final_answer_requirements.lower())
+        self.assertIn("weak", result.final_answer_requirements.lower())
+
+    def test_research_contract_rejects_zero_fetched_sources(self):
+        from agents.task_contracts import build_task_contract
+
+        contract = build_task_contract("research")
+
+        result = contract.evaluate([
+            {
+                "tool": "web_research",
+                "ok": True,
+                "text": "Research results for 'x':\nSources fetched: 0\nNo readable sources could be fetched.",
+            }
+        ])
+
+        self.assertFalse(result.satisfied)
 
     def test_create_file_requires_verified_artifact(self):
         from agents.task_contracts import build_task_contract

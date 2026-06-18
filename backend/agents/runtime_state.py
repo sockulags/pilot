@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Iterable
 
 
 _PATH_ARG_RE = re.compile(
     r"(?:-Path\s+|-LiteralPath\s+|Test-Path\s+|Get-Item\s+)(['\"]?)(?P<path>[^'\"\r\n]+?)\1(?:\s|$)",
     re.IGNORECASE,
 )
+_URL_RE = re.compile(r"https?://[^\s)>\]]+")
 
 
 @dataclass
@@ -66,11 +67,7 @@ class RuntimeState:
             if artifact_path:
                 self._record_artifact(artifact_path, artifact_verified)
         elif tool == "web_research":
-            self.sources.append({
-                "query": str(args.get("query") or ""),
-                "min_sources": args.get("min_sources"),
-                "summary": _source_summary(text),
-            })
+            self.sources.append(_web_research_source_record(args, text))
         elif tool == "fetch_url":
             self.sources.append({
                 "url": str(args.get("url") or ""),
@@ -142,3 +139,60 @@ def _source_summary(text: str) -> str:
         if "sources fetched:" in line.lower():
             return line.strip()
     return text[:500]
+
+
+def _web_research_source_record(args: dict, text: str) -> dict[str, Any]:
+    fetched = _sources_fetched_count(text)
+    min_sources = _int_or_none(args.get("min_sources"))
+    urls = _dedupe_preserve_order(
+        url.rstrip(".,;")
+        for url in _URL_RE.findall(text)
+        if not _looks_like_search_engine_noise(url)
+    )
+    lowered = text.lower()
+    weak = (
+        "no readable sources could be fetched" in lowered
+        or "fetch failures:" in lowered
+        or bool(re.search(r"(?im)^\s*only\s+\d+\s+readable source", text))
+    )
+    if min_sources is not None and fetched is not None:
+        weak = weak or fetched < min_sources
+    record: dict[str, Any] = {
+        "query": str(args.get("query") or ""),
+        "min_sources": min_sources,
+        "summary": _source_summary(text),
+    }
+    if fetched is not None:
+        record["sources_fetched"] = fetched
+    if urls:
+        record["urls"] = urls
+    record["weak"] = bool(weak)
+    return record
+
+
+def _sources_fetched_count(text: str) -> int | None:
+    match = re.search(r"(?im)^\s*sources fetched:\s*(\d+)\s*$", text)
+    return int(match.group(1)) if match else None
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _dedupe_preserve_order(items: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped
+
+
+def _looks_like_search_engine_noise(url: str) -> bool:
+    lowered = url.lower()
+    return "duckduckgo.com/y.js" in lowered or "bing.com/aclick" in lowered

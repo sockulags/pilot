@@ -324,7 +324,11 @@ def _build_reply_messages(conversation: list[dict], outcome=None, memories: str 
                 f"Status: {outcome.status}\n\n"
                 "Väv ihop detta till ett svar på användarens språk. Använd det "
                 "strukturerade underlaget som primär evidens och hitta inte på "
-                "resultat som inte syns ovan."
+                "resultat som inte syns ovan. Om underlaget innehåller web_research "
+                "ska svaret vara ett syntetiserat svar med källhänvisningar/URL:er, "
+                "inte rå verktygslogg eller rå web_research(...)-text. Om källorna "
+                "är svaga eller otillräckliga, eller om inga källor kunde hämtas, "
+                "säg det uttryckligen."
             ),
         })
     return messages
