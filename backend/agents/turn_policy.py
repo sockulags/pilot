@@ -93,7 +93,8 @@ def build_task_context(conversation: list[dict] | None, user_message: str) -> Ta
     text_lc = f" {resolved.lower()} "
     entities = _extract_entities(resolved)
 
-    creates_file = _looks_like_file_output(resolved)
+    local_model_audit = _looks_like_local_model_audit(resolved)
+    creates_file = local_model_audit or _looks_like_file_output(resolved)
     requires_current = _contains_any(text_lc, _CURRENT_TERMS)
     research = _looks_like_research_request(resolved) or requires_current
     action = _contains_any(text_lc, _ACTION_TERMS)
@@ -101,7 +102,9 @@ def build_task_context(conversation: list[dict] | None, user_message: str) -> Ta
     needs_tools = research or creates_file or action or project_analysis
 
     intent = "chat"
-    if project_analysis:
+    if local_model_audit:
+        intent = "local_model_audit_report"
+    elif project_analysis:
         intent = "project_analysis"
     elif research and creates_file:
         intent = "research_and_create_file"
@@ -145,6 +148,14 @@ def deterministic_route(
             "route": "computer",
             "task": ctx.standalone_task,
             "thinking": thinking,
+            "model": resolve_answer_model(model_mode, ctx.preferred_model),
+        }
+
+    if ctx.intent == "local_model_audit_report":
+        return {
+            "route": "computer",
+            "task": ctx.standalone_task,
+            "thinking": "local model audit report needs deterministic local playbook; using computer route",
             "model": resolve_answer_model(model_mode, ctx.preferred_model),
         }
 
@@ -196,6 +207,8 @@ def web_query(task: str, ctx: TaskContext | None = None) -> str:
 
 
 def task_contract_intent(ctx: TaskContext) -> str | None:
+    if ctx.intent == "local_model_audit_report":
+        return "local_model_audit_report"
     if ctx.intent in {"research", "create_file", "project_analysis"}:
         return ctx.intent
     if ctx.intent == "research_and_create_file":
@@ -333,6 +346,30 @@ def _looks_like_project_analysis(text: str) -> bool:
         or "backendflöde" in lowered
         or "websocket" in lowered and "tool-call" in lowered
     )
+
+
+def _looks_like_local_model_audit(text: str) -> bool:
+    lowered = text.lower()
+    has_audit = (
+        "local model audit" in lowered
+        or "modellrapport" in lowered
+        or ("modell" in lowered and "audit" in lowered)
+        or ("model" in lowered and "audit" in lowered)
+    )
+    has_ollama_compare = "ollama" in lowered and any(
+        token in lowered
+        for token in (
+            "installerade",
+            "installed",
+            "konfigurerade",
+            "configured",
+            "jämför",
+            "jamfor",
+            "compare",
+        )
+    )
+    asks_report = bool(re.search(r"\b(rapport|report|markdown|md)\b", lowered))
+    return (has_audit or has_ollama_compare) and asks_report
 
 
 def _claims_action(text: str) -> bool:

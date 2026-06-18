@@ -118,6 +118,64 @@ class TaskContractTests(unittest.TestCase):
         self.assertTrue(result.satisfied)
         self.assertIn("command", result.final_answer_requirements.lower())
 
+    def test_local_model_audit_contract_requires_playbook_evidence_and_verified_artifact(self):
+        from agents.task_contracts import build_task_contract
+
+        contract = build_task_contract("local_model_audit_report")
+
+        self.assertEqual(
+            {"run_command", "read_file"},
+            contract.allowed_tools,
+        )
+        self.assertFalse(contract.evaluate([]).satisfied)
+        self.assertFalse(contract.evaluate([
+            {
+                "tool": "run_command",
+                "ok": True,
+                "text": "Command: ollama list\nOutput:\ngemma4:12b",
+            },
+            {
+                "tool": "read_file",
+                "ok": True,
+                "args": {"path": "backend/config.py"},
+                "text": "File: backend/config.py\nContent:\nOLLAMA_MODEL = os.getenv(...)",
+            },
+            {
+                "tool": "run_command",
+                "ok": True,
+                "text": "Command: Test-Path local_model_audit_report.md\nOutput:\nTrue",
+                "artifact_verified": True,
+            },
+        ]).satisfied)
+        result = contract.evaluate([
+            {
+                "tool": "run_command",
+                "ok": True,
+                "text": "Command: ollama list\nOutput:\ngemma4:12b",
+            },
+            {
+                "tool": "read_file",
+                "ok": True,
+                "args": {"path": "backend/config.py"},
+                "text": "File: backend/config.py\nContent:\nOLLAMA_MODEL = os.getenv(...)",
+            },
+            {
+                "tool": "read_file",
+                "ok": True,
+                "args": {"path": "README.md"},
+                "text": "File: README.md\nContent:\nOLLAMA_MODEL default gemma4:12b",
+            },
+            {
+                "tool": "run_command",
+                "ok": True,
+                "text": "Command: Test-Path local_model_audit_report.md\nOutput:\nTrue",
+                "artifact_verified": True,
+            },
+        ])
+
+        self.assertTrue(result.satisfied)
+        self.assertIn("verified artifact path", result.final_answer_requirements.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

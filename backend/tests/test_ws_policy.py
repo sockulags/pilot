@@ -37,6 +37,48 @@ class WebSocketPolicyTests(unittest.TestCase):
             {"type": "action", "tool": "run_command", "args": {"cmd": "Test-Path model_report.md"}},
         ]))
 
+    def test_runtime_file_output_verification_requires_verified_runtime_artifact(self):
+        from agents.runtime_state import RuntimeState
+        from api.ws import _runtime_file_output_verified
+
+        state = RuntimeState()
+        state.record_tool_result(
+            "run_command",
+            {"cmd": "Set-Content -Path model_report.md -Value 'ok'"},
+            "Command: Set-Content -Path model_report.md -Value 'ok'\nOutput:\n",
+            ok=True,
+        )
+
+        self.assertFalse(_runtime_file_output_verified(state))
+
+        state.record_tool_result(
+            "run_command",
+            {"cmd": "Test-Path -Path model_report.md"},
+            "Command: Test-Path -Path model_report.md\nOutput:\nTrue",
+            ok=True,
+            artifact_verified=True,
+        )
+
+        self.assertTrue(_runtime_file_output_verified(state))
+
+    def test_append_verified_artifact_paths_adds_missing_runtime_path(self):
+        from agents.runtime_state import RuntimeState
+        from api.ws import _append_verified_artifact_paths
+
+        state = RuntimeState()
+        state.record_tool_result(
+            "run_command",
+            {"cmd": "Test-Path -Path C:\\repo\\report.html"},
+            "Command: Test-Path -Path C:\\repo\\report.html\nOutput:\nTrue",
+            ok=True,
+            artifact_verified=True,
+        )
+
+        reply = _append_verified_artifact_paths("Rapporten är klar.", state)
+
+        self.assertIn("C:\\repo\\report.html", reply)
+        self.assertEqual(reply, _append_verified_artifact_paths(reply, state))
+
     def test_fallback_markdown_report_writes_file(self):
         from api.ws import _write_fallback_markdown_report
 
