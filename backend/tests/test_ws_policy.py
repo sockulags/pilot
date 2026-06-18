@@ -14,12 +14,19 @@ class WebSocketPolicyTests(unittest.TestCase):
 
         self.assertEqual(OLLAMA_MODEL, _reply_model("gpt-oss:20b"))
 
-    def test_file_output_verification_requires_write_like_command(self):
+    def test_file_output_verification_requires_write_and_verification_commands(self):
         from api.ws import _file_output_verified
 
         self.assertFalse(_file_output_verified([
             {"type": "action", "tool": "run_command", "args": {"cmd": "ollama list"}},
             {"type": "action", "tool": "read_file", "args": {"path": "config.py"}},
+        ]))
+        self.assertFalse(_file_output_verified([
+            {
+                "type": "action",
+                "tool": "run_command",
+                "args": {"cmd": "Set-Content -Path model_report.md -Value 'ok'"},
+            },
         ]))
         self.assertTrue(_file_output_verified([
             {

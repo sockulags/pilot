@@ -195,6 +195,16 @@ def web_query(task: str, ctx: TaskContext | None = None) -> str:
     return _make_search_query(task, _extract_entities(task), _contains_any(task.lower(), _CURRENT_TERMS))
 
 
+def task_contract_intent(ctx: TaskContext) -> str | None:
+    if ctx.intent in {"research", "create_file", "project_analysis"}:
+        return ctx.intent
+    if ctx.intent == "research_and_create_file":
+        return "create_file"
+    if ctx.intent == "computer_action" and _looks_like_run_command_request(ctx.standalone_task):
+        return "run_command"
+    return None
+
+
 def sanitize_final_reply(text: str, had_actions: bool, needs_tools: bool = False) -> str:
     """Block pseudo tool syntax and false action claims from user-visible replies."""
     raw = text or ""
@@ -285,12 +295,20 @@ def _looks_like_git_status(text: str) -> bool:
     return " git status " in text or " git-status " in text
 
 
+def _looks_like_run_command_request(text: str) -> bool:
+    lowered = f" {text.lower()} "
+    return bool(
+        re.search(r"\b(kör|kor|run)\b", lowered)
+        or _looks_like_git_status(lowered)
+    )
+
+
 def _looks_like_file_output(text: str) -> bool:
     lowered = text.lower()
     if any(token in lowered for token in ("html-fil", "html file", "csv", "graf")):
         return True
     if re.search(r"\b(skapa|skriv|spara|write|create|save)\b", lowered) and re.search(
-        r"\b(fil|file|rapport|report|markdown|md)\b", lowered
+        r"\b(fil|file|rapport|rapportfil|report|markdown|md)\b", lowered
     ):
         return True
     if re.search(r"\bvisa det i\b", lowered) and re.search(r"\b(fil|html|graf)\b", lowered):

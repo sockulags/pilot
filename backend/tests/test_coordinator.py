@@ -31,6 +31,12 @@ class CoordinatorTests(unittest.TestCase):
     def test_file_output_requirement_blocks_early_answer(self):
         asyncio.run(self._file_output_requirement_blocks_early_answer())
 
+    def test_research_contract_blocks_answer_until_sources_exist(self):
+        asyncio.run(self._research_contract_blocks_answer_until_sources_exist())
+
+    def test_create_file_contract_requires_verified_artifact(self):
+        asyncio.run(self._create_file_contract_requires_verified_artifact())
+
     def _experts(self):
         return {
             "qwen2.5-coder:14b": {"label": "Coder", "hint": "code", "tools": True},
@@ -172,7 +178,9 @@ class CoordinatorTests(unittest.TestCase):
         events: list[dict] = []
 
         async def fake_execute(tool, args, emit):
-            return "wrote model_report.md"
+            if "Test-Path" in args.get("cmd", ""):
+                return "Command: Test-Path model_report.md\nOutput:\nTrue"
+            return "Command: Set-Content model_report.md\nOutput:\n"
 
         decisions = [
             {"action": "answer", "thinking": "too early"},
@@ -181,6 +189,12 @@ class CoordinatorTests(unittest.TestCase):
                 "tool": "run_command",
                 "args": {"cmd": "Set-Content -Path model_report.md -Value 'ok'"},
                 "thinking": "write report",
+            },
+            {
+                "action": "tool",
+                "tool": "run_command",
+                "args": {"cmd": "Test-Path model_report.md"},
+                "thinking": "verify report",
             },
             {"action": "answer", "thinking": "done"},
         ]
@@ -198,7 +212,84 @@ class CoordinatorTests(unittest.TestCase):
 
         self.assertEqual("done", outcome.status)
         self.assertIn("Set-Content", outcome.action_log)
+        self.assertIn("Test-Path", outcome.action_log)
         self.assertTrue(any(e["type"] == "action" and e["tool"] == "run_command" for e in events))
+
+    async def _research_contract_blocks_answer_until_sources_exist(self):
+        from agents import coordinator
+
+        events: list[dict] = []
+
+        async def fake_execute(tool, args, emit):
+            return "Research results for 'pilot':\nSources fetched: 2\n- Source: example"
+
+        decisions = [
+            {"action": "answer", "thinking": "too early"},
+            {
+                "action": "tool",
+                "tool": "web_research",
+                "args": {"query": "pilot", "task": "research pilot"},
+                "thinking": "need sources",
+            },
+            {"action": "answer", "thinking": "done"},
+        ]
+        with mock.patch.object(coordinator, "available_expert_models", new=_av(self._experts())), \
+             mock.patch.object(coordinator, "search_skills", new=_av([])), \
+             mock.patch.object(coordinator.agent_loop, "execute_tool", new=fake_execute), \
+             mock.patch.object(coordinator, "_decide_step", new=_seq(decisions)):
+            outcome = await coordinator.run_coordinator(
+                "Research Pilot",
+                events.append,
+                asyncio.Event(),
+                coordinator_model="gemma4:12b",
+                task_contract_intent="research",
+            )
+
+        self.assertEqual("done", outcome.status)
+        self.assertIn("web_research", outcome.action_log)
+        self.assertIn("Contract not satisfied", outcome.action_log)
+
+    async def _create_file_contract_requires_verified_artifact(self):
+        from agents import coordinator
+
+        events: list[dict] = []
+
+        async def fake_execute(tool, args, emit):
+            cmd = args.get("cmd", "")
+            if "Test-Path" in cmd:
+                return "Command: Test-Path report.md\nOutput:\nTrue"
+            return "Command: Set-Content report.md\nOutput:\n"
+
+        decisions = [
+            {
+                "action": "tool",
+                "tool": "run_command",
+                "args": {"cmd": "Set-Content -Path report.md -Value 'ok'"},
+                "thinking": "write report",
+            },
+            {"action": "answer", "thinking": "written but not verified"},
+            {
+                "action": "tool",
+                "tool": "run_command",
+                "args": {"cmd": "Test-Path report.md"},
+                "thinking": "verify report",
+            },
+            {"action": "answer", "thinking": "done"},
+        ]
+        with mock.patch.object(coordinator, "available_expert_models", new=_av(self._experts())), \
+             mock.patch.object(coordinator, "search_skills", new=_av([])), \
+             mock.patch.object(coordinator.agent_loop, "execute_tool", new=fake_execute), \
+             mock.patch.object(coordinator, "_decide_step", new=_seq(decisions)):
+            outcome = await coordinator.run_coordinator(
+                "Skapa en rapportfil",
+                events.append,
+                asyncio.Event(),
+                coordinator_model="gemma4:12b",
+                task_contract_intent="create_file",
+            )
+
+        self.assertEqual("done", outcome.status)
+        self.assertIn("Test-Path report.md", outcome.action_log)
 
 
 class ToolCallMappingTests(unittest.TestCase):
