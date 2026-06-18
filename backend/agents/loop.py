@@ -155,6 +155,22 @@ async def run_agent_loop(
             runtime_state.record_error(focus_block_reason, tool, args)
             return LoopOutcome("blocked", render_action_log(history), focus_block_reason, runtime_state)
 
+        if registry.confirmation_required(tool, args):
+            reason = (
+                f"Bekräftelse krävs innan jag kör {tool}: "
+                f"{registry.confirmation_reason(tool, args)}"
+            )
+            emit(make_event(
+                "confirmation_required",
+                tool=tool,
+                args=args,
+                content=reason,
+                risk_level=registry.risk_level_for(tool, args),
+            ))
+            history.append({"type": "blocked", "content": reason})
+            runtime_state.record_confirmation_required(tool, args, reason)
+            return LoopOutcome("needs_input", render_action_log(history), reason, runtime_state)
+
         args = apply_project_cwd_to_args(tool, args, project_cwd)
         tool, args, repair_note = repair_web_tool_call(tool, args, task)
         if repair_note:

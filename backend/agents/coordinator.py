@@ -525,6 +525,18 @@ async def run_coordinator(
             notes.append(f"Blocked: {block}")
             runtime_state.record_error(block, tool, args)
             continue
+        confirmation = _confirmation_required(tool, args)
+        if confirmation:
+            emit(make_event(
+                "confirmation_required",
+                tool=tool,
+                args=args,
+                content=confirmation,
+                risk_level=registry.risk_level_for(tool, args),
+            ))
+            notes.append(f"Confirmation required for {tool}: {confirmation}")
+            runtime_state.record_confirmation_required(tool, args, confirmation)
+            return LoopOutcome("needs_input", _render_notes(notes), confirmation, runtime_state)
         args = agent_loop.apply_project_cwd_to_args(tool, args, project_cwd)
         tool, args, repair_note = agent_loop.repair_web_tool_call(tool, args, task)
         if repair_note:
@@ -678,6 +690,15 @@ async def _execute_and_record_tool(
 
 def _render_notes(notes: list[str]) -> str:
     return "\n".join(f"- {n}" for n in notes[-15:]) if notes else ""
+
+
+def _confirmation_required(tool: str, args: dict) -> str | None:
+    if not registry.confirmation_required(tool, args):
+        return None
+    return (
+        f"Bekräftelse krävs innan jag kör {tool}: "
+        f"{registry.confirmation_reason(tool, args)}"
+    )
 
 
 def _build_local_model_audit_report(

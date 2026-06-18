@@ -14,6 +14,12 @@ from tools.system import run_command_sync
 # manifest can't drift from the tools the assistant actually has.
 tools_manifest = registry.mcp_manifest()
 
+_MCP_TO_INTERNAL = {
+    spec.mcp_name or f"pilot_{spec.name}": spec.name
+    for spec in registry.REGISTRY
+    if spec.mcp_facing
+}
+
 
 def create_mcp_app() -> FastAPI:
     app = FastAPI(title="Pilot MCP Server")
@@ -36,6 +42,15 @@ def create_mcp_app() -> FastAPI:
     async def mcp_call(body: dict):
         tool = body.get("name")
         args = body.get("arguments", {})
+        internal_tool = _MCP_TO_INTERNAL.get(tool)
+        if internal_tool and registry.confirmation_required(internal_tool, args):
+            return {
+                "error": "confirmation_required",
+                "tool": tool,
+                "riskLevel": registry.risk_level_for(internal_tool, args),
+                "sideEffects": registry.side_effects_for(internal_tool),
+                "reason": registry.confirmation_reason(internal_tool, args),
+            }
 
         if tool == "pilot_screenshot":
             img = screenshot()

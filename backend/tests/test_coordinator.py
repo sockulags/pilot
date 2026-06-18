@@ -43,6 +43,9 @@ class CoordinatorTests(unittest.TestCase):
     def test_local_model_audit_playbook_creates_verified_markdown_artifact(self):
         asyncio.run(self._local_model_audit_playbook_creates_verified_markdown_artifact())
 
+    def test_high_risk_tool_requires_confirmation_before_execution(self):
+        asyncio.run(self._high_risk_tool_requires_confirmation_before_execution())
+
     def _experts(self):
         return {
             "qwen2.5-coder:14b": {"label": "Coder", "hint": "code", "tools": True},
@@ -216,10 +219,11 @@ class CoordinatorTests(unittest.TestCase):
                 require_file_output=True,
             )
 
-        self.assertEqual("done", outcome.status)
-        self.assertIn("Set-Content", outcome.action_log)
-        self.assertIn("Test-Path", outcome.action_log)
-        self.assertTrue(any(e["type"] == "action" and e["tool"] == "run_command" for e in events))
+        self.assertEqual("needs_input", outcome.status)
+        self.assertIn("Set-Content", outcome.runtime_state.actions[0]["args"]["cmd"])
+        self.assertNotIn("Test-Path", outcome.action_log)
+        self.assertIn("bekräft", outcome.detail.lower())
+        self.assertTrue(any(e["type"] == "confirmation_required" and e["tool"] == "run_command" for e in events))
 
     async def _research_contract_blocks_answer_until_sources_exist(self):
         from agents import coordinator
@@ -294,8 +298,10 @@ class CoordinatorTests(unittest.TestCase):
                 task_contract_intent="create_file",
             )
 
-        self.assertEqual("done", outcome.status)
-        self.assertIn("Test-Path report.md", outcome.action_log)
+        self.assertEqual("needs_input", outcome.status)
+        self.assertIn("Set-Content", outcome.runtime_state.actions[0]["args"]["cmd"])
+        self.assertNotIn("Test-Path report.md", outcome.action_log)
+        self.assertIn("bekräft", outcome.detail.lower())
 
     async def _project_analysis_playbook_reads_backend_flow_files_before_answer(self):
         from agents import coordinator
@@ -396,6 +402,41 @@ class CoordinatorTests(unittest.TestCase):
         self.assertTrue(outcome.runtime_state.requirements["satisfied"])
         self.assertIn("gemma4:12b", outcome.action_log)
         self.assertIn("gpt-oss:20b", outcome.action_log)
+
+    async def _high_risk_tool_requires_confirmation_before_execution(self):
+        from agents import coordinator
+
+        executed: list[str] = []
+        events: list[dict] = []
+
+        async def fake_execute(tool, args, emit):
+            executed.append(tool)
+            return "should not execute"
+
+        with mock.patch.object(coordinator, "available_expert_models", new=_av(self._experts())), \
+             mock.patch.object(coordinator, "search_skills", new=_av([])), \
+             mock.patch.object(coordinator.agent_loop, "execute_tool", new=fake_execute), \
+             mock.patch.object(coordinator, "_decide_step", new=_seq([
+                 {
+                     "action": "tool",
+                     "tool": "run_command",
+                     "args": {"cmd": "Remove-Item -Recurse .\\data"},
+                     "thinking": "delete data",
+                 },
+                 {"action": "answer", "thinking": "blocked"},
+             ])):
+            outcome = await coordinator.run_coordinator(
+                "Ta bort data-mappen",
+                events.append,
+                asyncio.Event(),
+                coordinator_model="gemma4:12b",
+            )
+
+        self.assertEqual([], executed)
+        self.assertEqual("needs_input", outcome.status)
+        self.assertIn("bekräft", outcome.detail.lower())
+        self.assertEqual("confirmation_required", outcome.runtime_state.actions[0]["decision"])
+        self.assertTrue(any(e["type"] == "confirmation_required" for e in events))
 
 
 class ToolCallMappingTests(unittest.TestCase):
