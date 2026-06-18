@@ -95,6 +95,18 @@ class TurnPolicyTests(unittest.TestCase):
 
         self.assertEqual("gpt-oss:20b", choose_coordinator_model("auto", ctx))
 
+    def test_task_contract_intent_maps_core_tool_backed_intents(self):
+        from agents.turn_policy import build_task_context, task_contract_intent
+
+        self.assertEqual("research", task_contract_intent(build_task_context([], "Research Volvo")))
+        self.assertEqual("create_file", task_contract_intent(build_task_context([], "Skapa en rapportfil")))
+        self.assertEqual(
+            "project_analysis",
+            task_contract_intent(build_task_context([], "Förklara det här projektets backendflöde")),
+        )
+        self.assertEqual("run_command", task_contract_intent(build_task_context([], "Kör git status")))
+        self.assertIsNone(task_contract_intent(build_task_context([], "Öppna Notepad")))
+
 
 class StoreMetadataTests(unittest.TestCase):
     def test_save_session_skips_empty_draft_sessions(self):

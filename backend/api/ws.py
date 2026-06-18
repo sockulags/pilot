@@ -29,7 +29,12 @@ from fastapi import WebSocket, WebSocketDisconnect
 from agents.coordinator import run_coordinator
 from agents.gateway import refine_query
 from agents.orchestrator import classify_turn, compose_reply, should_offload_code
-from agents.turn_policy import build_task_context, choose_coordinator_model, tool_task
+from agents.turn_policy import (
+    build_task_context,
+    choose_coordinator_model,
+    task_contract_intent,
+    tool_task,
+)
 from codex_logs import summarize_codex_session
 from diagnostics import append_turn_diagnostic
 from config import (
@@ -330,6 +335,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 memories=memories, session_id=session_id,
                 required_first_tool=required_first_tool,
                 require_file_output=task_context.creates_file,
+                task_contract_intent=task_contract_intent(task_context),
             )
             turn_status = outcome.status
             if outcome.status == "needs_input":
@@ -631,12 +637,19 @@ def _reply_model(coordinator_model: str) -> str:
 
 
 def _file_output_verified(events: list[dict]) -> bool:
-    return any(
+    wrote_file = any(
         event.get("type") == "action"
         and event.get("tool") == "run_command"
         and _command_writes_file(str((event.get("args") or {}).get("cmd") or ""))
         for event in events
     )
+    verified_file = any(
+        event.get("type") == "action"
+        and event.get("tool") == "run_command"
+        and _command_verifies_file(str((event.get("args") or {}).get("cmd") or ""))
+        for event in events
+    )
+    return wrote_file and verified_file
 
 
 def _command_writes_file(cmd: str) -> bool:
@@ -652,6 +665,19 @@ def _command_writes_file(cmd: str) -> bool:
             ">",
             "tee-object",
             "python -c",
+        )
+    )
+
+
+def _command_verifies_file(cmd: str) -> bool:
+    lowered = cmd.lower()
+    return any(
+        token in lowered
+        for token in (
+            "test-path",
+            "get-item",
+            "get-childitem",
+            "dir ",
         )
     )
 

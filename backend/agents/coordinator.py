@@ -30,6 +30,7 @@ from agents.gateway import refine_query
 from agents.json_utils import extract_json_object
 from agents.loop import LoopOutcome, make_event
 from agents.safety import unsafe_tool_block_reason
+from agents.task_contracts import TaskContract, build_task_contract
 from config import (
     COORDINATOR_MAX_STEPS,
     OLLAMA_BASE_URL,
@@ -84,6 +85,24 @@ def _system_prompt(intent_hint: str) -> str:
         '{"action": "clarify|consult|perceive|tool|remember|answer", '
         '"question": "<for clarify>", "model": "<expert id>", "tool": "<name>", '
         '"args": {...}, "text": "<fact to remember>", "thinking": "<short reason>"}'
+    )
+
+
+def _contract_prompt(contract: TaskContract | None) -> str:
+    if not contract:
+        return ""
+    requirements = "; ".join(req.description for req in contract.required_evidence)
+    tools = ", ".join(sorted(contract.allowed_tools))
+    return (
+        "\n\nRuntime task contract:\n"
+        f"- Intent: {contract.intent}\n"
+        f"- Required evidence: {requirements}\n"
+        f"- Allowed tools: {tools}\n"
+        f"- Completion criteria: {contract.completion_criteria}\n"
+        f"- Failure criteria: {contract.failure_criteria}\n"
+        f"- Final answer requirements: {contract.final_answer_requirements}\n"
+        "Do not choose answer until the required evidence has been gathered, "
+        "or until the task has explicitly failed."
     )
 
 ANSWER_DEFAULT = {"action": "answer", "thinking": "defaulting to answer"}
@@ -358,11 +377,13 @@ async def run_coordinator(
     session_id: str | None = None,
     required_first_tool: dict | None = None,
     require_file_output: bool = False,
+    task_contract_intent: str | None = None,
 ) -> LoopOutcome:
     """Run the in-turn coordinator loop. See module docstring."""
     coordinator_model = coordinator_model or OLLAMA_MODEL
     experts = await available_expert_models(coordinator_model)
-    system = _system_prompt(intent_hint)
+    contract = build_task_contract(task_contract_intent or ("create_file" if require_file_output else ""))
+    system = _system_prompt(intent_hint + _contract_prompt(contract))
     # Tools-capable models drive their decisions via native function-calling;
     # others (and a tools-rejecting endpoint) fall back to the JSON action path.
     use_tools = bool(OLLAMA_MODELS.get(coordinator_model, {}).get("tools"))
@@ -370,6 +391,7 @@ async def run_coordinator(
     skills = format_skills(await search_skills(task))
 
     notes: list[str] = []  # human-readable evidence gathered this turn (grounds the reply)
+    contract_evidence: list[dict] = []
     history: list[dict] = []  # for perceive() + desktop-tool safety gating
     last_observation = ""
     consulted: set[str] = set()
@@ -389,6 +411,7 @@ async def run_coordinator(
                 result = f"Error executing {tool}: {exc}"
                 emit(make_event("error", content=result))
             notes.append(f"{tool}({args}) -> {result[:800]}")
+            contract_evidence.append(_tool_evidence(tool, args, result))
             if tool == "run_command" and _command_writes_file(str(args.get("cmd") or args.get("command") or "")):
                 file_output_done = True
         else:
@@ -411,6 +434,14 @@ async def run_coordinator(
             emit(make_event("thinking", content=thinking))
 
         if action == "answer":
+            contract_result = contract.evaluate(contract_evidence) if contract else None
+            if contract_result and not contract_result.satisfied:
+                notes.append(
+                    "Contract not satisfied; missing "
+                    + ", ".join(contract_result.missing)
+                    + ". Continue gathering evidence or explicitly fail."
+                )
+                continue
             if require_file_output and not file_output_done:
                 notes.append(
                     "The user requested a local output file, but no file-writing command "
@@ -464,6 +495,11 @@ async def run_coordinator(
         if tool not in registry.coordinator_tool_names():
             notes.append(f"(unknown tool {tool!r}; skipped)")
             continue
+        if contract and tool not in contract.allowed_tools:
+            notes.append(
+                f"(tool {tool!r} is outside the {contract.intent} contract allowlist; skipped)"
+            )
+            continue
         block = unsafe_tool_block_reason(tool, task, last_observation)
         if block:
             emit(make_event("error", content=block))
@@ -480,6 +516,7 @@ async def run_coordinator(
             result = f"Error executing {tool}: {exc}"
             emit(make_event("error", content=result))
         notes.append(f"{tool}({args}) -> {result[:800]}")
+        contract_evidence.append(_tool_evidence(tool, args, result))
         if tool == "run_command" and _command_writes_file(str(args.get("cmd") or args.get("command") or "")):
             file_output_done = True
         if tool in agent_loop.POST_ACTION_OBSERVE_TOOLS:
@@ -511,3 +548,34 @@ def _command_writes_file(cmd: str) -> bool:
             "python -c",
         )
     )
+
+
+def _tool_evidence(tool: str, args: dict, result: str) -> dict:
+    return {
+        "tool": tool,
+        "ok": agent_loop.tool_execution_succeeded(tool, result),
+        "text": result,
+        "artifact_verified": tool == "run_command" and _command_verifies_artifact(args, result),
+    }
+
+
+def _command_verifies_artifact(args: dict, result: str) -> bool:
+    cmd = str(args.get("cmd") or args.get("command") or "").lower()
+    text = str(result or "").lower()
+    verification_command = any(
+        token in cmd
+        for token in (
+            "test-path",
+            "get-item",
+            "dir ",
+            "get-childitem",
+        )
+    )
+    positive_result = (
+        "\ntrue" in text
+        or "output:\ntrue" in text
+        or "exists" in text
+        or "file:" in text
+        or "directory:" in text
+    )
+    return verification_command and positive_result
