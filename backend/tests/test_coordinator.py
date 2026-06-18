@@ -37,6 +37,9 @@ class CoordinatorTests(unittest.TestCase):
     def test_create_file_contract_requires_verified_artifact(self):
         asyncio.run(self._create_file_contract_requires_verified_artifact())
 
+    def test_project_analysis_playbook_reads_backend_flow_files_before_answer(self):
+        asyncio.run(self._project_analysis_playbook_reads_backend_flow_files_before_answer())
+
     def _experts(self):
         return {
             "qwen2.5-coder:14b": {"label": "Coder", "hint": "code", "tools": True},
@@ -290,6 +293,47 @@ class CoordinatorTests(unittest.TestCase):
 
         self.assertEqual("done", outcome.status)
         self.assertIn("Test-Path report.md", outcome.action_log)
+
+    async def _project_analysis_playbook_reads_backend_flow_files_before_answer(self):
+        from agents import coordinator
+
+        events: list[dict] = []
+        read_paths: list[str] = []
+
+        async def fake_execute(tool, args, emit):
+            if tool == "read_file":
+                read_paths.append(args["path"].replace("\\", "/"))
+                return f"File: {args['path']}\nContent:\n..."
+            return "Directory: .\n<DIR> backend"
+
+        with mock.patch.object(coordinator, "available_expert_models", new=_av(self._experts())), \
+             mock.patch.object(coordinator, "search_skills", new=_av([])), \
+             mock.patch.object(coordinator.agent_loop, "execute_tool", new=fake_execute), \
+             mock.patch.object(coordinator, "_decide_step", new=_seq([
+                 {"action": "answer", "thinking": "too early"},
+                 {"action": "answer", "thinking": "after playbook"},
+             ])):
+            outcome = await coordinator.run_coordinator(
+                "Förklara projektets backendflöde från WebSocket till tool-call och session",
+                events.append,
+                asyncio.Event(),
+                project_cwd=r"C:\repo",
+                coordinator_model="gemma4:12b",
+                task_contract_intent="project_analysis",
+            )
+
+        self.assertEqual("done", outcome.status)
+        for path in (
+            "backend/api/ws.py",
+            "backend/agents/orchestrator.py",
+            "backend/agents/coordinator.py",
+            "backend/agents/loop.py",
+            "backend/store.py",
+            "backend/tools/registry.py",
+        ):
+            self.assertIn(f"C:/repo/{path}", read_paths)
+        self.assertIn("backend/api/ws.py", outcome.runtime_state.files_read[0].replace("\\", "/"))
+        self.assertTrue(any(e["type"] == "action" and e["tool"] == "read_file" for e in events))
 
 
 class ToolCallMappingTests(unittest.TestCase):
