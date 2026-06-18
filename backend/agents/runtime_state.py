@@ -44,6 +44,7 @@ class RuntimeState:
         self.actions.append(action)
         self.evidence_items.append({
             "tool": tool,
+            "args": args,
             "ok": bool(ok),
             "text": text,
             "artifact_verified": bool(artifact_verified),

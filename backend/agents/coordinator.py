@@ -404,27 +404,28 @@ async def run_coordinator(
         tool = str(required_first_tool.get("tool") or "").strip()
         args = dict(required_first_tool.get("args") or {})
         if tool in registry.coordinator_tool_names():
-            args = agent_loop.apply_project_cwd_to_args(tool, args, project_cwd)
-            emit(make_event("action", tool=tool, args=args))
-            try:
-                result = await agent_loop.execute_tool(tool, args, emit)
-            except Exception as exc:
-                result = f"Error executing {tool}: {exc}"
-                emit(make_event("error", content=result))
-                runtime_state.record_error(result, tool, args)
-            notes.append(f"{tool}({args}) -> {result[:800]}")
-            evidence = _tool_evidence(tool, args, result)
-            runtime_state.record_tool_result(
-                tool,
-                args,
-                result,
-                bool(evidence["ok"]),
-                bool(evidence["artifact_verified"]),
+            applied_args, _result = await _execute_and_record_tool(
+                tool, args, project_cwd, emit, runtime_state, notes
             )
-            if tool == "run_command" and _command_writes_file(str(args.get("cmd") or args.get("command") or "")):
+            if tool == "run_command" and _command_writes_file(
+                str(applied_args.get("cmd") or applied_args.get("command") or "")
+            ):
                 file_output_done = True
         else:
             notes.append(f"(required first tool {tool!r} unavailable; skipped)")
+
+    if contract and contract.playbook_files and not abort.is_set():
+        for path in contract.playbook_files:
+            if abort.is_set():
+                break
+            await _execute_and_record_tool(
+                "read_file",
+                {"path": path},
+                project_cwd,
+                emit,
+                runtime_state,
+                notes,
+            )
 
     while steps < COORDINATOR_MAX_STEPS and not abort.is_set():
         steps += 1
@@ -550,6 +551,34 @@ async def run_coordinator(
         _render_notes(notes),
         runtime_state=runtime_state,
     )
+
+
+async def _execute_and_record_tool(
+    tool: str,
+    args: dict,
+    project_cwd: str | None,
+    emit: Callable[[dict], None],
+    runtime_state: RuntimeState,
+    notes: list[str],
+) -> tuple[dict, str]:
+    args = agent_loop.apply_project_cwd_to_args(tool, dict(args or {}), project_cwd)
+    emit(make_event("action", tool=tool, args=args))
+    try:
+        result = await agent_loop.execute_tool(tool, args, emit)
+    except Exception as exc:
+        result = f"Error executing {tool}: {exc}"
+        emit(make_event("error", content=result))
+        runtime_state.record_error(result, tool, args)
+    notes.append(f"{tool}({args}) -> {result[:800]}")
+    evidence = _tool_evidence(tool, args, result)
+    runtime_state.record_tool_result(
+        tool,
+        args,
+        result,
+        bool(evidence["ok"]),
+        bool(evidence["artifact_verified"]),
+    )
+    return args, result
 
 
 def _render_notes(notes: list[str]) -> str:

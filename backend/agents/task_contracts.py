@@ -28,6 +28,7 @@ class TaskContract:
     completion_criteria: str
     failure_criteria: str
     final_answer_requirements: str
+    playbook_files: tuple[str, ...] = ()
 
     def evaluate(self, evidence: Iterable[dict]) -> ContractResult:
         items = tuple(evidence)
@@ -63,6 +64,8 @@ def _has_requirement(name: str, evidence: tuple[dict, ...]) -> bool:
     if name == "local_file_inspection":
         inspected = {item.get("tool") for item in evidence if item.get("ok")}
         return bool(inspected.intersection({"read_file", "search_files", "find_file"}))
+    if name == "backend_flow_playbook_files":
+        return _has_all_files(_BACKEND_FLOW_PLAYBOOK_FILES, evidence)
     if name == "command_output":
         return any(
             item.get("ok")
@@ -76,6 +79,45 @@ def _has_requirement(name: str, evidence: tuple[dict, ...]) -> bool:
 def _sources_fetched_count(text: str) -> int:
     match = re.search(r"(?im)^\s*sources fetched:\s*(\d+)\s*$", text)
     return int(match.group(1)) if match else 0
+
+
+def _has_all_files(required_paths: tuple[str, ...], evidence: tuple[dict, ...]) -> bool:
+    inspected = {
+        _normalize_path(path)
+        for item in evidence
+        if item.get("ok") and item.get("tool") == "read_file"
+        for path in (_evidence_path(item),)
+        if path
+    }
+    return all(
+        any(path.endswith(_normalize_path(required)) for path in inspected)
+        for required in required_paths
+    )
+
+
+def _evidence_path(item: dict) -> str:
+    args = item.get("args")
+    if isinstance(args, dict) and args.get("path"):
+        return str(args["path"])
+    text = str(item.get("text", ""))
+    first_line = text.splitlines()[0] if text else ""
+    if first_line.startswith("File: "):
+        return first_line.removeprefix("File: ").strip()
+    return ""
+
+
+def _normalize_path(path: str) -> str:
+    return str(path).replace("\\", "/").lower().strip()
+
+
+_BACKEND_FLOW_PLAYBOOK_FILES = (
+    "backend/api/ws.py",
+    "backend/agents/orchestrator.py",
+    "backend/agents/coordinator.py",
+    "backend/agents/loop.py",
+    "backend/store.py",
+    "backend/tools/registry.py",
+)
 
 
 _CONTRACTS: dict[str, TaskContract] = {
@@ -109,12 +151,24 @@ _CONTRACTS: dict[str, TaskContract] = {
     "project_analysis": TaskContract(
         intent="project_analysis",
         required_evidence=(
-            EvidenceRequirement("local_file_inspection", "local file inspection evidence"),
+            EvidenceRequirement(
+                "backend_flow_playbook_files",
+                "backend flow playbook files inspected",
+            ),
         ),
         allowed_tools=frozenset({"list_dir", "read_file", "search_files", "find_file", "run_command"}),
-        completion_criteria="Relevant local project files or directories have been inspected.",
+        completion_criteria=(
+            "Relevant local project files have been inspected, including the backend "
+            "flow playbook files when the user asks about backend/WebSocket/tool flow."
+        ),
         failure_criteria="Project files cannot be accessed or inspected.",
-        final_answer_requirements="Base the analysis on inspected files and name the files used.",
+        final_answer_requirements=(
+            "Base the analysis on inspected files and name the files used. For backend "
+            "flow questions, reference backend/api/ws.py, backend/agents/orchestrator.py, "
+            "backend/agents/coordinator.py, backend/agents/loop.py, backend/store.py, "
+            "and backend/tools/registry.py; identify risks with file/flow-specific evidence."
+        ),
+        playbook_files=_BACKEND_FLOW_PLAYBOOK_FILES,
     ),
     "run_command": TaskContract(
         intent="run_command",

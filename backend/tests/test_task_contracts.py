@@ -69,11 +69,41 @@ class TaskContractTests(unittest.TestCase):
             {"tool": "list_dir", "ok": True, "text": "Directory: .\nbackend"},
         ]).satisfied)
         result = contract.evaluate([
-            {"tool": "list_dir", "ok": True, "text": "Directory: .\nbackend"},
-            {"tool": "read_file", "ok": True, "text": "File: backend/agents/coordinator.py"},
+            {"tool": "read_file", "ok": True, "text": f"File: {path}"}
+            for path in contract.playbook_files
         ])
         self.assertTrue(result.satisfied)
         self.assertIn("files", result.final_answer_requirements.lower())
+
+    def test_project_analysis_requires_backend_flow_playbook_files(self):
+        from agents.task_contracts import build_task_contract
+
+        contract = build_task_contract("project_analysis")
+
+        self.assertIn("backend/api/ws.py", contract.final_answer_requirements)
+        self.assertFalse(contract.evaluate([
+            {
+                "tool": "read_file",
+                "ok": True,
+                "text": "File: backend/agents/coordinator.py\nContent:\n...",
+            },
+        ]).satisfied)
+        result = contract.evaluate([
+            {
+                "tool": "read_file",
+                "ok": True,
+                "text": f"File: {path}\nContent:\n...",
+            }
+            for path in (
+                "backend/api/ws.py",
+                "backend/agents/orchestrator.py",
+                "backend/agents/coordinator.py",
+                "backend/agents/loop.py",
+                "backend/store.py",
+                "backend/tools/registry.py",
+            )
+        ])
+        self.assertTrue(result.satisfied)
 
     def test_run_command_requires_command_output_evidence(self):
         from agents.task_contracts import build_task_contract
