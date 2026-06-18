@@ -6,6 +6,7 @@ from typing import AsyncGenerator, Callable
 from agents.router import route_next_action, analyze_screenshot, vision_done_summary
 from agents.perception import perceive_screen
 from agents.safety import unsafe_tool_block_reason
+from agents.turn_policy import build_task_context, web_query
 from tools import (
     screenshot, get_screen_size,
     click, click_element, type_text, scroll, move_mouse, key_press, hotkey,
@@ -270,14 +271,15 @@ def repair_web_tool_call(tool: str, args: dict, task: str) -> tuple[str, dict, s
     sessions.
     """
     args = dict(args or {})
+    ctx = build_task_context([], task)
     if tool == "web_search" and task_requires_sources(task):
-        query = str(args.get("query") or infer_web_query(task)).strip()
+        query = str(args.get("query") or web_query(task, ctx) or infer_web_query(task)).strip()
         min_sources = int(args.get("min_sources") or infer_requested_source_count(task, default=3))
         return "web_research", {"query": query, "task": task, "min_sources": min_sources}, (
             "Reparerar webbanrop: använder web_research eftersom uppgiften kräver källor."
         )
     if tool in {"web_search", "web_research"} and not str(args.get("query") or "").strip():
-        query = infer_web_query(task)
+        query = web_query(task, ctx) or infer_web_query(task)
         if query:
             args["query"] = query
             args.setdefault("task", task)

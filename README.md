@@ -4,7 +4,7 @@ Local AI agent that controls the computer via Ollama models, controlled from web
 
 ## Requirements
 
-- [Ollama](https://ollama.com) running locally with `gemma4:latest` (or edit `backend/config.py`)
+- [Ollama](https://ollama.com) running locally with `gemma4:12b` (or edit `backend/config.py`)
 - [uv](https://docs.astral.sh/uv/) for Python
 - [pnpm](https://pnpm.io) + Node 18+ for the frontend
 
@@ -35,10 +35,10 @@ Opens at `http://localhost:3000`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OLLAMA_MODEL` | `gemma4:latest` | Primary / default LLM |
+| `OLLAMA_MODEL` | `gemma4:12b` | Primary / default LLM |
 | `OLLAMA_ROUTER_MODEL` | = `OLLAMA_MODEL` | Model the orchestrator classifies + picks on (must be fast & tools-capable) |
-| `OLLAMA_VISION_MODEL` | `gemma4:latest` | Vision model |
-| `OLLAMA_FALLBACK_MODEL` | `qwen3:14b` | Fallback LLM |
+| `OLLAMA_VISION_MODEL` | `qwen3.5:9b` | Vision model |
+| `OLLAMA_FALLBACK_MODEL` | `gpt-oss:20b` | Fallback / research LLM |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama URL |
 | `BACKEND_PORT` | `8000` | FastAPI port |
 | `MCP_PORT` | `3001` | MCP server port |
@@ -49,8 +49,9 @@ Opens at `http://localhost:3000`.
 Chat/computer turns run through an **in-turn coordinator** (`agents/coordinator.py`).
 A fast front-brain model receives the turn and, within that single turn, can:
 
-- **consult** a specialist model — for code it asks `qwen2.5-coder`, for hard
-  reasoning `qwen3`/`deepseek-r1` — and weave the answer in;
+- **consult** a specialist model — for code it can ask `devstral` or
+  `qwen2.5-coder`, for research/general reasoning `gpt-oss`, and for manual
+  hard reasoning `deepseek-r1` — and weave the answer in;
 - **perceive** the screen (screenshot + Set-of-Marks element list — the
   text-based "vision" path, no multimodal model needed);
 - run **OS/desktop tools** (run_command, read_file, click_element, …);
@@ -63,9 +64,9 @@ collapsing into a **Detaljer** panel once the turn finishes.
 
 The **Modell** dropdown / `/model` command picks the policy:
 
-- **Auto** (default) — the front brain is fast `gemma4`; it consults experts as
+- **Auto** (default) — the front brain is `gemma4:12b`; it consults experts as
   needed. This is the "best model per question, automatically" path.
-- **Pinned** (`/model qwen3`, `/model <prefix>`, or the dropdown) — that model
+- **Pinned** (`/model gpt-oss`, `/model <prefix>`, or the dropdown) — that model
   leads the turn instead. `/model` alone shows the current choice + options;
   `/model auto` returns to auto. Persisted per session.
 
@@ -80,7 +81,7 @@ may chain.
 
 - **Läge** — Auto lets the classifier route each turn; or force **Chatt** /
   **Dator** / **Kod** to do one thing distinctly. Forcing skips classification.
-- **Modell** — Auto (gemma4 front brain, consults experts) or pin a model.
+- **Modell** — Auto (`gemma4:12b` front brain, consults experts) or pin a model.
 - **Agent** — Claude Code vs Codex for the code route.
 
 All three persist per session.
@@ -99,12 +100,12 @@ Before the coordinator hands work to another model, two things happen:
   user's verbatim words are kept alongside, and the final reply is still written
   in the user's language.
 
-This role needs a model strong at the user's language. `gemma4:8b` mistranslates
-Swedish badly (it turned "vänd en sträng" into "watering a vine"); `gemma4:12b`
-and `qwen3:14b` get it right — so `OLLAMA_GATEWAY_MODEL` defaults to `gemma4:12b`
-and falls open to the verbatim request if that model isn't installed (safe — no
-corruption). Point it at a dedicated language model (llama3.1, gpt-oss, …) once
-pulled, or set `GATEWAY_REFINE_ENABLED=false` to skip refinement entirely.
+This role needs a model strong at the user's language. Local validation showed
+`gemma4:12b` preserves Swedish requests such as "vänd en sträng" correctly and
+returns usable short refinement output, so `OLLAMA_GATEWAY_MODEL` defaults to
+`gemma4:12b` and falls open to the verbatim request if that model isn't installed
+(safe — no corruption). Set `GATEWAY_REFINE_ENABLED=false` to skip refinement
+entirely.
 
 ## Long-term memory
 

@@ -77,9 +77,9 @@ continues its own session across turns.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OLLAMA_MODEL` | `gemma4:latest` | Primary LLM (orchestrator + router) |
-| `OLLAMA_VISION_MODEL` | `gemma4:latest` | Vision model (optional) |
-| `OLLAMA_VISION_ENABLED` | `false` | Enable image vision (needs a multimodal model) |
+| `OLLAMA_MODEL` | `gemma4:12b` | Primary LLM (orchestrator + router) |
+| `OLLAMA_VISION_MODEL` | `qwen3.5:9b` | Vision model (optional) |
+| `OLLAMA_VISION_ENABLED` | `true` | Enable image vision (needs a multimodal model) |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama endpoint |
 | `BACKEND_PORT` / `MCP_PORT` | `8000` / `3001` | Server ports |
 | `MAX_AGENT_STEPS` | `50` | Max desktop-agent loop iterations |

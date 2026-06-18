@@ -25,6 +25,12 @@ class CoordinatorTests(unittest.TestCase):
     def test_clarify_action_returns_needs_input_with_question(self):
         asyncio.run(self._clarify_action_returns_needs_input())
 
+    def test_required_first_tool_runs_before_answer(self):
+        asyncio.run(self._required_first_tool_runs_before_answer())
+
+    def test_file_output_requirement_blocks_early_answer(self):
+        asyncio.run(self._file_output_requirement_blocks_early_answer())
+
     def _experts(self):
         return {
             "qwen2.5-coder:14b": {"label": "Coder", "hint": "code", "tools": True},
@@ -38,7 +44,7 @@ class CoordinatorTests(unittest.TestCase):
         with mock.patch.object(coordinator, "available_expert_models", new=_av(self._experts())), \
              mock.patch.object(coordinator, "_decide_step", new=_seq([{"action": "answer", "thinking": "trivial"}])):
             outcome = await coordinator.run_coordinator(
-                "Hej!", events.append, asyncio.Event(), coordinator_model="gemma4:latest"
+                "Hej!", events.append, asyncio.Event(), coordinator_model="gemma4:12b"
             )
 
         self.assertEqual("done", outcome.status)
@@ -64,7 +70,7 @@ class CoordinatorTests(unittest.TestCase):
              mock.patch.object(coordinator, "_consult_expert", new=fake_consult), \
              mock.patch.object(coordinator, "_decide_step", new=_seq(decisions)):
             outcome = await coordinator.run_coordinator(
-                "Vänd en sträng i Python", events.append, asyncio.Event(), coordinator_model="gemma4:latest"
+                "Vänd en sträng i Python", events.append, asyncio.Event(), coordinator_model="gemma4:12b"
             )
 
         # Consulted the coder with the gateway-refined (English) instruction.
@@ -90,7 +96,7 @@ class CoordinatorTests(unittest.TestCase):
              mock.patch.object(coordinator, "_consult_expert", new=fake_consult), \
              mock.patch.object(coordinator, "_decide_step", new=_seq(decisions)):
             outcome = await coordinator.run_coordinator(
-                "Do a thing", lambda e: None, asyncio.Event(), coordinator_model="gemma4:latest"
+                "Do a thing", lambda e: None, asyncio.Event(), coordinator_model="gemma4:12b"
             )
 
         self.assertEqual([], called)
@@ -116,7 +122,7 @@ class CoordinatorTests(unittest.TestCase):
              mock.patch.object(coordinator, "_decide_step", new=_seq(decisions)):
             outcome = await coordinator.run_coordinator(
                 "Kom ihåg att jag heter Lucas", events.append, asyncio.Event(),
-                coordinator_model="gemma4:latest", session_id="sess-1",
+                coordinator_model="gemma4:12b", session_id="sess-1",
             )
 
         self.assertEqual([("Jag heter Lucas.", "fact", "sess-1")], saved)
@@ -130,11 +136,69 @@ class CoordinatorTests(unittest.TestCase):
         with mock.patch.object(coordinator, "available_expert_models", new=_av(self._experts())), \
              mock.patch.object(coordinator, "_decide_step", new=_seq(decisions)):
             outcome = await coordinator.run_coordinator(
-                "fixa den", lambda e: None, asyncio.Event(), coordinator_model="gemma4:latest"
+                "fixa den", lambda e: None, asyncio.Event(), coordinator_model="gemma4:12b"
             )
 
         self.assertEqual("needs_input", outcome.status)
         self.assertEqual("Vilken fil menar du?", outcome.detail)
+
+    async def _required_first_tool_runs_before_answer(self):
+        from agents import coordinator
+
+        events: list[dict] = []
+
+        async def fake_execute(tool, args, emit):
+            return "backend files: api/ws.py, agents/coordinator.py"
+
+        with mock.patch.object(coordinator, "available_expert_models", new=_av(self._experts())), \
+             mock.patch.object(coordinator, "search_skills", new=_av([])), \
+             mock.patch.object(coordinator.agent_loop, "execute_tool", new=fake_execute), \
+             mock.patch.object(coordinator, "_decide_step", new=_seq([{"action": "answer", "thinking": "have files"}])):
+            outcome = await coordinator.run_coordinator(
+                "Förklara backendflödet",
+                events.append,
+                asyncio.Event(),
+                coordinator_model="gemma4:12b",
+                required_first_tool={"tool": "list_dir", "args": {"path": "."}},
+            )
+
+        self.assertEqual("done", outcome.status)
+        self.assertIn("list_dir", outcome.action_log)
+        self.assertTrue(any(e["type"] == "action" and e["tool"] == "list_dir" for e in events))
+
+    async def _file_output_requirement_blocks_early_answer(self):
+        from agents import coordinator
+
+        events: list[dict] = []
+
+        async def fake_execute(tool, args, emit):
+            return "wrote model_report.md"
+
+        decisions = [
+            {"action": "answer", "thinking": "too early"},
+            {
+                "action": "tool",
+                "tool": "run_command",
+                "args": {"cmd": "Set-Content -Path model_report.md -Value 'ok'"},
+                "thinking": "write report",
+            },
+            {"action": "answer", "thinking": "done"},
+        ]
+        with mock.patch.object(coordinator, "available_expert_models", new=_av(self._experts())), \
+             mock.patch.object(coordinator, "search_skills", new=_av([])), \
+             mock.patch.object(coordinator.agent_loop, "execute_tool", new=fake_execute), \
+             mock.patch.object(coordinator, "_decide_step", new=_seq(decisions)):
+            outcome = await coordinator.run_coordinator(
+                "Skapa en rapportfil",
+                events.append,
+                asyncio.Event(),
+                coordinator_model="gemma4:12b",
+                require_file_output=True,
+            )
+
+        self.assertEqual("done", outcome.status)
+        self.assertIn("Set-Content", outcome.action_log)
+        self.assertTrue(any(e["type"] == "action" and e["tool"] == "run_command" for e in events))
 
 
 class ToolCallMappingTests(unittest.TestCase):
@@ -210,10 +274,10 @@ class ToolCallMappingTests(unittest.TestCase):
 
     def test_meta_schemas_constrain_consult_to_available_experts(self):
         from agents import coordinator
-        schemas = coordinator._meta_action_schemas({"qwen2.5-coder:14b": {}, "qwen3:14b": {}})
+        schemas = coordinator._meta_action_schemas({"qwen2.5-coder:14b": {}, "gpt-oss:20b": {}})
         consult = next(s for s in schemas if s["function"]["name"] == "consult")
         self.assertEqual(
-            ["qwen2.5-coder:14b", "qwen3:14b"],
+            ["qwen2.5-coder:14b", "gpt-oss:20b"],
             consult["function"]["parameters"]["properties"]["model"]["enum"],
         )
 

@@ -22,12 +22,14 @@ import asyncio
 import json
 import os
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import WebSocket, WebSocketDisconnect
 
 from agents.coordinator import run_coordinator
 from agents.gateway import refine_query
 from agents.orchestrator import classify_turn, compose_reply, should_offload_code
+from agents.turn_policy import build_task_context, choose_coordinator_model, tool_task
 from codex_logs import summarize_codex_session
 from diagnostics import append_turn_diagnostic
 from config import (
@@ -35,7 +37,6 @@ from config import (
     OLLAMA_MODELS,
     PILOT_AUTH_TOKEN,
     is_known_model,
-    tools_capable_model,
 )
 from connections import register, unregister
 from jobs import (
@@ -235,6 +236,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
         prior = list(conversation)
         conversation.append({"role": "user", "content": text})
+        task_context = build_task_context(prior, text)
+        effective_task = tool_task(text, task_context)
 
         project = os.path.basename(cwd.rstrip("\\/")) if cwd else None
         # Recall relevant long-term memories for this turn (degrades to "" on failure).
@@ -248,7 +251,7 @@ async def websocket_endpoint(websocket: WebSocket):
         route = decision["route"]
         # The coordinator (front brain) is fast gemma4 in auto mode; a pin makes
         # the chosen model the lead. It consults installed experts as needed.
-        coordinator_model = OLLAMA_MODEL if model_mode == "auto" else tools_capable_model(model_mode)
+        coordinator_model = choose_coordinator_model(model_mode, task_context)
 
         def emit(event: dict):
             enriched = {**event, "turn": turn, "route": route}
@@ -282,6 +285,18 @@ async def websocket_endpoint(websocket: WebSocket):
                     "The user wants you to do something on this computer or find something "
                     "out; act or consult when it helps."
                 )
+                if task_context.requires_current_sources:
+                    intent += (
+                        " This task needs current or externally verified information: use "
+                        "web_research with a standalone query and ground the answer in the "
+                        "sources you fetched."
+                    )
+                if task_context.creates_file:
+                    intent += (
+                        " The user expects a local output file: gather the needed data, "
+                        "write the requested file with an appropriate command, and report "
+                        "the exact path."
+                    )
             elif route == "code":
                 intent = (
                     "The user wants to work on the active project's code/files. Inspect with "
@@ -295,10 +310,26 @@ async def websocket_endpoint(websocket: WebSocket):
                     "something out, look something up, or do something on the computer, USE "
                     "the right tool rather than just describing it; otherwise just answer."
                 )
+            required_first_tool = None
+            if task_context.intent == "project_analysis":
+                intent += (
+                    " This is a project/backend flow analysis: inspect local files with "
+                    "list_dir/search_files/read_file before answering. Do not answer from "
+                    "general knowledge or claim no project data is available until you have "
+                    "tried the file tools."
+                )
+                required_first_tool = {"tool": "list_dir", "args": {"path": "."}}
+            if task_context.creates_file:
+                intent += (
+                    " This task requires a local output file. Do not answer as complete "
+                    "until you have written the file with run_command and verified that it exists."
+                )
             outcome = await run_coordinator(
-                text, emit, abort, prior, project_cwd=cwd,
+                effective_task, emit, abort, prior, project_cwd=cwd,
                 coordinator_model=coordinator_model, intent_hint=intent,
                 memories=memories, session_id=session_id,
+                required_first_tool=required_first_tool,
+                require_file_output=task_context.creates_file,
             )
             turn_status = outcome.status
             if outcome.status == "needs_input":
@@ -308,11 +339,45 @@ async def websocket_endpoint(websocket: WebSocket):
                 conversation.append({"role": "assistant", "content": outcome.detail})
                 emit({"type": "done"})
             else:
-                grounding = outcome if outcome.action_log else None
-                reply = await _stream_text(
-                    compose_reply(conversation, grounding, coordinator_model, memories), emit, abort
+                grounding = outcome if (outcome.action_log or task_context.needs_tools) else None
+                reply_source = compose_reply(
+                    conversation, grounding, _reply_model(coordinator_model), memories
                 )
-                conversation.append({"role": "assistant", "content": reply or outcome.detail or "Klar"})
+                if task_context.creates_file:
+                    reply = await _collect_text(reply_source, abort)
+                    if not _file_output_verified(diagnostic_events):
+                        path = _write_fallback_markdown_report(
+                            outcome.action_log or reply,
+                            output_dir=Path(cwd) if cwd else Path.cwd(),
+                            session_id=session_id or "session",
+                            turn=turn,
+                        )
+                        if path.exists():
+                            diagnostic_events.append({
+                                "type": "action",
+                                "tool": "fallback_write_file",
+                                "args": {"path": str(path)},
+                                "turn": turn,
+                                "route": route,
+                            })
+                            reply = (
+                                f"Jag kunde inte få modellen att skapa filen via shell-kommandot, "
+                                f"så backend skrev en fallback-rapport och verifierade att den finns:\n\n"
+                                f"`{path}`"
+                            )
+                        else:
+                            reply = _missing_file_output_reply(outcome.action_log)
+                    emit({"type": "assistant_delta", "content": reply})
+                else:
+                    reply = await _stream_text(reply_source, emit, abort)
+                conversation.append({
+                    "role": "assistant",
+                    "content": reply or outcome.detail or "Klar",
+                    "meta": _turn_meta(
+                        turn, route, coordinator_model, diagnostic_events,
+                        outcome.status, task_context.intent,
+                    ),
+                })
                 emit({"type": "done"})
 
         else:  # explicit offload to the external coding agent
@@ -376,8 +441,18 @@ async def websocket_endpoint(websocket: WebSocket):
                 claude_session_id = stored.get("claude_session_id")
                 codex_session_id = stored.get("codex_session_id")
                 agent = stored.get("agent", "claude")
-                model_mode = stored.get("model_mode", "auto")
-                route_mode = stored.get("route_mode", "auto")
+                stored_model_mode = stored.get("model_mode", "auto")
+                model_mode = (
+                    stored_model_mode
+                    if stored_model_mode == "auto" or is_known_model(stored_model_mode)
+                    else "auto"
+                )
+                stored_route_mode = stored.get("route_mode", "auto")
+                route_mode = (
+                    stored_route_mode
+                    if stored_route_mode in ("auto", "chat", "computer", "code")
+                    else "auto"
+                )
                 # (Re-)register this connection so the scheduler can push fired
                 # jobs to it. Move the registration if the session id changed.
                 if registered_session and registered_session != session_id:
@@ -523,6 +598,90 @@ def _diagnostic_turn_status(events: list[dict], default: str, aborted: bool) -> 
     return default
 
 
+def _turn_meta(
+    turn: int,
+    route: str,
+    model: str,
+    events: list[dict],
+    status: str,
+    intent: str = "",
+) -> dict:
+    return {
+        "turn": turn,
+        "route": route,
+        "model": model,
+        "final_source": _final_source(events),
+        "tools": [
+            str(event.get("tool"))
+            for event in events
+            if event.get("type") == "action" and event.get("tool")
+        ],
+        "status": status,
+        "intent": intent,
+    }
+
+
+def _reply_model(coordinator_model: str) -> str:
+    """Use the stable default model for final user-visible synthesis.
+
+    Specialist/coordinator models can be chosen for tool decisions, but the final
+    answer layer should prioritize reliable visible content over hidden thinking.
+    """
+    return OLLAMA_MODEL
+
+
+def _file_output_verified(events: list[dict]) -> bool:
+    return any(
+        event.get("type") == "action"
+        and event.get("tool") == "run_command"
+        and _command_writes_file(str((event.get("args") or {}).get("cmd") or ""))
+        for event in events
+    )
+
+
+def _command_writes_file(cmd: str) -> bool:
+    lowered = cmd.lower()
+    return any(
+        token in lowered
+        for token in (
+            "set-content",
+            "out-file",
+            "new-item",
+            " add-content",
+            ">>",
+            ">",
+            "tee-object",
+            "python -c",
+        )
+    )
+
+
+def _missing_file_output_reply(action_log: str) -> str:
+    suffix = f"\n\nUnderlag som hann samlas:\n{action_log}" if action_log else ""
+    return (
+        "Jag kunde inte verifiera att den begärda filen faktiskt skapades. "
+        "Jag ska inte påstå att filen finns förrän ett skrivkommando och en "
+        "verifiering har körts."
+        f"{suffix}"
+    )
+
+
+def _write_fallback_markdown_report(
+    content: str,
+    output_dir: Path,
+    session_id: str,
+    turn: int,
+) -> Path:
+    safe_session = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in session_id)[:48]
+    path = output_dir / f"pilot_report_{safe_session}_{turn}.md"
+    text = content.strip() or "Ingen rapporttext genererades."
+    if not text.startswith("#"):
+        text = f"# Pilotrapport\n\n{text}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path.write_text(text + "\n", encoding="utf-8")
+    return path
+
+
 def _friendly_agent_error(text: str) -> str | None:
     """Turn a raw coding-agent failure into a clear, actionable message.
 
@@ -632,4 +791,14 @@ async def _stream_text(source, emit, abort: asyncio.Event) -> str:
             continue
         parts.append(chunk)
         emit({"type": "assistant_delta", "content": chunk})
+    return "".join(parts).strip()
+
+
+async def _collect_text(source, abort: asyncio.Event) -> str:
+    parts: list[str] = []
+    async for chunk in source:
+        if abort.is_set():
+            break
+        if chunk:
+            parts.append(chunk)
     return "".join(parts).strip()
