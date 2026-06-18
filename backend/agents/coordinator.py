@@ -29,6 +29,7 @@ from agents import loop as agent_loop
 from agents.gateway import refine_query
 from agents.json_utils import extract_json_object
 from agents.loop import LoopOutcome, make_event
+from agents.runtime_state import RuntimeState
 from agents.safety import unsafe_tool_block_reason
 from agents.task_contracts import TaskContract, build_task_contract
 from config import (
@@ -391,7 +392,7 @@ async def run_coordinator(
     skills = format_skills(await search_skills(task))
 
     notes: list[str] = []  # human-readable evidence gathered this turn (grounds the reply)
-    contract_evidence: list[dict] = []
+    runtime_state = RuntimeState()
     history: list[dict] = []  # for perceive() + desktop-tool safety gating
     last_observation = ""
     consulted: set[str] = set()
@@ -410,8 +411,16 @@ async def run_coordinator(
             except Exception as exc:
                 result = f"Error executing {tool}: {exc}"
                 emit(make_event("error", content=result))
+                runtime_state.record_error(result, tool, args)
             notes.append(f"{tool}({args}) -> {result[:800]}")
-            contract_evidence.append(_tool_evidence(tool, args, result))
+            evidence = _tool_evidence(tool, args, result)
+            runtime_state.record_tool_result(
+                tool,
+                args,
+                result,
+                bool(evidence["ok"]),
+                bool(evidence["artifact_verified"]),
+            )
             if tool == "run_command" and _command_writes_file(str(args.get("cmd") or args.get("command") or "")):
                 file_output_done = True
         else:
@@ -424,7 +433,8 @@ async def run_coordinator(
             decision = await _decide_step(coordinator_model, system, context, experts, use_tools)
         except Exception as exc:
             emit(make_event("error", content=f"Coordinator error: {exc}"))
-            return LoopOutcome("error", _render_notes(notes), f"Coordinator error: {exc}")
+            runtime_state.record_error(f"Coordinator error: {exc}")
+            return LoopOutcome("error", _render_notes(notes), f"Coordinator error: {exc}", runtime_state)
 
         action = str(decision.get("action", "answer")).strip().lower()
         if action not in VALID_ACTIONS:
@@ -434,28 +444,31 @@ async def run_coordinator(
             emit(make_event("thinking", content=thinking))
 
         if action == "answer":
-            contract_result = contract.evaluate(contract_evidence) if contract else None
+            contract_result = contract.evaluate(runtime_state.evidence_items) if contract else None
             if contract_result and not contract_result.satisfied:
+                runtime_state.set_contract_result(contract, contract_result)
                 notes.append(
                     "Contract not satisfied; missing "
                     + ", ".join(contract_result.missing)
                     + ". Continue gathering evidence or explicitly fail."
                 )
                 continue
+            if contract_result:
+                runtime_state.set_contract_result(contract, contract_result)
             if require_file_output and not file_output_done:
                 notes.append(
                     "The user requested a local output file, but no file-writing command "
                     "has run yet. Use run_command to write the file and verify it before answering."
                 )
                 continue
-            return LoopOutcome("done", _render_notes(notes))
+            return LoopOutcome("done", _render_notes(notes), runtime_state=runtime_state)
 
         if action == "clarify":
             question = str(decision.get("question") or "").strip()
             if question:
-                return LoopOutcome("needs_input", _render_notes(notes), question)
+                return LoopOutcome("needs_input", _render_notes(notes), question, runtime_state)
             # No question produced — fall through to answering rather than stalling.
-            return LoopOutcome("done", _render_notes(notes))
+            return LoopOutcome("done", _render_notes(notes), runtime_state=runtime_state)
 
         if action == "consult":
             model = decision.get("model", "")
@@ -504,6 +517,7 @@ async def run_coordinator(
         if block:
             emit(make_event("error", content=block))
             notes.append(f"Blocked: {block}")
+            runtime_state.record_error(block, tool, args)
             continue
         args = agent_loop.apply_project_cwd_to_args(tool, args, project_cwd)
         tool, args, repair_note = agent_loop.repair_web_tool_call(tool, args, task)
@@ -515,8 +529,16 @@ async def run_coordinator(
         except Exception as exc:
             result = f"Error executing {tool}: {exc}"
             emit(make_event("error", content=result))
+            runtime_state.record_error(result, tool, args)
         notes.append(f"{tool}({args}) -> {result[:800]}")
-        contract_evidence.append(_tool_evidence(tool, args, result))
+        evidence = _tool_evidence(tool, args, result)
+        runtime_state.record_tool_result(
+            tool,
+            args,
+            result,
+            bool(evidence["ok"]),
+            bool(evidence["artifact_verified"]),
+        )
         if tool == "run_command" and _command_writes_file(str(args.get("cmd") or args.get("command") or "")):
             file_output_done = True
         if tool in agent_loop.POST_ACTION_OBSERVE_TOOLS:
@@ -526,6 +548,7 @@ async def run_coordinator(
     return LoopOutcome(
         "aborted" if abort.is_set() else "max_steps",
         _render_notes(notes),
+        runtime_state=runtime_state,
     )
 
 
