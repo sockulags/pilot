@@ -101,11 +101,29 @@ class TurnPolicyTests(unittest.TestCase):
         self.assertEqual("research", task_contract_intent(build_task_context([], "Research Volvo")))
         self.assertEqual("create_file", task_contract_intent(build_task_context([], "Skapa en rapportfil")))
         self.assertEqual(
+            "local_model_audit_report",
+            task_contract_intent(build_task_context([], "Skapa en local model audit report som markdown")),
+        )
+        self.assertEqual(
             "project_analysis",
             task_contract_intent(build_task_context([], "Förklara det här projektets backendflöde")),
         )
         self.assertEqual("run_command", task_contract_intent(build_task_context([], "Kör git status")))
         self.assertIsNone(task_contract_intent(build_task_context([], "Öppna Notepad")))
+
+    def test_local_model_audit_report_routes_to_computer_file_workflow(self):
+        from agents.turn_policy import build_task_context, deterministic_route
+
+        message = "Skapa en local model audit report som jämför installerade och konfigurerade Ollama-modeller"
+
+        ctx = build_task_context([], message)
+        decision = deterministic_route([], message, project="pilot")
+
+        self.assertEqual("local_model_audit_report", ctx.intent)
+        self.assertTrue(ctx.creates_file)
+        self.assertTrue(ctx.needs_tools)
+        self.assertEqual("computer", decision["route"])
+        self.assertIn("model audit", decision["thinking"])
 
 
 class StoreMetadataTests(unittest.TestCase):

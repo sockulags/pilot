@@ -7,8 +7,12 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 
-_PATH_ARG_RE = re.compile(
-    r"(?:-Path\s+|-LiteralPath\s+|Test-Path\s+|Get-Item\s+)(['\"]?)(?P<path>[^'\"\r\n]+?)\1(?:\s|$)",
+_EXPLICIT_PATH_ARG_RE = re.compile(
+    r"(?:-LiteralPath\s+|(?<![A-Za-z])-Path\s+|Get-Item\s+)(['\"]?)(?P<path>[^'\"\r\n]+?)\1(?:\s|$)",
+    re.IGNORECASE,
+)
+_TEST_PATH_ARG_RE = re.compile(
+    r"Test-Path\s+(?!-)(['\"]?)(?P<path>[^'\"\r\n]+?)\1(?:\s|$)",
     re.IGNORECASE,
 )
 _URL_RE = re.compile(r"https?://[^\s)>\]]+")
@@ -122,7 +126,10 @@ class RuntimeState:
 
 
 def _artifact_path_from_command(cmd: str) -> str:
-    match = _PATH_ARG_RE.search(cmd)
+    match = _EXPLICIT_PATH_ARG_RE.search(cmd)
+    if match:
+        return match.group("path").strip()
+    match = _TEST_PATH_ARG_RE.search(cmd)
     if match:
         return match.group("path").strip()
     return ""

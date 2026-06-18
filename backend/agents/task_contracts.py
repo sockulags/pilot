@@ -73,6 +73,23 @@ def _has_requirement(name: str, evidence: tuple[dict, ...]) -> bool:
             and "output:" in str(item.get("text", "")).lower()
             for item in evidence
         )
+    if name == "ollama_list_output":
+        return any(
+            item.get("ok")
+            and item.get("tool") == "run_command"
+            and "ollama list" in _command_text(item).lower()
+            and "output:" in str(item.get("text", "")).lower()
+            for item in evidence
+        )
+    if name == "local_model_config":
+        return _has_all_files(("backend/config.py",), evidence)
+    if name == "local_model_default_docs":
+        return any(
+            _normalize_path(_evidence_path(item)).endswith(path)
+            for item in evidence
+            if item.get("ok") and item.get("tool") == "read_file"
+            for path in ("readme.md", "getting_started.md", "backend/.env")
+        )
     return False
 
 
@@ -104,6 +121,13 @@ def _evidence_path(item: dict) -> str:
     if first_line.startswith("File: "):
         return first_line.removeprefix("File: ").strip()
     return ""
+
+
+def _command_text(item: dict) -> str:
+    args = item.get("args")
+    if isinstance(args, dict):
+        return str(args.get("cmd") or args.get("command") or item.get("text") or "")
+    return str(item.get("text") or "")
 
 
 def _normalize_path(path: str) -> str:
@@ -179,5 +203,24 @@ _CONTRACTS: dict[str, TaskContract] = {
         completion_criteria="The requested command ran and produced output or an explicit error.",
         failure_criteria="The command cannot be executed or is blocked by safety policy.",
         final_answer_requirements="Summarize the command output, including errors if the command failed.",
+    ),
+    "local_model_audit_report": TaskContract(
+        intent="local_model_audit_report",
+        required_evidence=(
+            EvidenceRequirement("ollama_list_output", "ollama list output"),
+            EvidenceRequirement("local_model_config", "backend/config.py inspected"),
+            EvidenceRequirement("local_model_default_docs", "model env/default docs inspected"),
+            EvidenceRequirement("verified_artifact", "verified local artifact"),
+        ),
+        allowed_tools=frozenset({"run_command", "read_file"}),
+        completion_criteria=(
+            "Run ollama list, inspect backend/config.py plus relevant env/default docs, "
+            "compare installed and configured models, write a Markdown report, and verify it exists."
+        ),
+        failure_criteria="The model audit report cannot be written or verified.",
+        final_answer_requirements=(
+            "Report the verified artifact path exactly. Do not claim the file exists unless "
+            "RuntimeState contains the verified artifact path."
+        ),
     ),
 }

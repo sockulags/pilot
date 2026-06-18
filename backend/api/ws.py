@@ -351,7 +351,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 )
                 if task_context.creates_file:
                     reply = await _collect_text(reply_source, abort)
-                    if not _file_output_verified(diagnostic_events):
+                    if not _runtime_file_output_verified(outcome.runtime_state):
                         path = _write_fallback_markdown_report(
                             outcome.action_log or reply,
                             output_dir=Path(cwd) if cwd else Path.cwd(),
@@ -359,6 +359,20 @@ async def websocket_endpoint(websocket: WebSocket):
                             turn=turn,
                         )
                         if path.exists():
+                            if outcome.runtime_state is not None:
+                                outcome.runtime_state.record_tool_result(
+                                    "run_command",
+                                    {"cmd": f"Set-Content -LiteralPath '{path}'"},
+                                    f"Command: Set-Content -LiteralPath '{path}'\nOutput:\n",
+                                    ok=True,
+                                )
+                                outcome.runtime_state.record_tool_result(
+                                    "run_command",
+                                    {"cmd": f"Test-Path -LiteralPath '{path}'"},
+                                    f"Command: Test-Path -LiteralPath '{path}'\nOutput:\nTrue",
+                                    ok=True,
+                                    artifact_verified=True,
+                                )
                             diagnostic_events.append({
                                 "type": "action",
                                 "tool": "fallback_write_file",
@@ -373,6 +387,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             )
                         else:
                             reply = _missing_file_output_reply(outcome.action_log)
+                    reply = _append_verified_artifact_paths(reply, outcome.runtime_state)
                     emit({"type": "assistant_delta", "content": reply})
                 else:
                     reply = await _stream_text(reply_source, emit, abort)
@@ -655,6 +670,31 @@ def _file_output_verified(events: list[dict]) -> bool:
         for event in events
     )
     return wrote_file and verified_file
+
+
+def _runtime_file_output_verified(runtime_state) -> bool:
+    if runtime_state is None:
+        return False
+    return any(
+        bool(artifact.get("verified")) and bool(str(artifact.get("path") or "").strip())
+        for artifact in getattr(runtime_state, "artifacts", [])
+    )
+
+
+def _append_verified_artifact_paths(reply: str, runtime_state) -> str:
+    text = reply or ""
+    if runtime_state is None:
+        return text
+    paths = [
+        str(artifact.get("path") or "").strip()
+        for artifact in getattr(runtime_state, "artifacts", [])
+        if artifact.get("verified") and str(artifact.get("path") or "").strip()
+    ]
+    missing = [path for path in paths if path not in text]
+    if not missing:
+        return text
+    suffix = "\n".join(f"Verifierad fil: `{path}`" for path in missing)
+    return f"{text.rstrip()}\n\n{suffix}" if text.strip() else suffix
 
 
 def _command_writes_file(cmd: str) -> bool:

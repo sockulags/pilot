@@ -40,6 +40,9 @@ class CoordinatorTests(unittest.TestCase):
     def test_project_analysis_playbook_reads_backend_flow_files_before_answer(self):
         asyncio.run(self._project_analysis_playbook_reads_backend_flow_files_before_answer())
 
+    def test_local_model_audit_playbook_creates_verified_markdown_artifact(self):
+        asyncio.run(self._local_model_audit_playbook_creates_verified_markdown_artifact())
+
     def _experts(self):
         return {
             "qwen2.5-coder:14b": {"label": "Coder", "hint": "code", "tools": True},
@@ -334,6 +337,65 @@ class CoordinatorTests(unittest.TestCase):
             self.assertIn(f"C:/repo/{path}", read_paths)
         self.assertIn("backend/api/ws.py", outcome.runtime_state.files_read[0].replace("\\", "/"))
         self.assertTrue(any(e["type"] == "action" and e["tool"] == "read_file" for e in events))
+
+    async def _local_model_audit_playbook_creates_verified_markdown_artifact(self):
+        from agents import coordinator
+
+        events: list[dict] = []
+        commands: list[str] = []
+        read_paths: list[str] = []
+
+        async def fake_execute(tool, args, emit):
+            if tool == "run_command":
+                cmd = args["cmd"]
+                commands.append(cmd)
+                if "ollama list" in cmd:
+                    return (
+                        "Command: ollama list\nOutput:\n"
+                        "NAME              ID      SIZE      MODIFIED\n"
+                        "gemma4:12b        abc     8 GB      today\n"
+                        "qwen3.5:9b        def     6 GB      today\n"
+                    )
+                if "Test-Path" in cmd:
+                    return "Command: Test-Path -LiteralPath C:\\repo\\local_model_audit_report.md\nOutput:\nTrue"
+                return "Command: Set-Content -LiteralPath C:\\repo\\local_model_audit_report.md\nOutput:\n"
+            read_paths.append(args["path"].replace("\\", "/"))
+            if args["path"].endswith("config.py"):
+                return (
+                    "File: C:\\repo\\backend\\config.py\nContent:\n"
+                    'OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma4:12b")\n'
+                    'OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "qwen3.5:9b")\n'
+                    'OLLAMA_FALLBACK_MODEL = os.getenv("OLLAMA_FALLBACK_MODEL", "gpt-oss:20b")\n'
+                    'OLLAMA_MODELS: dict[str, dict] = {"gemma4:12b": {}, "gpt-oss:20b": {}}\n'
+                )
+            return f"File: {args['path']}\nContent:\n| `OLLAMA_MODEL` | `gemma4:12b` |"
+
+        with mock.patch.object(coordinator, "available_expert_models", new=_av(self._experts())), \
+             mock.patch.object(coordinator, "search_skills", new=_av([])), \
+             mock.patch.object(coordinator.agent_loop, "execute_tool", new=fake_execute), \
+             mock.patch.object(coordinator, "_decide_step", new=_seq([])):
+            outcome = await coordinator.run_coordinator(
+                "Skapa en local model audit report",
+                events.append,
+                asyncio.Event(),
+                project_cwd=r"C:\repo",
+                coordinator_model="gemma4:12b",
+                task_contract_intent="local_model_audit_report",
+            )
+
+        self.assertEqual("done", outcome.status)
+        self.assertIn("ollama list", commands[0])
+        self.assertIn("C:/repo/backend/config.py", read_paths)
+        self.assertIn("C:/repo/README.md", read_paths)
+        self.assertTrue(any("Set-Content" in cmd and ".md" in cmd for cmd in commands))
+        self.assertTrue(any("Test-Path" in cmd and ".md" in cmd for cmd in commands))
+        self.assertEqual(
+            [{"path": r"C:\repo\local_model_audit_report.md", "verified": True}],
+            outcome.runtime_state.artifacts,
+        )
+        self.assertTrue(outcome.runtime_state.requirements["satisfied"])
+        self.assertIn("gemma4:12b", outcome.action_log)
+        self.assertIn("gpt-oss:20b", outcome.action_log)
 
 
 class ToolCallMappingTests(unittest.TestCase):

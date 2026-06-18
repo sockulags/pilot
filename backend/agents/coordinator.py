@@ -21,6 +21,8 @@ WebSocket layer reuses the existing ``outcome -> compose_reply`` flow.
 
 import asyncio
 import logging
+import re
+from pathlib import Path
 from typing import Callable
 
 import httpx
@@ -427,6 +429,9 @@ async def run_coordinator(
                 notes,
             )
 
+    if contract and contract.intent == "local_model_audit_report" and not abort.is_set():
+        return await _run_local_model_audit_playbook(project_cwd, emit, runtime_state, notes, contract)
+
     while steps < COORDINATOR_MAX_STEPS and not abort.is_set():
         steps += 1
         context = _build_decision_context(task, conversation, experts, notes, memories, skills)
@@ -553,6 +558,96 @@ async def run_coordinator(
     )
 
 
+async def _run_local_model_audit_playbook(
+    project_cwd: str | None,
+    emit: Callable[[dict], None],
+    runtime_state: RuntimeState,
+    notes: list[str],
+    contract: TaskContract,
+) -> LoopOutcome:
+    root = Path(project_cwd) if project_cwd else Path.cwd()
+    report_path = root / "local_model_audit_report.md"
+
+    _ollama_args, ollama_output = await _execute_and_record_tool(
+        "run_command",
+        {"cmd": "ollama list"},
+        project_cwd,
+        emit,
+        runtime_state,
+        notes,
+    )
+    _config_args, config_text = await _execute_and_record_tool(
+        "read_file",
+        {"path": "backend/config.py"},
+        project_cwd,
+        emit,
+        runtime_state,
+        notes,
+    )
+
+    doc_texts: dict[str, str] = {}
+    for path in ("README.md", "GETTING_STARTED.md"):
+        _args, text = await _execute_and_record_tool(
+            "read_file",
+            {"path": path},
+            project_cwd,
+            emit,
+            runtime_state,
+            notes,
+        )
+        doc_texts[path] = text
+
+    env_path = root / "backend" / ".env"
+    env_text = ""
+    if env_path.exists():
+        _env_args, env_text = await _execute_and_record_tool(
+            "read_file",
+            {"path": "backend/.env"},
+            project_cwd,
+            emit,
+            runtime_state,
+            notes,
+        )
+        doc_texts["backend/.env"] = env_text
+
+    report = _build_local_model_audit_report(
+        ollama_output=ollama_output,
+        config_text=config_text,
+        doc_texts=doc_texts,
+        env_text=env_text,
+        report_path=str(report_path),
+    )
+    await _execute_and_record_tool(
+        "run_command",
+        {
+            "cmd": (
+                f"Set-Content -LiteralPath {_ps_quote(str(report_path))} "
+                f"-Value @'\n{_safe_here_string(report)}\n'@ -Encoding UTF8"
+            )
+        },
+        project_cwd,
+        emit,
+        runtime_state,
+        notes,
+    )
+    await _execute_and_record_tool(
+        "run_command",
+        {"cmd": f"Test-Path -LiteralPath {_ps_quote(str(report_path))}"},
+        project_cwd,
+        emit,
+        runtime_state,
+        notes,
+    )
+
+    result = contract.evaluate(runtime_state.evidence_items)
+    runtime_state.set_contract_result(contract, result)
+    if not result.satisfied:
+        notes.append("Contract not satisfied; missing " + ", ".join(result.missing) + ".")
+        return LoopOutcome("error", _render_notes(notes), runtime_state=runtime_state)
+    notes.append(f"Verified local model audit report: {report_path}")
+    return LoopOutcome("done", _render_notes(notes), f"Verified artifact: {report_path}", runtime_state)
+
+
 async def _execute_and_record_tool(
     tool: str,
     args: dict,
@@ -583,6 +678,118 @@ async def _execute_and_record_tool(
 
 def _render_notes(notes: list[str]) -> str:
     return "\n".join(f"- {n}" for n in notes[-15:]) if notes else ""
+
+
+def _build_local_model_audit_report(
+    ollama_output: str,
+    config_text: str,
+    doc_texts: dict[str, str],
+    env_text: str,
+    report_path: str,
+) -> str:
+    installed = _parse_ollama_list_models(ollama_output)
+    configured = _parse_configured_models(config_text)
+    env_overrides = _parse_env_model_values(env_text)
+    documented_defaults = {
+        model
+        for text in doc_texts.values()
+        for model in _parse_configured_models(text)
+    }
+    effective_configured = sorted(set(configured) | set(env_overrides.values()))
+    installed_set = set(installed)
+    configured_set = set(effective_configured)
+    missing = sorted(configured_set - installed_set)
+    extra = sorted(installed_set - configured_set)
+    matching = sorted(installed_set & configured_set)
+
+    lines = [
+        "# Local Model Audit Report",
+        "",
+        f"Report path: `{report_path}`",
+        "",
+        "## Inputs inspected",
+        "",
+        "- `ollama list`",
+        "- `backend/config.py`",
+    ]
+    for path in sorted(doc_texts):
+        lines.append(f"- `{path}`")
+
+    lines.extend([
+        "",
+        "## Installed models",
+        "",
+        *_markdown_items(installed),
+        "",
+        "## Configured models",
+        "",
+        *_markdown_items(effective_configured),
+        "",
+        "## Comparison",
+        "",
+        f"- Matching installed/configured models: {', '.join(matching) if matching else '(none)'}",
+        f"- Configured but not installed: {', '.join(missing) if missing else '(none)'}",
+        f"- Installed but not configured: {', '.join(extra) if extra else '(none)'}",
+        "",
+        "## Environment overrides",
+        "",
+        *_markdown_items(f"{key}={value}" for key, value in sorted(env_overrides.items())),
+        "",
+        "## Documented defaults observed",
+        "",
+        *_markdown_items(sorted(documented_defaults)),
+    ])
+    return "\n".join(lines).strip() + "\n"
+
+
+def _parse_ollama_list_models(text: str) -> list[str]:
+    body = str(text or "")
+    if "Output:" in body:
+        body = body.split("Output:", 1)[1]
+    models: list[str] = []
+    for raw_line in body.splitlines():
+        line = raw_line.strip()
+        if not line or line.lower().startswith("name "):
+            continue
+        name = line.split()[0]
+        if ":" in name and name not in models:
+            models.append(name)
+    return models
+
+
+def _parse_configured_models(text: str) -> list[str]:
+    models: list[str] = []
+    for match in re.findall(r"['\"]([A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+)['\"]", str(text or "")):
+        if match not in models:
+            models.append(match)
+    return models
+
+
+def _parse_env_model_values(text: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key.startswith("OLLAMA_") and ":" in value:
+            values[key] = value
+    return values
+
+
+def _markdown_items(items) -> list[str]:
+    values = [str(item) for item in items if str(item)]
+    return [f"- `{item}`" for item in values] or ["- `(none)`"]
+
+
+def _ps_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _safe_here_string(value: str) -> str:
+    return str(value).replace("\n'@", "\n' @")
 
 
 def _command_writes_file(cmd: str) -> bool:
