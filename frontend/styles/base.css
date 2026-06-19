@@ -34,3 +34,16 @@ button {
 
 ::-webkit-scrollbar              { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb        { background: #1e1f29; border-radius: 8px; }
+
+/* skip link — visually hidden until focused */
+.skip-link {
+  position: fixed; top: 8px; left: 8px; z-index: 100;
+  transform: translateY(-150%);
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border-2); border-radius: var(--r-sm);
+  padding: 8px 14px; font-size: 13px;
+  transition: transform .15s;
+}
+.skip-link:focus { transform: none; }
+
+main:focus { outline: none; }
