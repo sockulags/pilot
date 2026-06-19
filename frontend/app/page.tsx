@@ -408,9 +408,13 @@ function Workspace() {
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    atBottomRef.current = distanceFromBottom < 120;
-    setShowJump(!atBottomRef.current);
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    // Only touch state when the threshold is actually crossed, not on every
+    // scroll event, to avoid re-rendering while the user is scrolling.
+    if (atBottom !== atBottomRef.current) {
+      atBottomRef.current = atBottom;
+      setShowJump(!atBottom);
+    }
   }, []);
 
   const jumpToLatest = useCallback(() => {
@@ -630,8 +634,8 @@ function Workspace() {
       handleReset();
       return;
     }
-    toast.show("Rensa konversationen och börja om?", {
-      action: { label: "Rensa", onClick: handleReset },
+    toast.show(t.confirm.reset, {
+      action: { label: t.confirm.resetAction, onClick: handleReset },
     });
   }, [handleReset, toast]);
 
@@ -664,9 +668,9 @@ function Workspace() {
     wsRef.current?.send(JSON.stringify({ type: "resume_job", id }));
   }, []);
   const deleteJob = useCallback((id: string) => {
-    toast.show("Ta bort jobbet?", {
+    toast.show(t.confirm.deleteJob, {
       action: {
-        label: "Ta bort",
+        label: t.confirm.deleteJobAction,
         onClick: () => wsRef.current?.send(JSON.stringify({ type: "delete_job", id })),
       },
     });
@@ -674,14 +678,13 @@ function Workspace() {
 
   const selectedProjectObject = projects.find((project) => project.path === selectedProject) ?? null;
   const hasConversation = transcript.length > 0;
-  const lastDone = [...transcript].reverse().find((item) => item.kind === "assistant" && item.done);
-  const liveAnnouncement = lastDone && lastDone.kind === "assistant" ? lastDone.text : "";
+  const liveAnnouncement = transcript.findLast((item) => item.kind === "assistant" && item.done)?.text ?? "";
   const visibleTranscript = focusView ? transcript.slice(-focusView) : transcript;
   const hiddenCount = transcript.length - visibleTranscript.length;
 
   return (
     <>
-      <a className="skip-link" href="#main">Hoppa till innehåll</a>
+      <a className="skip-link" href="#main">{t.a11y.skipToContent}</a>
       <div className="hairline" />
       <div className="shell">
         <header className="top">
@@ -768,8 +771,8 @@ function Workspace() {
         </main>
 
         {hasConversation && showJump && (
-          <button className="jump-latest" onClick={jumpToLatest} aria-label="Hoppa till senaste meddelandet">
-            ↓ Senaste
+          <button className="jump-latest" onClick={jumpToLatest} aria-label={t.a11y.jumpToLatest}>
+            {t.jumpLatest}
           </button>
         )}
 

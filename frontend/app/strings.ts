@@ -102,6 +102,47 @@ export const t = {
     context: "Huvudagentens kontext",
   },
 
+  a11y: {
+    skipToContent: "Hoppa till innehåll",
+    jumpToLatest: "Hoppa till senaste meddelandet",
+  },
+
+  jumpLatest: "↓ Senaste",
+
+  confirm: {
+    reset: "Rensa konversationen och börja om?",
+    resetAction: "Rensa",
+    deleteJob: "Ta bort jobbet?",
+    deleteJobAction: "Ta bort",
+  },
+
+  jobs: {
+    none: "Inga jobb ännu.",
+    taskPrefix: "uppgift · ",
+    paused: " · pausad",
+    pause: "Pausa jobb",
+    resume: "Återuppta jobb",
+    delete: "Ta bort jobb",
+    newJob: "Nytt jobb",
+    reminderKind: "Påminnelse",
+    taskKind: "Uppgift",
+    added: "Jobb tillagt.",
+    needInstruction: "Skriv en instruktion till Pilot.",
+    needReminder: "Skriv en påminnelsetext.",
+    needWeekday: "Välj minst en veckodag.",
+    badSchedule: "Kontrollera schemat innan du lägger till.",
+    instructionPlaceholder: "Instruktion till Pilot…",
+    reminderPlaceholder: "Påminnelsetext…",
+  },
+
+  projects: {
+    adding: "Lägger till projekt…",
+    needPath: "Ange en sökväg till projektet.",
+    duplicate: "Projektet finns redan i listan.",
+    recentPaths: "Senaste sökvägar",
+    addProject: "＋ Lägg till projekt",
+  },
+
   common: {
     close: "Stäng",
     add: "Lägg till",
