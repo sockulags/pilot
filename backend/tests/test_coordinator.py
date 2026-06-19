@@ -28,6 +28,9 @@ class CoordinatorTests(unittest.TestCase):
     def test_required_first_tool_runs_before_answer(self):
         asyncio.run(self._required_first_tool_runs_before_answer())
 
+    def test_required_first_tool_obeys_contract_allowlist(self):
+        asyncio.run(self._required_first_tool_obeys_contract_allowlist())
+
     def test_file_output_requirement_blocks_early_answer(self):
         asyncio.run(self._file_output_requirement_blocks_early_answer())
 
@@ -180,6 +183,34 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual("done", outcome.status)
         self.assertIn("list_dir", outcome.action_log)
         self.assertTrue(any(e["type"] == "action" and e["tool"] == "list_dir" for e in events))
+
+    async def _required_first_tool_obeys_contract_allowlist(self):
+        from agents import coordinator
+
+        executed: list[str] = []
+
+        async def fake_execute(tool, args, emit):
+            executed.append(tool)
+            if tool == "read_file":
+                return f"File: {args['path']}\nContent:\n..."
+            return "should not run"
+
+        with mock.patch.object(coordinator, "available_expert_models", new=_av(self._experts())), \
+             mock.patch.object(coordinator, "search_skills", new=_av([])), \
+             mock.patch.object(coordinator.agent_loop, "execute_tool", new=fake_execute), \
+             mock.patch.object(coordinator, "_decide_step", new=_seq([{"action": "answer", "thinking": "done"}])):
+            outcome = await coordinator.run_coordinator(
+                "Förklara backendflödet",
+                lambda e: None,
+                asyncio.Event(),
+                coordinator_model="gemma4:12b",
+                required_first_tool={"tool": "web_research", "args": {"query": "pilot"}},
+                task_contract_intent="project_analysis",
+            )
+
+        self.assertEqual("done", outcome.status)
+        self.assertNotIn("web_research", executed)
+        self.assertIn("outside the project_analysis contract allowlist", outcome.action_log)
 
     async def _file_output_requirement_blocks_early_answer(self):
         from agents import coordinator
