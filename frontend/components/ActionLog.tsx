@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Route, TranscriptItem, TurnEvent } from "@/app/page";
 import Markdown from "@/components/Markdown";
+import Dialog from "@/components/Dialog";
 
 const ROUTE_LABEL: Record<Route, string> = {
   chat: "chatt",
@@ -301,24 +302,17 @@ function ArtifactCard({
         <div className="ab">{artifact.body}</div>
       </div>
       {expanded && (
-        <div className="scrim on" onClick={() => setExpanded(false)}>
-          <div className="modal narrow artifact-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="mh">
-              <span>▣</span>
-              <span className="nm">{artifact.title}</span>
-              <button className="x" onClick={() => setExpanded(false)} aria-label="Stäng">✕</button>
-            </div>
-            <div className="mb">
-              {event.type === "screenshot" && event.image ? (
-                screenshotBody(`data:image/png;base64,${event.image}`)
-              ) : artifact.expandText ? (
-                /^(@@|diff --git|\+[^+]|-[^-])/m.test(artifact.expandText) ? diffBody(artifact.expandText) : terminalBody(artifact.expandText)
-              ) : (
-                artifact.body
-              )}
-            </div>
+        <Dialog icon="▣" title={artifact.title} className="narrow artifact-modal" onClose={() => setExpanded(false)}>
+          <div className="mb">
+            {event.type === "screenshot" && event.image ? (
+              screenshotBody(`data:image/png;base64,${event.image}`)
+            ) : artifact.expandText ? (
+              /^(@@|diff --git|\+[^+]|-[^-])/m.test(artifact.expandText) ? diffBody(artifact.expandText) : terminalBody(artifact.expandText)
+            ) : (
+              artifact.body
+            )}
           </div>
-        </div>
+        </Dialog>
       )}
     </>
   );
