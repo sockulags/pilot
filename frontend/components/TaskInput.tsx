@@ -27,10 +27,15 @@ export default function ChatInput({
 }: Props) {
   const [value, setValue] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
+  const focusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     autosize(ref.current);
   }, [value]);
+
+  useEffect(() => () => {
+    if (focusTimer.current) clearTimeout(focusTimer.current);
+  }, []);
 
   const submit = () => {
     const text = value.trim();
@@ -47,9 +52,11 @@ export default function ChatInput({
   };
 
   // On mobile the keyboard can briefly overlap the input before the layout
-  // settles; nudge the composer back into view once it opens.
+  // settles; nudge the composer back into view once it opens. Replaces any
+  // pending nudge so rapid refocus doesn't stack scrolls.
   const onFocus = () => {
-    setTimeout(() => ref.current?.scrollIntoView({ block: "nearest" }), 300);
+    if (focusTimer.current) clearTimeout(focusTimer.current);
+    focusTimer.current = setTimeout(() => ref.current?.scrollIntoView({ block: "nearest" }), 300);
   };
 
   return (
