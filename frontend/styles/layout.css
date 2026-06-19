@@ -16,6 +16,7 @@ body.busy .hairline {
    visible viewport, so the bottom composer is never pushed below the fold by
    the mobile URL bar or the on-screen keyboard. */
 .shell {
+  position: relative;
   height: 100vh;
   height: 100dvh;
   display: flex; flex-direction: column;
