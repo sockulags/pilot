@@ -112,13 +112,28 @@
   .scrim { align-items: flex-end; padding: 0; }
   .modal,
   .modal.narrow {
-    width: 100%; max-width: 100%; max-height: 88vh;
+    width: 100%; max-width: 100%;
+    max-height: 88vh;
+    max-height: 88dvh;
     border-radius: 18px 18px 0 0;
   }
+  /* Grabber handle to signal the sheet. */
+  .modal::before {
+    content: "";
+    flex-shrink: 0;
+    width: 36px; height: 4px;
+    margin: 8px auto 0;
+    border-radius: var(--r-pill);
+    background: var(--border-2);
+  }
+  /* Clear the home indicator and give the scroll area breathing room. */
+  .modal .mb { padding-bottom: max(18px, calc(env(safe-area-inset-bottom) + 12px)); }
 
   .control-grid { grid-template-columns: 1fr; }
   /* Comfortable thumb targets for close / confirm controls. */
   .modal .mh .x { width: 40px; height: 40px; }
   .ctxacts button { padding: 13px; }
   .control-pill { padding: 9px 14px; }
+  /* 16px form fields avoid iOS focus-zoom and are easier to tap. */
+  .fld { font-size: 16px; padding: 10px 12px; }
 }
