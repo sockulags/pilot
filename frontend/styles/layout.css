@@ -215,6 +215,11 @@ body.busy .hairline {
   .top .brain.status { padding: 7px; border-color: transparent; }
   .top .brain.status span:not(.conn) { display: none; }
 
+  .dock {
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
+  }
+
   .drawer { width: min(92vw, 320px); }
   .drawer .dmeta { grid-template-columns: 1fr; }
   .drawer .dh .x { width: 40px; height: 40px; }

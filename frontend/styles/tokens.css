@@ -33,6 +33,12 @@
   /* gradient */
   --grad: linear-gradient(110deg, #7c8cff, #4fd6e0);
 
+  /* responsive
+     Single mobile breakpoint for the whole app: phones/small screens use
+     `@media (max-width: 768px)`. CSS custom properties can't be used inside
+     media query conditions, so this is the documented constant — keep all
+     `max-width` queries at 768px and there's no JS breakpoint toggle. */
+
   /* typography */
   --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
   --sans: -apple-system, "Segoe UI", Roboto, sans-serif;
