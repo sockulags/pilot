@@ -608,7 +608,7 @@ export default function Home() {
             </button>
           </div>
           <div className="sp" />
-          <button className="brain" onClick={() => setContextOpen(true)}>
+          <button className="brain model" onClick={() => setContextOpen(true)}>
             <span className="orb" />
             <span id="brainTxt">{modelMode === "auto" ? "auto orchestration" : modelLabel(modelMode, models)}</span>
           </button>
@@ -625,8 +625,8 @@ export default function Home() {
             ⏰
             {jobs.length > 0 && <span className="badge">{jobs.length}</span>}
           </button>
-          <button className="ic" onClick={handleReset} title="Ny konversation">⟲</button>
-          <div className="brain" title={STATUS_LABEL[wsStatus]}>
+          <button className="ic reset" onClick={handleReset} title="Ny konversation">⟲</button>
+          <div className="brain status" title={STATUS_LABEL[wsStatus]}>
             <span className="conn" style={{ background: wsStatus === "error" ? "var(--del)" : wsStatus === "connecting" ? "var(--amber)" : "var(--green)" }} />
             <span>{STATUS_LABEL[wsStatus]}</span>
           </div>
