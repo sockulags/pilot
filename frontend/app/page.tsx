@@ -245,6 +245,7 @@ function Drawer({
   onClose,
   onOpenControls,
   onReset,
+  onJump,
 }: {
   transcript: TranscriptItem[];
   selectedProject: Project | null;
@@ -256,6 +257,7 @@ function Drawer({
   onClose: () => void;
   onOpenControls: () => void;
   onReset: () => void;
+  onJump: (id: number) => void;
 }) {
   const [query, setQuery] = useState("");
   const drawerRef = useDialogA11y(onClose);
@@ -295,12 +297,23 @@ function Drawer({
         </div>
         <div className="list">
           <div className="seclabel">Senaste prompts</div>
-          {filtered.map((item) => (
-            <button key={item.id} className="ses-item">
-              <div className="st">{preview(item.text)}</div>
-              <div className="sm">Tur {item.turn}</div>
-            </button>
-          ))}
+          {filtered.length === 0 ? (
+            <div className="ses-empty">{query ? "Inga träffar." : "Inga prompts ännu."}</div>
+          ) : (
+            filtered.map((item) => (
+              <button
+                key={item.id}
+                className="ses-item"
+                onClick={() => {
+                  onJump(item.id);
+                  onClose();
+                }}
+              >
+                <div className="st">{preview(item.text)}</div>
+                <div className="sm">Tur {item.turn}</div>
+              </button>
+            ))
+          )}
         </div>
       </aside>
     </>
@@ -394,6 +407,10 @@ function Workspace() {
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     atBottomRef.current = true;
     setShowJump(false);
+  }, []);
+
+  const jumpToMessage = useCallback((id: number) => {
+    document.getElementById(`msg-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
   useEffect(() => {
@@ -710,6 +727,7 @@ function Workspace() {
             setDrawerOpen(false);
           }}
           onReset={handleReset}
+          onJump={jumpToMessage}
         />
       )}
 

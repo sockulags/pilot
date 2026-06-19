@@ -371,8 +371,8 @@ function Insyn({ events, done }: { events: TurnEvent[]; done: boolean }) {
   );
 }
 
-function UserBubble({ text }: { text: string }) {
-  return <div className="u">{text}</div>;
+function UserBubble({ id, text }: { id: number; text: string }) {
+  return <div className="u" id={`msg-${id}`}>{text}</div>;
 }
 
 function AssistantTurn({ item }: { item: Extract<TranscriptItem, { kind: "assistant" }> }) {
@@ -449,7 +449,7 @@ export default function Transcript({ items }: { items: TranscriptItem[] }) {
     <>
       {items.map((item) =>
         item.kind === "user" ? (
-          <UserBubble key={item.id} text={item.text} />
+          <UserBubble key={item.id} id={item.id} text={item.text} />
         ) : (
           <AssistantTurn key={item.id} item={item} />
         )
