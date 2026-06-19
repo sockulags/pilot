@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, KeyboardEvent } from "react";
+import { t } from "@/app/strings";
 
 interface Props {
   onSend: (text: string) => void;
@@ -9,6 +10,7 @@ interface Props {
   disabled: boolean;
   running?: boolean;
   placeholder?: string;
+  initialValue?: string;
 }
 
 function autosize(el: HTMLTextAreaElement | null) {
@@ -23,15 +25,26 @@ export default function ChatInput({
   onOpenContext,
   disabled,
   running = false,
-  placeholder = "Be Pilot om något, eller ge en tydlig uppgift…",
+  placeholder = t.composer.placeholder,
+  initialValue = "",
 }: Props) {
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(initialValue);
   const ref = useRef<HTMLTextAreaElement>(null);
   const focusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     autosize(ref.current);
   }, [value]);
+
+  // When seeded with an edited prompt (component is re-keyed), focus and place
+  // the caret at the end so the user can tweak and resend.
+  useEffect(() => {
+    if (!initialValue) return;
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [initialValue]);
 
   useEffect(() => () => {
     if (focusTimer.current) clearTimeout(focusTimer.current);
@@ -45,7 +58,8 @@ export default function ChatInput({
   };
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Enter (or Cmd/Ctrl+Enter) sends; Shift+Enter inserts a newline.
+    if (e.key === "Enter" && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       submit();
     }
@@ -78,25 +92,19 @@ export default function ChatInput({
             className={`send${running ? " stop" : ""}`}
             disabled={!running && (disabled || !value.trim())}
             onClick={running ? onAbort : submit}
-            title={running ? "Avbryt pågående körning" : "Skicka"}
+            title={running ? t.composer.abort : t.composer.send}
           >
             {running ? "■" : "➜"}
           </button>
         </div>
         <div className="l2">
-          <button type="button" className="mini" title="Bilagor stöds inte ännu" disabled>
-            ＋
-          </button>
-          <button type="button" className="mini" title="Röststyrning stöds inte ännu" disabled>
-            ◉
-          </button>
           <button type="button" className="ctxm" onClick={onOpenContext}>
             <span className="ring" />
-            <span className="lbl">Kontext</span>
+            <span className="lbl">{t.composer.context}</span>
           </button>
           <span className="sp2" />
           <span className="hint">
-            {running ? "Pilot arbetar…" : "Enter skickar · Shift+Enter ny rad"}
+            {running ? t.composer.working : disabled ? t.composer.waiting : t.composer.enterHint}
           </span>
         </div>
       </div>

@@ -59,13 +59,6 @@
 .l2 .hint { color: var(--dim-2); }
 
 /* mini icon buttons in composer toolbar */
-.mini {
-  width: 27px; height: 27px; border-radius: 8px;
-  color: var(--dim-2); display: grid; place-items: center; font-size: 13px;
-  transition: .12s;
-}
-.mini:hover { color: var(--text); background: var(--panel-2); }
-
 /* context window pill */
 .ctxm {
   display: inline-flex; align-items: center; gap: 7px;
@@ -91,8 +84,6 @@
   /* 16px prevents iOS Safari from auto-zooming when the field is focused. */
   .box textarea { font-size: 16px; }
   .send { width: var(--tap); height: var(--tap); }
-  /* Attachments / voice aren't supported yet — don't show dead controls. */
-  .l2 .mini:disabled { display: none; }
   .l2 .hint { display: none; }
   .ctxm { padding: 7px 12px 7px 8px; }
 }

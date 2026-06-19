@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 import type { Job, JobSchedule } from "@/app/page";
+import Dialog from "@/components/Dialog";
+import { useToast } from "@/components/Toast";
+import { t } from "@/app/strings";
 
 interface Props {
   jobs: Job[];
@@ -30,9 +33,12 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
   const [date, setDate] = useState(todayStr());
   const [kind, setKind] = useState<"reminder" | "task">("reminder");
   const [payload, setPayload] = useState("");
+  const [error, setError] = useState("");
+  const toast = useToast();
 
   const toggleDay = (d: number) => {
     setWeekdays((prev) => (prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d].sort((a, b) => a - b)));
+    setError("");
   };
 
   const buildSchedule = (): JobSchedule | null => {
@@ -46,23 +52,30 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
 
   const submit = () => {
     const text = payload.trim();
+    if (!text) {
+      setError(kind === "task" ? t.jobs.needInstruction : t.jobs.needReminder);
+      return;
+    }
+    if (stype === "weekly" && weekdays.length === 0) {
+      setError(t.jobs.needWeekday);
+      return;
+    }
     const schedule = buildSchedule();
-    if (!text || !schedule) return;
+    if (!schedule) {
+      setError(t.jobs.badSchedule);
+      return;
+    }
+    setError("");
     onAdd(text, schedule, text.slice(0, 60), kind);
     setPayload("");
+    toast.show(t.jobs.added, { kind: "success" });
   };
 
   return (
-    <div className="scrim on" onClick={onClose}>
-      <div className="modal narrow" onClick={(e) => e.stopPropagation()}>
-        <div className="mh">
-          <span>⏰</span>
-          <span className="nm">Schemalagda jobb</span>
-          <button className="x" onClick={onClose} aria-label="Stäng">✕</button>
-        </div>
+    <Dialog icon="⏰" title={t.header.scheduledJobs} className="narrow" onClose={onClose}>
         <div className="mb">
           {jobs.length === 0 ? (
-            <p style={{ color: "var(--dim)" }}>Inga jobb ännu.</p>
+            <p style={{ color: "var(--dim)" }}>{t.jobs.none}</p>
           ) : (
             jobs.map((job) => (
               <div key={job.id} className="jrow" style={{ opacity: job.enabled ? 1 : 0.55 }}>
@@ -70,28 +83,28 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
                 <div>
                   <div className="jt">{job.title}</div>
                   <div className="js">
-                    {job.kind === "task" ? "uppgift · " : ""}
+                    {job.kind === "task" ? t.jobs.taskPrefix : ""}
                     {job.summary} · nästa {job.next_run_label}
-                    {!job.enabled ? " · pausad" : ""}
+                    {!job.enabled ? t.jobs.paused : ""}
                   </div>
                 </div>
                 <div className="jx">
                   <button
                     onClick={() => (job.enabled ? onPause(job.id) : onResume(job.id))}
-                    aria-label={job.enabled ? "Pausa jobb" : "Återuppta jobb"}
+                    aria-label={job.enabled ? t.jobs.pause : t.jobs.resume}
                   >
                     {job.enabled ? "⏸" : "▶"}
                   </button>
-                  <button onClick={() => onDelete(job.id)} aria-label="Ta bort jobb">✕</button>
+                  <button onClick={() => onDelete(job.id)} aria-label={t.jobs.delete}>✕</button>
                 </div>
               </div>
             ))
           )}
 
-          <div className="seclabel">Nytt jobb</div>
+          <div className="seclabel">{t.jobs.newJob}</div>
           <div className="seg2" style={{ marginBottom: 10 }}>
-            <button className={kind === "reminder" ? "on" : ""} onClick={() => setKind("reminder")}>Påminnelse</button>
-            <button className={kind === "task" ? "on" : ""} onClick={() => setKind("task")}>Uppgift</button>
+            <button className={kind === "reminder" ? "on" : ""} onClick={() => setKind("reminder")}>{t.jobs.reminderKind}</button>
+            <button className={kind === "task" ? "on" : ""} onClick={() => setKind("task")}>{t.jobs.taskKind}</button>
           </div>
 
           <div className="jadd" style={{ marginBottom: 10 }}>
@@ -133,20 +146,24 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
             <input
               className="fld"
               value={payload}
-              onChange={(e) => setPayload(e.target.value)}
+              onChange={(e) => {
+                setPayload(e.target.value);
+                if (error) setError("");
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
                   submit();
                 }
               }}
-              placeholder={kind === "task" ? "Instruktion till Pilot…" : "Påminnelsetext…"}
+              placeholder={kind === "task" ? t.jobs.instructionPlaceholder : t.jobs.reminderPlaceholder}
+              aria-invalid={error ? true : undefined}
               style={{ flex: 1 }}
             />
-            <button className="addbtn" onClick={submit}>Lägg till</button>
+            <button className="addbtn" onClick={submit}>{t.common.add}</button>
           </div>
+          {error && <div className="form-error" role="alert">{error}</div>}
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }
