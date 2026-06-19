@@ -90,7 +90,7 @@
 @media (max-width: 768px) {
   /* 16px prevents iOS Safari from auto-zooming when the field is focused. */
   .box textarea { font-size: 16px; }
-  .send { width: 40px; height: 40px; }
+  .send { width: var(--tap); height: var(--tap); }
   /* Attachments / voice aren't supported yet — don't show dead controls. */
   .l2 .mini:disabled { display: none; }
   .l2 .hint { display: none; }

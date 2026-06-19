@@ -131,7 +131,7 @@
 
   .control-grid { grid-template-columns: 1fr; }
   /* Comfortable thumb targets for close / confirm controls. */
-  .modal .mh .x { width: 40px; height: 40px; }
+  .modal .mh .x { width: var(--tap); height: var(--tap); }
   .ctxacts button { padding: 13px; }
   .control-pill { padding: 9px 14px; }
   /* 16px form fields avoid iOS focus-zoom and are easier to tap. */
