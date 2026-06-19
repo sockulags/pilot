@@ -90,7 +90,11 @@ export default function ChatInput({
           </button>
           <span className="sp2" />
           <span className="hint">
-            {running ? "Pilot arbetar…" : "Enter skickar · Shift+Enter ny rad"}
+            {running
+              ? "Pilot arbetar…"
+              : disabled
+                ? "Väntar på anslutning…"
+                : "Enter skickar · Shift+Enter ny rad"}
           </span>
         </div>
       </div>
