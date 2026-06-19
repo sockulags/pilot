@@ -349,6 +349,8 @@ function Workspace() {
   const [wsStatus, setWsStatus] = useState<WsStatus>("disconnected");
   const [showJump, setShowJump] = useState(false);
   const [reconnectNonce, setReconnectNonce] = useState(0);
+  const [composerSeed, setComposerSeed] = useState("");
+  const [composerKey, setComposerKey] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
   const wsRef = useRef<WebSocket | null>(null);
@@ -413,6 +415,12 @@ function Workspace() {
 
   const jumpToMessage = useCallback((id: number) => {
     document.getElementById(`msg-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  // Load a previous prompt into the composer for editing (re-key to reseed).
+  const editPrompt = useCallback((text: string) => {
+    setComposerSeed(text);
+    setComposerKey((k) => k + 1);
   }, []);
 
   useEffect(() => {
@@ -733,7 +741,7 @@ function Workspace() {
             </section>
           ) : (
             <section className="conv on">
-              <Transcript items={visibleTranscript} />
+              <Transcript items={visibleTranscript} onEdit={editPrompt} onResend={handleSend} />
             </section>
           )}
         </div>
@@ -746,7 +754,7 @@ function Workspace() {
 
         {hasConversation && (
           <div className="dock">
-            <ChatInput onSend={handleSend} onAbort={handleAbort} onOpenContext={() => setContextOpen(true)} disabled={wsStatus !== "connected"} running={running} />
+            <ChatInput key={composerKey} initialValue={composerSeed} onSend={handleSend} onAbort={handleAbort} onOpenContext={() => setContextOpen(true)} disabled={wsStatus !== "connected"} running={running} />
           </div>
         )}
       </div>
