@@ -31,6 +31,14 @@ from agents import loop as agent_loop
 from agents.gateway import refine_query
 from agents.json_utils import extract_json_object
 from agents.loop import LoopOutcome, make_event
+from agents.runtime_phases import (
+    PlannedStep,
+    can_compose_final_answer,
+    missing_requirements_text,
+    plan_steps,
+    validate_step_allowed,
+    verify_contract,
+)
 from agents.runtime_state import RuntimeState
 from agents.safety import unsafe_tool_block_reason
 from agents.task_contracts import TaskContract, build_task_contract
@@ -407,7 +415,7 @@ async def run_coordinator(
         args = dict(required_first_tool.get("args") or {})
         if tool in registry.coordinator_tool_names():
             applied_args, _result = await _execute_and_record_tool(
-                tool, args, project_cwd, emit, runtime_state, notes
+                tool, args, project_cwd, emit, runtime_state, notes, contract
             )
             if tool == "run_command" and _command_writes_file(
                 str(applied_args.get("cmd") or applied_args.get("command") or "")
@@ -416,18 +424,11 @@ async def run_coordinator(
         else:
             notes.append(f"(required first tool {tool!r} unavailable; skipped)")
 
-    if contract and contract.playbook_files and not abort.is_set():
-        for path in contract.playbook_files:
+    if contract and not abort.is_set():
+        for step in plan_steps(contract):
             if abort.is_set():
                 break
-            await _execute_and_record_tool(
-                "read_file",
-                {"path": path},
-                project_cwd,
-                emit,
-                runtime_state,
-                notes,
-            )
+            await _execute_planned_step(step, contract, project_cwd, emit, runtime_state, notes)
 
     if contract and contract.intent == "local_model_audit_report" and not abort.is_set():
         return await _run_local_model_audit_playbook(project_cwd, emit, runtime_state, notes, contract)
@@ -450,17 +451,17 @@ async def run_coordinator(
             emit(make_event("thinking", content=thinking))
 
         if action == "answer":
-            contract_result = contract.evaluate(runtime_state.evidence_items) if contract else None
+            contract_result = verify_contract(contract, runtime_state) if contract else None
             if contract_result and not contract_result.satisfied:
-                runtime_state.set_contract_result(contract, contract_result)
                 notes.append(
                     "Contract not satisfied; missing "
-                    + ", ".join(contract_result.missing)
+                    + missing_requirements_text(contract_result.missing)
                     + ". Continue gathering evidence or explicitly fail."
                 )
                 continue
-            if contract_result:
-                runtime_state.set_contract_result(contract, contract_result)
+            if not can_compose_final_answer(contract, runtime_state):
+                notes.append("Contract verification is incomplete; final answer synthesis is blocked.")
+                continue
             if require_file_output and not file_output_done:
                 notes.append(
                     "The user requested a local output file, but no file-writing command "
@@ -587,6 +588,7 @@ async def _run_local_model_audit_playbook(
         emit,
         runtime_state,
         notes,
+        contract,
     )
     _config_args, config_text = await _execute_and_record_tool(
         "read_file",
@@ -595,6 +597,7 @@ async def _run_local_model_audit_playbook(
         emit,
         runtime_state,
         notes,
+        contract,
     )
 
     doc_texts: dict[str, str] = {}
@@ -606,6 +609,7 @@ async def _run_local_model_audit_playbook(
             emit,
             runtime_state,
             notes,
+            contract,
         )
         doc_texts[path] = text
 
@@ -619,6 +623,7 @@ async def _run_local_model_audit_playbook(
             emit,
             runtime_state,
             notes,
+            contract,
         )
         doc_texts["backend/.env"] = env_text
 
@@ -641,6 +646,7 @@ async def _run_local_model_audit_playbook(
         emit,
         runtime_state,
         notes,
+        contract,
     )
     await _execute_and_record_tool(
         "run_command",
@@ -649,15 +655,39 @@ async def _run_local_model_audit_playbook(
         emit,
         runtime_state,
         notes,
+        contract,
     )
 
-    result = contract.evaluate(runtime_state.evidence_items)
-    runtime_state.set_contract_result(contract, result)
+    result = verify_contract(contract, runtime_state)
     if not result.satisfied:
-        notes.append("Contract not satisfied; missing " + ", ".join(result.missing) + ".")
+        notes.append("Contract not satisfied; missing " + missing_requirements_text(result.missing) + ".")
         return LoopOutcome("error", _render_notes(notes), runtime_state=runtime_state)
     notes.append(f"Verified local model audit report: {report_path}")
     return LoopOutcome("done", _render_notes(notes), f"Verified artifact: {report_path}", runtime_state)
+
+
+async def _execute_planned_step(
+    step: PlannedStep,
+    contract: TaskContract | None,
+    project_cwd: str | None,
+    emit: Callable[[dict], None],
+    runtime_state: RuntimeState,
+    notes: list[str],
+) -> tuple[dict, str] | None:
+    policy = validate_step_allowed(step, contract)
+    if not policy.allowed:
+        notes.append(f"({policy.reason}; skipped)")
+        runtime_state.record_error(policy.reason, step.tool, step.args)
+        return None
+    return await _execute_and_record_tool(
+        step.tool,
+        step.args,
+        project_cwd,
+        emit,
+        runtime_state,
+        notes,
+        contract,
+    )
 
 
 async def _execute_and_record_tool(
@@ -667,7 +697,17 @@ async def _execute_and_record_tool(
     emit: Callable[[dict], None],
     runtime_state: RuntimeState,
     notes: list[str],
+    contract: TaskContract | None = None,
 ) -> tuple[dict, str]:
+    if contract:
+        policy = validate_step_allowed(
+            PlannedStep(tool, dict(args or {}), contract.intent, "direct tool execution"),
+            contract,
+        )
+        if not policy.allowed:
+            notes.append(f"({policy.reason}; skipped)")
+            runtime_state.record_error(policy.reason, tool, args)
+            return {}, policy.reason
     args = agent_loop.apply_project_cwd_to_args(tool, dict(args or {}), project_cwd)
     emit(make_event("action", tool=tool, args=args))
     try:
