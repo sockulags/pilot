@@ -84,12 +84,6 @@ export default function ChatInput({
           </button>
         </div>
         <div className="l2">
-          <button type="button" className="mini" title="Bilagor stöds inte ännu" disabled>
-            ＋
-          </button>
-          <button type="button" className="mini" title="Röststyrning stöds inte ännu" disabled>
-            ◉
-          </button>
           <button type="button" className="ctxm" onClick={onOpenContext}>
             <span className="ring" />
             <span className="lbl">Kontext</span>
