@@ -5,6 +5,9 @@ import ChatInput from "@/components/TaskInput";
 import Transcript from "@/components/ActionLog";
 import ProjectBar from "@/components/ProjectBar";
 import JobsPanel from "@/components/JobsPanel";
+import { ToastProvider, useToast } from "@/components/Toast";
+import Dialog, { useDialogA11y } from "@/components/Dialog";
+import { t } from "@/app/strings";
 
 export type Route = "chat" | "computer" | "code";
 export type Project = { id: string; name: string; path: string };
@@ -131,19 +134,9 @@ export type TranscriptItem =
 
 type WsStatus = "disconnected" | "connecting" | "connected" | "error";
 
-const STATUS_LABEL: Record<WsStatus, string> = {
-  disconnected: "Frånkopplad",
-  connecting: "Ansluter",
-  connected: "Ansluten",
-  error: "Fel",
-};
+const STATUS_LABEL: Record<WsStatus, string> = t.status;
 
-const HERO_SUGGESTIONS = [
-  "Granska den här diffen och säg vad som är riskabelt",
-  "Kör igenom repo:t och föreslå nästa tekniska steg",
-  "Jämför lokala modeller och föreslå rätt standardstack",
-  "Öppna projektet, kör testerna och förklara vad som faller",
-];
+const HERO_SUGGESTIONS = t.hero.suggestions;
 
 const RECONNECT_DELAY = 3000;
 
@@ -176,6 +169,10 @@ function modelLabel(mode: string, models: ModelOption[]) {
   return models.find((model) => model.id === mode)?.label ?? mode;
 }
 
+function agentLabel(agent: Agent) {
+  return t.agents.find((option) => option.id === agent)?.label ?? agent;
+}
+
 function approximateTokens(transcript: TranscriptItem[]) {
   return transcript.reduce((sum, item) => {
     const text = item.kind === "user" ? item.text : `${item.text} ${item.summary ?? ""}`;
@@ -205,26 +202,21 @@ function ContextModal({
   const percent = Math.min(100, Math.round((total / 8192) * 100));
 
   return (
-    <div className="scrim on" onClick={onClose}>
-      <div className="modal narrow" onClick={(e) => e.stopPropagation()}>
-        <div className="mh">
-          <span>◔</span>
-          <span className="nm">Huvudagentens kontext</span>
-          <button className="x" onClick={onClose} aria-label="Stäng">✕</button>
-        </div>
+    <Dialog icon="◔" title={t.dialogs.context} className="narrow" onClose={onClose}>
         <div className="mb">
           <p style={{ color: "var(--dim)", marginBottom: 12 }}>
-            Ungefärlig fördelning för den här konversationen just nu.
+            Uppskattad fördelning – inte exakta siffror. Värdena beräknas lokalt
+            i webbläsaren och är till för att ge en känsla för storleken.
           </p>
           <div className="ctxbar">
             <span style={{ width: `${(system / 8192) * 100}%`, background: "var(--accent)" }} />
             <span style={{ width: `${(skills / 8192) * 100}%`, background: "var(--violet)" }} />
             <span style={{ width: `${(conversation / 8192) * 100}%`, background: "var(--green)" }} />
           </div>
-          <div className="ctxrow"><span className="sw" style={{ background: "var(--accent)" }} /><span className="nm2">System</span><span className="tk">{system} tok</span></div>
-          <div className="ctxrow"><span className="sw" style={{ background: "var(--violet)" }} /><span className="nm2">Skills</span><span className="tk">{skills} tok</span></div>
-          <div className="ctxrow"><span className="sw" style={{ background: "var(--green)" }} /><span className="nm2">Samtal</span><span className="tk">{conversation} tok</span></div>
-          <div className="ctxrow" style={{ borderBottom: "none" }}><span className="sw" style={{ background: "var(--panel-2)" }} /><span className="nm2">Totalt</span><span className="tk">{total} tok · {percent}% av 8k</span></div>
+          <div className="ctxrow"><span className="sw" style={{ background: "var(--accent)" }} /><span className="nm2">System</span><span className="tk">~{system} tok</span></div>
+          <div className="ctxrow"><span className="sw" style={{ background: "var(--violet)" }} /><span className="nm2">Skills</span><span className="tk">~{skills} tok</span></div>
+          <div className="ctxrow"><span className="sw" style={{ background: "var(--green)" }} /><span className="nm2">Samtal</span><span className="tk">~{conversation} tok</span></div>
+          <div className="ctxrow" style={{ borderBottom: "none" }}><span className="sw" style={{ background: "var(--panel-2)" }} /><span className="nm2">Totalt</span><span className="tk">~{total} tok · ~{percent}% av kontexten</span></div>
           <p className="ctxhint">
             {compacted ? `Fokusvy aktiv. ${hiddenCount} äldre inlägg är dolda i UI:t, men finns kvar i den underliggande sessionen.` : "Fokusvy visar bara de senaste turerna för att minska visuellt brus utan att kasta bort sessionen."}
           </p>
@@ -233,8 +225,7 @@ function ContextModal({
             <button className="danger" onClick={onClearContext}>Ny konversation</button>
           </div>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -249,6 +240,7 @@ function Drawer({
   onClose,
   onOpenControls,
   onReset,
+  onJump,
 }: {
   transcript: TranscriptItem[];
   selectedProject: Project | null;
@@ -260,8 +252,10 @@ function Drawer({
   onClose: () => void;
   onOpenControls: () => void;
   onReset: () => void;
+  onJump: (id: number) => void;
 }) {
   const [query, setQuery] = useState("");
+  const drawerRef = useDialogA11y(onClose);
   const items = transcript.filter((item): item is Extract<TranscriptItem, { kind: "user" }> => item.kind === "user");
   const filtered = items.filter((item) => item.text.toLowerCase().includes(query.toLowerCase()));
   const lastPrompt = items.at(-1);
@@ -269,41 +263,52 @@ function Drawer({
   return (
     <>
       <div className="drawer-scrim on" onClick={onClose} />
-      <aside className="drawer open">
+      <aside className="drawer open" ref={drawerRef} role="dialog" aria-modal="true" aria-label="Session" tabIndex={-1}>
         <div className="dh">
-          <div className="t">Session</div>
-          <button className="x" onClick={onClose} aria-label="Stäng">✕</button>
+          <div className="t">{t.drawer.session}</div>
+          <button className="x" onClick={onClose} aria-label={t.common.close}>✕</button>
         </div>
-        <button className="newbtn" onClick={onReset}>＋ Ny konversation</button>
+        <button className="newbtn" onClick={onReset}>＋ {t.header.newConversation}</button>
         <div className="dsect">
-          <div className="seclabel">Aktiv nu</div>
+          <div className="seclabel">{t.drawer.activeNow}</div>
           <button className="ses-item on dsession" onClick={onOpenControls}>
-            <div className="st">{selectedProject?.name ?? "Inget projekt valt"}</div>
-            <div className="sm">{selectedProject?.path ?? "Öppna kontrollpanelen för projekt, modell och agent."}</div>
+            <div className="st">{selectedProject?.name ?? t.drawer.noProject}</div>
+            <div className="sm">{selectedProject?.path ?? t.drawer.openControls}</div>
             <div className="pillrow">
-              <span className="microtag">{agent === "claude" ? "Claude Code" : "Codex"}</span>
+              <span className="microtag">{agentLabel(agent)}</span>
               <span className="microtag">{modelLabel(modelMode, models)}</span>
               <span className="microtag">{routeMode === "auto" ? "Auto route" : routeMode}</span>
             </div>
           </button>
           <div className="dmeta">
-            <div className="sessionstat"><span>Status</span><b>{STATUS_LABEL[wsStatus]}</b></div>
-            <div className="sessionstat"><span>Turer</span><b>{items.length}</b></div>
-            <div className="sessionstat"><span>Senast</span><b>{lastPrompt ? `Tur ${lastPrompt.turn}` : "Tom"}</b></div>
+            <div className="sessionstat"><span>{t.drawer.statusLabel}</span><b>{STATUS_LABEL[wsStatus]}</b></div>
+            <div className="sessionstat"><span>{t.drawer.turns}</span><b>{items.length}</b></div>
+            <div className="sessionstat"><span>{t.drawer.last}</span><b>{lastPrompt ? `${t.drawer.turn} ${lastPrompt.turn}` : t.drawer.empty}</b></div>
           </div>
         </div>
         <div className="dsect">
-          <div className="seclabel">Sök i historik</div>
-          <input className="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filtrera tidigare prompts…" />
+          <div className="seclabel">{t.drawer.searchHistory}</div>
+          <input className="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.drawer.searchPlaceholder} />
         </div>
         <div className="list">
-          <div className="seclabel">Senaste prompts</div>
-          {filtered.map((item) => (
-            <button key={item.id} className="ses-item">
-              <div className="st">{preview(item.text)}</div>
-              <div className="sm">Tur {item.turn}</div>
-            </button>
-          ))}
+          <div className="seclabel">{t.drawer.recentPrompts}</div>
+          {filtered.length === 0 ? (
+            <div className="ses-empty">{query ? t.drawer.noMatches : t.drawer.noPrompts}</div>
+          ) : (
+            filtered.map((item) => (
+              <button
+                key={item.id}
+                className="ses-item"
+                onClick={() => {
+                  onJump(item.id);
+                  onClose();
+                }}
+              >
+                <div className="st">{preview(item.text)}</div>
+                <div className="sm">{t.drawer.turn} {item.turn}</div>
+              </button>
+            ))
+          )}
         </div>
       </aside>
     </>
@@ -311,6 +316,15 @@ function Drawer({
 }
 
 export default function Home() {
+  return (
+    <ToastProvider>
+      <Workspace />
+    </ToastProvider>
+  );
+}
+
+function Workspace() {
+  const toast = useToast();
   const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
@@ -328,6 +342,12 @@ export default function Home() {
   const [focusView, setFocusView] = useState<number | null>(null);
   const [running, _setRunning] = useState(false);
   const [wsStatus, setWsStatus] = useState<WsStatus>("disconnected");
+  const [showJump, setShowJump] = useState(false);
+  const [reconnectNonce, setReconnectNonce] = useState(0);
+  const [composerSeed, setComposerSeed] = useState("");
+  const [composerKey, setComposerKey] = useState(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const atBottomRef = useRef(true);
   const wsRef = useRef<WebSocket | null>(null);
   const idRef = useRef(0);
   const turnRef = useRef(0);
@@ -343,6 +363,19 @@ export default function Home() {
   useEffect(() => {
     document.body.classList.toggle("busy", running);
   }, [running]);
+
+  // Global shortcut: Cmd/Ctrl+K opens the project/model/agent controls.
+  // (Escape-to-close for overlays is handled by the Dialog/drawer a11y hook.)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setControlsOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     let id = localStorage.getItem("pilot_session_id");
@@ -368,6 +401,50 @@ export default function Home() {
     runningRef.current = value;
     _setRunning(value);
   }, []);
+
+  // Track whether the user is parked at the bottom of the feed. We only
+  // auto-follow new content when they are, so scrolling up to read history
+  // isn't yanked back down on every streamed token.
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    // Only touch state when the threshold is actually crossed, not on every
+    // scroll event, to avoid re-rendering while the user is scrolling.
+    if (atBottom !== atBottomRef.current) {
+      atBottomRef.current = atBottom;
+      setShowJump(!atBottom);
+    }
+  }, []);
+
+  const jumpToLatest = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    atBottomRef.current = true;
+    setShowJump(false);
+  }, []);
+
+  const jumpToMessage = useCallback((id: number) => {
+    // Focus view hides older turns, so reveal the full transcript first, then
+    // scroll once the target anchor has rendered.
+    setFocusView(null);
+    requestAnimationFrame(() => {
+      document.getElementById(`msg-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, []);
+
+  // Load a previous prompt into the composer for editing (re-key to reseed).
+  const editPrompt = useCallback((text: string) => {
+    setComposerSeed(text);
+    setComposerKey((k) => k + 1);
+  }, []);
+
+  useEffect(() => {
+    if (!atBottomRef.current) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [transcript]);
 
   const applyEvent = useCallback((ev: ServerEvent) => {
     if (ev.type === "reset_ok") return;
@@ -504,7 +581,13 @@ export default function Home() {
       if (retryTimer) clearTimeout(retryTimer);
       wsRef.current?.close();
     };
-  }, [applyEvent, setRunning]);
+  }, [applyEvent, setRunning, reconnectNonce]);
+
+  // Force an immediate reconnect (tears down and re-runs the socket effect).
+  const reconnect = useCallback(() => {
+    setWsStatus("connecting");
+    setReconnectNonce((n) => n + 1);
+  }, []);
 
   const handleSend = useCallback((text: string) => {
     const ws = wsRef.current;
@@ -544,6 +627,18 @@ export default function Home() {
     setDrawerOpen(false);
   }, [agent, modelMode, projects, routeMode, selectedProject, setRunning]);
 
+  // Guard the conversation wipe behind a confirm toast so a stray click can't
+  // discard an active conversation. Empty conversations reset immediately.
+  const requestReset = useCallback(() => {
+    if (transcriptRef.current.length === 0) {
+      handleReset();
+      return;
+    }
+    toast.show(t.confirm.reset, {
+      action: { label: t.confirm.resetAction, onClick: handleReset },
+    });
+  }, [handleReset, toast]);
+
   const selectProject = useCallback((id: string) => {
     wsRef.current?.send(JSON.stringify({ type: "select_project", id }));
   }, []);
@@ -573,66 +668,92 @@ export default function Home() {
     wsRef.current?.send(JSON.stringify({ type: "resume_job", id }));
   }, []);
   const deleteJob = useCallback((id: string) => {
-    wsRef.current?.send(JSON.stringify({ type: "delete_job", id }));
-  }, []);
+    toast.show(t.confirm.deleteJob, {
+      action: {
+        label: t.confirm.deleteJobAction,
+        onClick: () => wsRef.current?.send(JSON.stringify({ type: "delete_job", id })),
+      },
+    });
+  }, [toast]);
 
   const selectedProjectObject = projects.find((project) => project.path === selectedProject) ?? null;
   const hasConversation = transcript.length > 0;
+  const liveAnnouncement = transcript.findLast((item) => item.kind === "assistant" && item.done)?.text ?? "";
   const visibleTranscript = focusView ? transcript.slice(-focusView) : transcript;
   const hiddenCount = transcript.length - visibleTranscript.length;
 
   return (
     <>
+      <a className="skip-link" href="#main">{t.a11y.skipToContent}</a>
       <div className="hairline" />
       <div className="shell">
         <header className="top">
-          <button className="ic" onClick={() => setDrawerOpen(true)} title="Öppna session" aria-label="Öppna session">
+          <button className="ic" onClick={() => setDrawerOpen(true)} title={t.header.openSession} aria-label={t.header.openSession}>
             ☰
           </button>
           <div className="mk">✦</div>
-          <div className="nm">Pilot</div>
+          <div className="nm">{t.appName}</div>
           <div className="headpills">
-          <button className="crumb" onClick={() => setControlsOpen(true)}>
-            {selectedProjectObject?.name ?? "Välj projekt"}
+          <button className="crumb" onClick={() => setControlsOpen(true)} title={t.header.controlsHint}>
+            {selectedProjectObject?.name ?? t.header.chooseProject}
           </button>
             <button className="crumb soft" onClick={() => setControlsOpen(true)}>
-              {routeMode === "auto" ? "Auto route" : routeMode}
+              {routeMode === "auto" ? t.header.autoRoute : routeMode}
             </button>
           </div>
           <div className="sp" />
           <button className="brain model" onClick={() => setContextOpen(true)}>
             <span className="orb" />
-            <span id="brainTxt">{modelMode === "auto" ? "auto orchestration" : modelLabel(modelMode, models)}</span>
+            <span id="brainTxt">{modelMode === "auto" ? t.header.autoOrchestration : modelLabel(modelMode, models)}</span>
           </button>
           <div className={`agent${agentMenuOpen ? " open" : ""}`}>
             <button className="agent-trigger" onClick={() => setAgentMenuOpen((value) => !value)}>
-              {agent === "claude" ? "Claude Code" : "Codex"}
+              {agentLabel(agent)}
             </button>
             <div className="menu">
-              <button className={agent === "claude" ? "on" : ""} onClick={() => selectAgent("claude")}>Claude Code</button>
-              <button className={agent === "codex" ? "on" : ""} onClick={() => selectAgent("codex")}>Codex</button>
+              {t.agents.map((option) => (
+                <button
+                  key={option.id}
+                  className={agent === option.id ? "on" : ""}
+                  onClick={() => selectAgent(option.id as Agent)}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
           </div>
-          <button className="ic" onClick={() => setJobsOpen(true)} title="Schemalagda jobb" aria-label="Schemalagda jobb">
+          <button className="ic" onClick={() => setJobsOpen(true)} title={t.header.scheduledJobs} aria-label={t.header.scheduledJobs}>
             ⏰
             {jobs.length > 0 && <span className="badge">{jobs.length}</span>}
           </button>
-          <button className="ic reset" onClick={handleReset} title="Ny konversation" aria-label="Ny konversation">⟲</button>
+          <button className="ic reset" onClick={requestReset} title={t.header.newConversation} aria-label={t.header.newConversation}>⟲</button>
           <div className="brain status" title={STATUS_LABEL[wsStatus]}>
             <span className="conn" style={{ background: wsStatus === "error" ? "var(--del)" : wsStatus === "connecting" ? "var(--amber)" : "var(--green)" }} />
             <span>{STATUS_LABEL[wsStatus]}</span>
           </div>
         </header>
 
-        <div className="scroll">
+        {wsStatus !== "connected" && (
+          <div className={`connbanner ${wsStatus}`} role="status">
+            <span className="cb-dot" />
+            <span className="cb-msg">
+              {wsStatus === "connecting" ? t.connection.connecting : t.connection.dropped}
+            </span>
+            {wsStatus !== "connecting" && (
+              <button className="cb-retry" onClick={reconnect}>{t.connection.retry}</button>
+            )}
+          </div>
+        )}
+
+        <div className="sr-only" aria-live="polite" aria-atomic="true">{liveAnnouncement}</div>
+
+        <main id="main" className="scroll" ref={scrollRef} onScroll={handleScroll} tabIndex={-1}>
           {!hasConversation ? (
             <section className="hero">
               <h1 className="greet">
-                Bygg, granska och kör <span className="g">lokala agentflöden</span>.
+                {t.hero.titleLead}<span className="g">{t.hero.titleAccent}</span>.
               </h1>
-              <p className="tag">
-                Pilot håller ihop chatt, kod, datorstyrning och modellval i ett enda arbetsflöde.
-              </p>
+              <p className="tag">{t.hero.tagline}</p>
               <div className="ghosts">
                 {HERO_SUGGESTIONS.map((suggestion) => (
                   <button key={suggestion} className="ghost" onClick={() => handleSend(suggestion)}>
@@ -644,14 +765,20 @@ export default function Home() {
             </section>
           ) : (
             <section className="conv on">
-              <Transcript items={visibleTranscript} />
+              <Transcript items={visibleTranscript} onEdit={editPrompt} onResend={handleSend} />
             </section>
           )}
-        </div>
+        </main>
+
+        {hasConversation && showJump && (
+          <button className="jump-latest" onClick={jumpToLatest} aria-label={t.a11y.jumpToLatest}>
+            {t.jumpLatest}
+          </button>
+        )}
 
         {hasConversation && (
           <div className="dock">
-            <ChatInput onSend={handleSend} onAbort={handleAbort} onOpenContext={() => setContextOpen(true)} disabled={wsStatus !== "connected"} running={running} />
+            <ChatInput key={composerKey} initialValue={composerSeed} onSend={handleSend} onAbort={handleAbort} onOpenContext={() => setContextOpen(true)} disabled={wsStatus !== "connected"} running={running} />
           </div>
         )}
       </div>
@@ -670,37 +797,31 @@ export default function Home() {
             setControlsOpen(true);
             setDrawerOpen(false);
           }}
-          onReset={handleReset}
+          onReset={requestReset}
+          onJump={jumpToMessage}
         />
       )}
 
       {controlsOpen && (
-        <div className="scrim on" onClick={() => setControlsOpen(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="mh">
-              <span>⌘</span>
-              <span className="nm">Projekt, modell och agent</span>
-              <button className="x" onClick={() => setControlsOpen(false)} aria-label="Stäng">✕</button>
-            </div>
-            <div className="mb">
-              <ProjectBar
-                projects={projects}
-                selected={selectedProject}
-                agent={agent}
-                modelMode={modelMode}
-                models={models}
-                agentRoles={agentRoles}
-                routeMode={routeMode}
-                onSelect={selectProject}
-                onAdd={addProject}
-                onRemove={removeProject}
-                onSelectAgent={selectAgent}
-                onSelectModel={selectModel}
-                onSelectRoute={selectRoute}
-              />
-            </div>
+        <Dialog icon="⌘" title={t.dialogs.controls} onClose={() => setControlsOpen(false)}>
+          <div className="mb">
+            <ProjectBar
+              projects={projects}
+              selected={selectedProject}
+              agent={agent}
+              modelMode={modelMode}
+              models={models}
+              agentRoles={agentRoles}
+              routeMode={routeMode}
+              onSelect={selectProject}
+              onAdd={addProject}
+              onRemove={removeProject}
+              onSelectAgent={selectAgent}
+              onSelectModel={selectModel}
+              onSelectRoute={selectRoute}
+            />
           </div>
-        </div>
+        </Dialog>
       )}
 
       {contextOpen && (
@@ -711,7 +832,7 @@ export default function Home() {
           onCompactView={() => setFocusView(Math.min(8, transcript.length))}
           onClearContext={() => {
             setContextOpen(false);
-            handleReset();
+            requestReset();
           }}
           onClose={() => setContextOpen(false)}
         />

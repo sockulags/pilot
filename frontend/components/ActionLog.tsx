@@ -1,19 +1,35 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Route, TranscriptItem, TurnEvent } from "@/app/page";
 import Markdown from "@/components/Markdown";
+import Dialog from "@/components/Dialog";
+import { useToast } from "@/components/Toast";
+import { t } from "@/app/strings";
 
-const ROUTE_LABEL: Record<Route, string> = {
-  chat: "chatt",
-  computer: "dator",
-  code: "kod",
-};
+function useCopy() {
+  const toast = useToast();
+  return useCallback(
+    (text: string) => {
+      void copyText(text).then((ok) =>
+        toast.show(ok ? t.messageActions.copied : t.messageActions.copyFailed, {
+          kind: ok ? "success" : "error",
+        })
+      );
+    },
+    [toast]
+  );
+}
 
-async function copyText(value: string) {
+const ROUTE_LABEL: Record<Route, string> = t.routeLabel;
+
+async function copyText(value: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(value);
-  } catch {}
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 type ArtifactDescriptor = {
@@ -301,24 +317,17 @@ function ArtifactCard({
         <div className="ab">{artifact.body}</div>
       </div>
       {expanded && (
-        <div className="scrim on" onClick={() => setExpanded(false)}>
-          <div className="modal narrow artifact-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="mh">
-              <span>▣</span>
-              <span className="nm">{artifact.title}</span>
-              <button className="x" onClick={() => setExpanded(false)} aria-label="Stäng">✕</button>
-            </div>
-            <div className="mb">
-              {event.type === "screenshot" && event.image ? (
-                screenshotBody(`data:image/png;base64,${event.image}`)
-              ) : artifact.expandText ? (
-                /^(@@|diff --git|\+[^+]|-[^-])/m.test(artifact.expandText) ? diffBody(artifact.expandText) : terminalBody(artifact.expandText)
-              ) : (
-                artifact.body
-              )}
-            </div>
+        <Dialog icon="▣" title={artifact.title} className="narrow artifact-modal" onClose={() => setExpanded(false)}>
+          <div className="mb">
+            {event.type === "screenshot" && event.image ? (
+              screenshotBody(`data:image/png;base64,${event.image}`)
+            ) : artifact.expandText ? (
+              /^(@@|diff --git|\+[^+]|-[^-])/m.test(artifact.expandText) ? diffBody(artifact.expandText) : terminalBody(artifact.expandText)
+            ) : (
+              artifact.body
+            )}
           </div>
-        </div>
+        </Dialog>
       )}
     </>
   );
@@ -377,11 +386,32 @@ function Insyn({ events, done }: { events: TurnEvent[]; done: boolean }) {
   );
 }
 
-function UserBubble({ text }: { text: string }) {
-  return <div className="u">{text}</div>;
+function UserBubble({
+  id,
+  text,
+  onEdit,
+  onResend,
+}: {
+  id: number;
+  text: string;
+  onEdit: (text: string) => void;
+  onResend: (text: string) => void;
+}) {
+  const copy = useCopy();
+  return (
+    <div className="u-wrap">
+      <div className="u" id={`msg-${id}`}>{text}</div>
+      <div className="msg-actions">
+        <button onClick={() => copy(text)} aria-label={t.messageActions.copyPrompt}>⎘</button>
+        <button onClick={() => onEdit(text)} aria-label={t.messageActions.edit}>✎</button>
+        <button onClick={() => onResend(text)} aria-label={t.messageActions.resend}>↻</button>
+      </div>
+    </div>
+  );
 }
 
 function AssistantTurn({ item }: { item: Extract<TranscriptItem, { kind: "assistant" }> }) {
+  const copy = useCopy();
   const memoryEvents = item.events.filter((event) => event.type === "memory" && event.content);
   const artifactUnits = collectArtifactUnits(item.events);
   const actionEvents = item.events.filter((event) => event.type === "action");
@@ -445,24 +475,34 @@ function AssistantTurn({ item }: { item: Extract<TranscriptItem, { kind: "assist
           </div>
         )}
         {item.cwd && <div className="rbadge" style={{ marginTop: 10 }}>cwd · {item.cwd}</div>}
+        {item.text && item.done && (
+          <div className="msg-actions left">
+            <button onClick={() => copy(item.text)} aria-label={t.messageActions.copyAnswer}>⎘ {t.messageActions.copy}</button>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-export default function Transcript({ items }: { items: TranscriptItem[] }) {
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [items]);
-
+export default function Transcript({
+  items,
+  onEdit,
+  onResend,
+}: {
+  items: TranscriptItem[];
+  onEdit: (text: string) => void;
+  onResend: (text: string) => void;
+}) {
   return (
     <>
       {items.map((item) =>
-        item.kind === "user" ? <UserBubble key={item.id} text={item.text} /> : <AssistantTurn key={item.id} item={item} />
+        item.kind === "user" ? (
+          <UserBubble key={item.id} id={item.id} text={item.text} onEdit={onEdit} onResend={onResend} />
+        ) : (
+          <AssistantTurn key={item.id} item={item} />
+        )
       )}
-      <div ref={bottomRef} />
     </>
   );
 }

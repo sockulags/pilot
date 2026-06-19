@@ -8,11 +8,36 @@
 .conv.on { display: flex; }
 
 /* user bubble */
+.u-wrap {
+  align-self: flex-end;
+  display: flex; flex-direction: column; align-items: flex-end;
+  max-width: 80%;
+}
 .u {
-  align-self: flex-end; max-width: 80%;
   background: var(--panel-2); border: 1px solid var(--border);
   padding: 11px 16px;
   border-radius: 16px 16px 5px 16px;
+}
+
+/* per-message action row (copy / edit / resend) */
+.msg-actions {
+  display: flex; gap: 4px;
+  margin-top: 5px;
+  opacity: 0;
+  transition: opacity .12s;
+}
+.msg-actions.left { margin-top: 10px; }
+.u-wrap:hover .msg-actions,
+.turn:hover .msg-actions,
+.msg-actions:focus-within { opacity: 1; }
+.msg-actions button {
+  font: 11px var(--mono); color: var(--dim);
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  padding: 4px 8px; transition: .12s;
+}
+.msg-actions button:hover { color: var(--text); border-color: var(--border-2); }
+@media (hover: none) {
+  .msg-actions { opacity: 1; }
 }
 
 /* ── assistant turn ───────────────────────────────────────── */
@@ -136,3 +161,17 @@
 
 /* abort notice */
 .aborted { font: 12px var(--mono); color: var(--del); margin-top: 6px; }
+
+/* ── jump to latest ───────────────────────────────────────── */
+.jump-latest {
+  position: absolute; left: 50%; bottom: 96px;
+  transform: translateX(-50%);
+  display: inline-flex; align-items: center; gap: 6px;
+  font: 12px var(--mono); color: var(--text);
+  padding: 7px 13px; border-radius: var(--r-pill);
+  background: var(--panel-2); border: 1px solid var(--border-2);
+  box-shadow: var(--shadow-md);
+  animation: rise 0.2s cubic-bezier(.2,.9,.3,1);
+  z-index: 40;
+}
+.jump-latest:hover { border-color: var(--accent); }
