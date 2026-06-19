@@ -5,6 +5,7 @@ import ChatInput from "@/components/TaskInput";
 import Transcript from "@/components/ActionLog";
 import ProjectBar from "@/components/ProjectBar";
 import JobsPanel from "@/components/JobsPanel";
+import { ToastProvider } from "@/components/Toast";
 
 export type Route = "chat" | "computer" | "code";
 export type Project = { id: string; name: string; path: string };
@@ -312,6 +313,14 @@ function Drawer({
 }
 
 export default function Home() {
+  return (
+    <ToastProvider>
+      <Workspace />
+    </ToastProvider>
+  );
+}
+
+function Workspace() {
   const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
