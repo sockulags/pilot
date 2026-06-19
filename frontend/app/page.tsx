@@ -333,6 +333,9 @@ function Workspace() {
   const [focusView, setFocusView] = useState<number | null>(null);
   const [running, _setRunning] = useState(false);
   const [wsStatus, setWsStatus] = useState<WsStatus>("disconnected");
+  const [showJump, setShowJump] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const atBottomRef = useRef(true);
   const wsRef = useRef<WebSocket | null>(null);
   const idRef = useRef(0);
   const turnRef = useRef(0);
@@ -373,6 +376,31 @@ function Workspace() {
     runningRef.current = value;
     _setRunning(value);
   }, []);
+
+  // Track whether the user is parked at the bottom of the feed. We only
+  // auto-follow new content when they are, so scrolling up to read history
+  // isn't yanked back down on every streamed token.
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    atBottomRef.current = distanceFromBottom < 120;
+    setShowJump(!atBottomRef.current);
+  }, []);
+
+  const jumpToLatest = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    atBottomRef.current = true;
+    setShowJump(false);
+  }, []);
+
+  useEffect(() => {
+    if (!atBottomRef.current) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [transcript]);
 
   const applyEvent = useCallback((ev: ServerEvent) => {
     if (ev.type === "reset_ok") return;
@@ -629,7 +657,7 @@ function Workspace() {
           </div>
         </header>
 
-        <div className="scroll">
+        <div className="scroll" ref={scrollRef} onScroll={handleScroll}>
           {!hasConversation ? (
             <section className="hero">
               <h1 className="greet">
@@ -653,6 +681,12 @@ function Workspace() {
             </section>
           )}
         </div>
+
+        {hasConversation && showJump && (
+          <button className="jump-latest" onClick={jumpToLatest} aria-label="Hoppa till senaste meddelandet">
+            ↓ Senaste
+          </button>
+        )}
 
         {hasConversation && (
           <div className="dock">

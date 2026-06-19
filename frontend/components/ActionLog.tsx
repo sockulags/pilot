@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { Route, TranscriptItem, TurnEvent } from "@/app/page";
 import Markdown from "@/components/Markdown";
 import Dialog from "@/components/Dialog";
@@ -445,18 +445,15 @@ function AssistantTurn({ item }: { item: Extract<TranscriptItem, { kind: "assist
 }
 
 export default function Transcript({ items }: { items: TranscriptItem[] }) {
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [items]);
-
   return (
     <>
       {items.map((item) =>
-        item.kind === "user" ? <UserBubble key={item.id} text={item.text} /> : <AssistantTurn key={item.id} item={item} />
+        item.kind === "user" ? (
+          <UserBubble key={item.id} text={item.text} />
+        ) : (
+          <AssistantTurn key={item.id} item={item} />
+        )
       )}
-      <div ref={bottomRef} />
     </>
   );
 }
