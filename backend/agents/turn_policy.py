@@ -5,7 +5,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from config import OLLAMA_MODEL, resolve_answer_model, tools_capable_model
+from config import (
+    AGENT_ROLE_MODELS,
+    INTENT_AGENT_ROLES,
+    OLLAMA_MODEL,
+    OLLAMA_MODELS,
+    resolve_answer_model,
+    tools_capable_model,
+)
 
 
 @dataclass(frozen=True)
@@ -18,6 +25,15 @@ class TaskContext:
     search_query: str = ""
     preferred_model: str | None = None
     entities: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class AgentSelection:
+    role: str
+    model: str
+    configured_model: str
+    fallback_role: str | None = None
+    fallback_reason: str | None = None
 
 
 _FOLLOWUP_TERMS = (
@@ -189,9 +205,58 @@ def deterministic_route(
 def choose_coordinator_model(model_mode: str, ctx: TaskContext) -> str:
     if model_mode and model_mode != "auto":
         return tools_capable_model(model_mode)
-    if ctx.preferred_model:
-        return resolve_answer_model("auto", ctx.preferred_model)
-    return OLLAMA_MODEL
+    return select_agent_for_intent(model_mode, ctx).model
+
+
+def select_agent_for_intent(
+    model_mode: str,
+    ctx: TaskContext,
+    available_models: set[str] | None = None,
+) -> AgentSelection:
+    if model_mode and model_mode != "auto":
+        model = tools_capable_model(model_mode)
+        configured = model_mode
+        if model != model_mode:
+            return AgentSelection(
+                role="pinned_model",
+                model=model,
+                configured_model=configured,
+                fallback_role="default_agent",
+                fallback_reason=f"pinned model {model_mode!r} is not tools-capable or configured",
+            )
+        return AgentSelection("pinned_model", model, configured)
+
+    available = available_models if available_models is not None else set(OLLAMA_MODELS)
+    raw_intent = getattr(ctx, "intent", "")
+    if isinstance(raw_intent, str) and raw_intent:
+        intent = raw_intent
+    elif getattr(ctx, "requires_current_sources", False) or getattr(ctx, "preferred_model", None):
+        intent = "research"
+    else:
+        intent = "chat"
+    role = INTENT_AGENT_ROLES.get(intent, "default_agent")
+    configured = AGENT_ROLE_MODELS.get(role) or OLLAMA_MODEL
+    if _agent_model_available(configured, available):
+        return AgentSelection(role, configured, configured)
+
+    fallback_role = "default_agent"
+    fallback = AGENT_ROLE_MODELS.get(fallback_role) or OLLAMA_MODEL
+    if not _agent_model_available(fallback, available):
+        fallback = OLLAMA_MODEL
+    return AgentSelection(
+        role=role,
+        model=fallback,
+        configured_model=configured,
+        fallback_role=fallback_role,
+        fallback_reason=(
+            f"configured {role} model {configured!r} is not installed or not configured; "
+            f"falling back to {fallback_role} {fallback!r}"
+        ),
+    )
+
+
+def _agent_model_available(model: str, available_models: set[str]) -> bool:
+    return bool(model) and model in available_models and model in OLLAMA_MODELS
 
 
 def tool_task(task: str, ctx: TaskContext | None = None) -> str:

@@ -14,6 +14,18 @@ class WebSocketPolicyTests(unittest.TestCase):
 
         self.assertEqual(OLLAMA_MODEL, _reply_model("gpt-oss:20b"))
 
+    def test_agent_role_catalog_exposes_configured_roles(self):
+        from api.ws import agent_role_catalog
+
+        roles = agent_role_catalog()
+        by_role = {role["role"]: role for role in roles}
+
+        self.assertIn("default_agent", by_role)
+        self.assertIn("research_agent", by_role)
+        self.assertIn("model", by_role["research_agent"])
+        self.assertIn("available", by_role["research_agent"])
+        self.assertIn("label", by_role["research_agent"])
+
     def test_file_output_verification_requires_write_and_verification_commands(self):
         from api.ws import _file_output_verified
 
@@ -108,6 +120,27 @@ class WebSocketPolicyTests(unittest.TestCase):
         self.assertEqual("confirmation_required", meta["runtime_state"]["actions"][0]["decision"])
         self.assertEqual("high", meta["runtime_state"]["actions"][0]["risk_level"])
         self.assertTrue(meta["runtime_state"]["actions"][0]["side_effects"])
+
+    def test_turn_meta_records_agent_role_fallback(self):
+        from api.ws import _turn_meta
+
+        meta = _turn_meta(
+            2,
+            "computer",
+            "gemma4:12b",
+            [{
+                "type": "turn_start",
+                "agent_role": "research_agent",
+                "agent_role_model": "missing:latest",
+                "agent_role_fallback": "configured research_agent model is missing",
+            }],
+            "done",
+            "research",
+        )
+
+        self.assertEqual("research_agent", meta["agent_role"])
+        self.assertEqual("missing:latest", meta["agent_role_model"])
+        self.assertIn("missing", meta["agent_role_fallback"])
 
     def test_fallback_markdown_report_writes_file(self):
         from api.ws import _write_fallback_markdown_report

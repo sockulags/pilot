@@ -9,6 +9,13 @@ import JobsPanel from "@/components/JobsPanel";
 export type Route = "chat" | "computer" | "code";
 export type Project = { id: string; name: string; path: string };
 export type ModelOption = { id: string; label: string; hint: string };
+export type AgentRoleOption = {
+  role: string;
+  label: string;
+  model: string;
+  model_label: string;
+  available: boolean;
+};
 
 export type JobSchedule = {
   type: "interval" | "daily" | "weekly" | "once";
@@ -91,6 +98,7 @@ export type ServerEvent = {
   model?: string;
   model_mode?: string;
   models?: ModelOption[];
+  agent_roles?: AgentRoleOption[];
   route_mode?: string;
   jobs?: Job[];
 };
@@ -309,6 +317,7 @@ export default function Home() {
   const [agent, setAgent] = useState<Agent>("claude");
   const [modelMode, setModelMode] = useState("auto");
   const [models, setModels] = useState<ModelOption[]>([]);
+  const [agentRoles, setAgentRoles] = useState<AgentRoleOption[]>([]);
   const [routeMode, setRouteMode] = useState("auto");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [jobsOpen, setJobsOpen] = useState(false);
@@ -472,6 +481,7 @@ export default function Home() {
           if (msg.agent) setAgent(msg.agent);
           if (msg.model_mode) setModelMode(msg.model_mode);
           if (msg.models) setModels(msg.models);
+          if (msg.agent_roles) setAgentRoles(msg.agent_roles);
           if (msg.route_mode) setRouteMode(msg.route_mode);
           return;
         }
@@ -687,6 +697,7 @@ export default function Home() {
                 agent={agent}
                 modelMode={modelMode}
                 models={models}
+                agentRoles={agentRoles}
                 routeMode={routeMode}
                 onSelect={selectProject}
                 onAdd={addProject}

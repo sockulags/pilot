@@ -108,6 +108,38 @@ OLLAMA_ROUTER_MODEL = os.getenv("OLLAMA_ROUTER_MODEL", OLLAMA_MODEL)
 OLLAMA_GATEWAY_MODEL = os.getenv("OLLAMA_GATEWAY_MODEL", "gemma4:12b")
 GATEWAY_REFINE_ENABLED = os.getenv("GATEWAY_REFINE_ENABLED", "true").lower() == "true"
 
+AGENT_ROLE_LABELS: dict[str, str] = {
+    "default_agent": "Default",
+    "research_agent": "Research",
+    "code_agent": "Code",
+    "quick_code_agent": "Quick code",
+    "vision_agent": "Vision",
+    "deep_reasoning_agent": "Deep reasoning",
+}
+
+AGENT_ROLE_MODELS: dict[str, str] = {
+    "default_agent": os.getenv("PILOT_DEFAULT_AGENT", OLLAMA_MODEL),
+    "research_agent": os.getenv("PILOT_RESEARCH_AGENT", "gpt-oss:20b"),
+    "code_agent": os.getenv("PILOT_CODE_AGENT", "devstral:latest"),
+    "quick_code_agent": os.getenv("PILOT_QUICK_CODE_AGENT", "qwen2.5-coder:14b"),
+    "vision_agent": os.getenv("PILOT_VISION_AGENT", OLLAMA_VISION_MODEL),
+    "deep_reasoning_agent": os.getenv("PILOT_DEEP_REASONING_AGENT", "deepseek-r1:14b"),
+}
+
+INTENT_AGENT_ROLES: dict[str, str] = {
+    "chat": "default_agent",
+    "research": "research_agent",
+    "research_and_create_file": "research_agent",
+    "create_file": "default_agent",
+    "local_model_audit_report": "default_agent",
+    "project_analysis": "code_agent",
+    "computer_action": "default_agent",
+    "code": "code_agent",
+    "quick_code": "quick_code_agent",
+    "vision": "vision_agent",
+    "deep_reasoning": "deep_reasoning_agent",
+}
+
 
 def is_known_model(model: str | None) -> bool:
     return bool(model) and model in OLLAMA_MODELS

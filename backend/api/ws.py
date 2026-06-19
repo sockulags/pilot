@@ -31,13 +31,15 @@ from agents.gateway import refine_query
 from agents.orchestrator import classify_turn, compose_reply, should_offload_code
 from agents.turn_policy import (
     build_task_context,
-    choose_coordinator_model,
+    select_agent_for_intent,
     task_contract_intent,
     tool_task,
 )
 from codex_logs import summarize_codex_session
 from diagnostics import append_turn_diagnostic
 from config import (
+    AGENT_ROLE_LABELS,
+    AGENT_ROLE_MODELS,
     OLLAMA_MODEL,
     OLLAMA_MODELS,
     PILOT_AUTH_TOKEN,
@@ -56,6 +58,27 @@ from memory import format_for_prompt, search_memories
 from projects import add_project, list_projects, path_for_id, remove_project
 from store import clear_session, load_session, save_session
 from tools import run_codex, run_codex_cli
+
+
+def model_catalog() -> list[dict]:
+    return [
+        {"id": mid, "label": meta["label"], "hint": meta["hint"]}
+        for mid, meta in OLLAMA_MODELS.items()
+    ]
+
+
+def agent_role_catalog() -> list[dict]:
+    roles = []
+    for role, model in AGENT_ROLE_MODELS.items():
+        meta = OLLAMA_MODELS.get(model, {})
+        roles.append({
+            "role": role,
+            "label": AGENT_ROLE_LABELS.get(role, role.replace("_", " ").title()),
+            "model": model,
+            "model_label": meta.get("label", model),
+            "available": is_known_model(model),
+        })
+    return roles
 
 
 async def websocket_endpoint(websocket: WebSocket):
@@ -101,12 +124,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 claude_session_id, codex_session_id, agent, model_mode, route_mode,
             )
 
-    def model_catalog() -> list[dict]:
-        return [
-            {"id": mid, "label": meta["label"], "hint": meta["hint"]}
-            for mid, meta in OLLAMA_MODELS.items()
-        ]
-
     async def send_projects():
         await websocket.send_json({
             "type": "projects",
@@ -115,6 +132,7 @@ async def websocket_endpoint(websocket: WebSocket):
             "agent": agent,
             "model_mode": model_mode,
             "models": model_catalog(),
+            "agent_roles": agent_role_catalog(),
             "route_mode": route_mode,
         })
 
@@ -256,7 +274,8 @@ async def websocket_endpoint(websocket: WebSocket):
         route = decision["route"]
         # The coordinator (front brain) is fast gemma4 in auto mode; a pin makes
         # the chosen model the lead. It consults installed experts as needed.
-        coordinator_model = choose_coordinator_model(model_mode, task_context)
+        agent_selection = select_agent_for_intent(model_mode, task_context)
+        coordinator_model = agent_selection.model
 
         def emit(event: dict):
             enriched = {**event, "turn": turn, "route": route}
@@ -271,6 +290,9 @@ async def websocket_endpoint(websocket: WebSocket):
             "route": route,
             "thinking": decision.get("thinking", ""),
             "model": coordinator_model,
+            "agent_role": agent_selection.role,
+            "agent_role_model": agent_selection.configured_model,
+            "agent_role_fallback": agent_selection.fallback_reason,
         })
 
         # Local-first: a code turn only reaches the external agent on an explicit
@@ -643,6 +665,7 @@ def _turn_meta(
     intent: str = "",
     runtime_state=None,
 ) -> dict:
+    turn_start = next((event for event in events if event.get("type") == "turn_start"), {})
     meta = {
         "turn": turn,
         "route": route,
@@ -656,6 +679,9 @@ def _turn_meta(
         "status": status,
         "intent": intent,
     }
+    for key in ("agent_role", "agent_role_model", "agent_role_fallback"):
+        if turn_start.get(key):
+            meta[key] = turn_start[key]
     if runtime_state is not None:
         meta.update(runtime_state.to_meta())
     return meta
