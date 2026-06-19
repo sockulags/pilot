@@ -6,6 +6,7 @@ import Transcript from "@/components/ActionLog";
 import ProjectBar from "@/components/ProjectBar";
 import JobsPanel from "@/components/JobsPanel";
 import { ToastProvider } from "@/components/Toast";
+import Dialog, { useDialogA11y } from "@/components/Dialog";
 
 export type Route = "chat" | "computer" | "code";
 export type Project = { id: string; name: string; path: string };
@@ -206,13 +207,7 @@ function ContextModal({
   const percent = Math.min(100, Math.round((total / 8192) * 100));
 
   return (
-    <div className="scrim on" onClick={onClose}>
-      <div className="modal narrow" onClick={(e) => e.stopPropagation()}>
-        <div className="mh">
-          <span>◔</span>
-          <span className="nm">Huvudagentens kontext</span>
-          <button className="x" onClick={onClose} aria-label="Stäng">✕</button>
-        </div>
+    <Dialog icon="◔" title="Huvudagentens kontext" className="narrow" onClose={onClose}>
         <div className="mb">
           <p style={{ color: "var(--dim)", marginBottom: 12 }}>
             Uppskattad fördelning – inte exakta siffror. Värdena beräknas lokalt
@@ -235,8 +230,7 @@ function ContextModal({
             <button className="danger" onClick={onClearContext}>Ny konversation</button>
           </div>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -264,6 +258,7 @@ function Drawer({
   onReset: () => void;
 }) {
   const [query, setQuery] = useState("");
+  const drawerRef = useDialogA11y(onClose);
   const items = transcript.filter((item): item is Extract<TranscriptItem, { kind: "user" }> => item.kind === "user");
   const filtered = items.filter((item) => item.text.toLowerCase().includes(query.toLowerCase()));
   const lastPrompt = items.at(-1);
@@ -271,7 +266,7 @@ function Drawer({
   return (
     <>
       <div className="drawer-scrim on" onClick={onClose} />
-      <aside className="drawer open">
+      <aside className="drawer open" ref={drawerRef} role="dialog" aria-modal="true" aria-label="Session" tabIndex={-1}>
         <div className="dh">
           <div className="t">Session</div>
           <button className="x" onClick={onClose} aria-label="Stäng">✕</button>
@@ -685,32 +680,25 @@ function Workspace() {
       )}
 
       {controlsOpen && (
-        <div className="scrim on" onClick={() => setControlsOpen(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="mh">
-              <span>⌘</span>
-              <span className="nm">Projekt, modell och agent</span>
-              <button className="x" onClick={() => setControlsOpen(false)} aria-label="Stäng">✕</button>
-            </div>
-            <div className="mb">
-              <ProjectBar
-                projects={projects}
-                selected={selectedProject}
-                agent={agent}
-                modelMode={modelMode}
-                models={models}
-                agentRoles={agentRoles}
-                routeMode={routeMode}
-                onSelect={selectProject}
-                onAdd={addProject}
-                onRemove={removeProject}
-                onSelectAgent={selectAgent}
-                onSelectModel={selectModel}
-                onSelectRoute={selectRoute}
-              />
-            </div>
+        <Dialog icon="⌘" title="Projekt, modell och agent" onClose={() => setControlsOpen(false)}>
+          <div className="mb">
+            <ProjectBar
+              projects={projects}
+              selected={selectedProject}
+              agent={agent}
+              modelMode={modelMode}
+              models={models}
+              agentRoles={agentRoles}
+              routeMode={routeMode}
+              onSelect={selectProject}
+              onAdd={addProject}
+              onRemove={removeProject}
+              onSelectAgent={selectAgent}
+              onSelectModel={selectModel}
+              onSelectRoute={selectRoute}
+            />
           </div>
-        </div>
+        </Dialog>
       )}
 
       {contextOpen && (

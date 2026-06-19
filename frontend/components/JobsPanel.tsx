@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { Job, JobSchedule } from "@/app/page";
+import Dialog from "@/components/Dialog";
 
 interface Props {
   jobs: Job[];
@@ -53,13 +54,7 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
   };
 
   return (
-    <div className="scrim on" onClick={onClose}>
-      <div className="modal narrow" onClick={(e) => e.stopPropagation()}>
-        <div className="mh">
-          <span>⏰</span>
-          <span className="nm">Schemalagda jobb</span>
-          <button className="x" onClick={onClose} aria-label="Stäng">✕</button>
-        </div>
+    <Dialog icon="⏰" title="Schemalagda jobb" className="narrow" onClose={onClose}>
         <div className="mb">
           {jobs.length === 0 ? (
             <p style={{ color: "var(--dim)" }}>Inga jobb ännu.</p>
@@ -146,7 +141,6 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
             <button className="addbtn" onClick={submit}>Lägg till</button>
           </div>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }
