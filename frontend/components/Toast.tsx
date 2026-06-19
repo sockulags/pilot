@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
 type ToastKind = "info" | "success" | "error";
 
@@ -32,8 +32,14 @@ export function useToast(): ToastApi {
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const idRef = useRef(0);
+  const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
 
   const remove = useCallback((id: number) => {
+    const timer = timers.current.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      timers.current.delete(id);
+    }
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
@@ -44,10 +50,15 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       setToasts((prev) => [...prev, toast]);
       // Give actionable toasts (e.g. undo) longer to be noticed.
       const duration = opts?.duration ?? (opts?.action ? 6000 : 3500);
-      if (duration > 0) setTimeout(() => remove(id), duration);
+      if (duration > 0) timers.current.set(id, setTimeout(() => remove(id), duration));
     },
     [remove]
   );
+
+  useEffect(() => {
+    const map = timers.current;
+    return () => map.forEach((timer) => clearTimeout(timer));
+  }, []);
 
   return (
     <ToastContext.Provider value={{ show }}>
