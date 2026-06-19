@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Job, JobSchedule } from "@/app/page";
 import Dialog from "@/components/Dialog";
+import { useToast } from "@/components/Toast";
 
 interface Props {
   jobs: Job[];
@@ -31,9 +32,12 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
   const [date, setDate] = useState(todayStr());
   const [kind, setKind] = useState<"reminder" | "task">("reminder");
   const [payload, setPayload] = useState("");
+  const [error, setError] = useState("");
+  const toast = useToast();
 
   const toggleDay = (d: number) => {
     setWeekdays((prev) => (prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d].sort((a, b) => a - b)));
+    setError("");
   };
 
   const buildSchedule = (): JobSchedule | null => {
@@ -47,10 +51,23 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
 
   const submit = () => {
     const text = payload.trim();
+    if (!text) {
+      setError(kind === "task" ? "Skriv en instruktion till Pilot." : "Skriv en påminnelsetext.");
+      return;
+    }
+    if (stype === "weekly" && weekdays.length === 0) {
+      setError("Välj minst en veckodag.");
+      return;
+    }
     const schedule = buildSchedule();
-    if (!text || !schedule) return;
+    if (!schedule) {
+      setError("Kontrollera schemat innan du lägger till.");
+      return;
+    }
+    setError("");
     onAdd(text, schedule, text.slice(0, 60), kind);
     setPayload("");
+    toast.show("Jobb tillagt.", { kind: "success" });
   };
 
   return (
@@ -128,7 +145,10 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
             <input
               className="fld"
               value={payload}
-              onChange={(e) => setPayload(e.target.value)}
+              onChange={(e) => {
+                setPayload(e.target.value);
+                if (error) setError("");
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
@@ -136,10 +156,12 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
                 }
               }}
               placeholder={kind === "task" ? "Instruktion till Pilot…" : "Påminnelsetext…"}
+              aria-invalid={error ? true : undefined}
               style={{ flex: 1 }}
             />
             <button className="addbtn" onClick={submit}>Lägg till</button>
           </div>
+          {error && <div className="form-error" role="alert">{error}</div>}
         </div>
     </Dialog>
   );
