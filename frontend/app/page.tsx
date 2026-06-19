@@ -5,7 +5,7 @@ import ChatInput from "@/components/TaskInput";
 import Transcript from "@/components/ActionLog";
 import ProjectBar from "@/components/ProjectBar";
 import JobsPanel from "@/components/JobsPanel";
-import { ToastProvider } from "@/components/Toast";
+import { ToastProvider, useToast } from "@/components/Toast";
 import Dialog, { useDialogA11y } from "@/components/Dialog";
 
 export type Route = "chat" | "computer" | "code";
@@ -329,6 +329,7 @@ export default function Home() {
 }
 
 function Workspace() {
+  const toast = useToast();
   const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
@@ -594,6 +595,18 @@ function Workspace() {
     setDrawerOpen(false);
   }, [agent, modelMode, projects, routeMode, selectedProject, setRunning]);
 
+  // Guard the conversation wipe behind a confirm toast so a stray click can't
+  // discard an active conversation. Empty conversations reset immediately.
+  const requestReset = useCallback(() => {
+    if (transcriptRef.current.length === 0) {
+      handleReset();
+      return;
+    }
+    toast.show("Rensa konversationen och börja om?", {
+      action: { label: "Rensa", onClick: handleReset },
+    });
+  }, [handleReset, toast]);
+
   const selectProject = useCallback((id: string) => {
     wsRef.current?.send(JSON.stringify({ type: "select_project", id }));
   }, []);
@@ -623,8 +636,13 @@ function Workspace() {
     wsRef.current?.send(JSON.stringify({ type: "resume_job", id }));
   }, []);
   const deleteJob = useCallback((id: string) => {
-    wsRef.current?.send(JSON.stringify({ type: "delete_job", id }));
-  }, []);
+    toast.show("Ta bort jobbet?", {
+      action: {
+        label: "Ta bort",
+        onClick: () => wsRef.current?.send(JSON.stringify({ type: "delete_job", id })),
+      },
+    });
+  }, [toast]);
 
   const selectedProjectObject = projects.find((project) => project.path === selectedProject) ?? null;
   const hasConversation = transcript.length > 0;
@@ -667,7 +685,7 @@ function Workspace() {
             ⏰
             {jobs.length > 0 && <span className="badge">{jobs.length}</span>}
           </button>
-          <button className="ic reset" onClick={handleReset} title="Ny konversation" aria-label="Ny konversation">⟲</button>
+          <button className="ic reset" onClick={requestReset} title="Ny konversation" aria-label="Ny konversation">⟲</button>
           <div className="brain status" title={STATUS_LABEL[wsStatus]}>
             <span className="conn" style={{ background: wsStatus === "error" ? "var(--del)" : wsStatus === "connecting" ? "var(--amber)" : "var(--green)" }} />
             <span>{STATUS_LABEL[wsStatus]}</span>
@@ -726,7 +744,7 @@ function Workspace() {
             setControlsOpen(true);
             setDrawerOpen(false);
           }}
-          onReset={handleReset}
+          onReset={requestReset}
           onJump={jumpToMessage}
         />
       )}
@@ -761,7 +779,7 @@ function Workspace() {
           onCompactView={() => setFocusView(Math.min(8, transcript.length))}
           onClearContext={() => {
             setContextOpen(false);
-            handleReset();
+            requestReset();
           }}
           onClose={() => setContextOpen(false)}
         />
