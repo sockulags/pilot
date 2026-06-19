@@ -666,6 +666,7 @@ function Workspace() {
 
   return (
     <>
+      <a className="skip-link" href="#main">Hoppa till innehåll</a>
       <div className="hairline" />
       <div className="shell">
         <header className="top">
@@ -721,7 +722,7 @@ function Workspace() {
           </div>
         )}
 
-        <div className="scroll" ref={scrollRef} onScroll={handleScroll}>
+        <main id="main" className="scroll" ref={scrollRef} onScroll={handleScroll} tabIndex={-1}>
           {!hasConversation ? (
             <section className="hero">
               <h1 className="greet">
@@ -740,11 +741,11 @@ function Workspace() {
               <ChatInput onSend={handleSend} onAbort={handleAbort} onOpenContext={() => setContextOpen(true)} disabled={wsStatus !== "connected"} running={running} />
             </section>
           ) : (
-            <section className="conv on">
+            <section className="conv on" aria-live="polite" aria-atomic="false">
               <Transcript items={visibleTranscript} onEdit={editPrompt} onResend={handleSend} />
             </section>
           )}
-        </div>
+        </main>
 
         {hasConversation && showJump && (
           <button className="jump-latest" onClick={jumpToLatest} aria-label="Hoppa till senaste meddelandet">
