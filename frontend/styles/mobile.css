@@ -1,9 +1,4 @@
 /* ── mobile overrides (body.m) ────────────────────────────── */
-body.m .top { gap: 7px; padding: 12px 13px; }
-body.m .top .crumb,
-body.m #brainTxt,
-body.m .top .ic[title="Ny konversation"] { display: none; }
-body.m .brain  { padding: 7px; }
 body.m .conv   { padding: 12px 14px 26px; }
 body.m .dock   { padding: 0 14px 16px; }
 body.m .l2 .hint { display: none; }
