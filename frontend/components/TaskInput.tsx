@@ -57,7 +57,8 @@ export default function ChatInput({
   };
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Enter (or Cmd/Ctrl+Enter) sends; Shift+Enter inserts a newline.
+    if (e.key === "Enter" && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       submit();
     }
