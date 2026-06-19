@@ -306,7 +306,7 @@ function ArtifactCard({
             <div className="mh">
               <span>▣</span>
               <span className="nm">{artifact.title}</span>
-              <button className="x" onClick={() => setExpanded(false)}>✕</button>
+              <button className="x" onClick={() => setExpanded(false)} aria-label="Stäng">✕</button>
             </div>
             <div className="mb">
               {event.type === "screenshot" && event.image ? (

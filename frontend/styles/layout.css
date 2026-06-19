@@ -12,12 +12,22 @@ body.busy .hairline {
 }
 
 /* ── page shell ───────────────────────────────────────────── */
-.shell { height: 100vh; display: flex; flex-direction: column; }
+/* 100dvh (with a 100vh fallback) keeps the layout exactly as tall as the
+   visible viewport, so the bottom composer is never pushed below the fold by
+   the mobile URL bar or the on-screen keyboard. */
+.shell {
+  height: 100vh;
+  height: 100dvh;
+  display: flex; flex-direction: column;
+}
 
 /* ── top bar ──────────────────────────────────────────────── */
 .top {
   display: flex; align-items: center; gap: 10px;
   padding: 14px 22px;
+  padding-top: max(14px, env(safe-area-inset-top));
+  padding-left: max(22px, env(safe-area-inset-left));
+  padding-right: max(22px, env(safe-area-inset-right));
 }
 
 .top .mk {
@@ -41,7 +51,15 @@ body.busy .hairline {
 .top .sp { flex: 1; }
 
 /* ── scrollable content area ──────────────────────────────── */
-.scroll { flex: 1; overflow-y: auto; }
+/* Only this region scrolls; the header and composer stay fixed in place so the
+   text box is always reachable without scrolling the whole page. */
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
 
 /* ── hero (empty state) ───────────────────────────────────── */
 .hero {
@@ -66,7 +84,14 @@ body.busy .hairline {
 .tag { color: var(--dim); margin: 10px 0 26px; text-align: center; }
 
 /* ── dock (bottom composer in chat mode) ──────────────────── */
-.dock { padding: 0 22px 24px; }
+/* Pinned below the scroll region; padded for the home indicator / safe area. */
+.dock {
+  flex-shrink: 0;
+  padding: 0 22px 24px;
+  padding-bottom: max(var(--space-5), calc(env(safe-area-inset-bottom) + 12px));
+  padding-left: max(22px, env(safe-area-inset-left));
+  padding-right: max(22px, env(safe-area-inset-right));
+}
 
 /* ── sessions drawer ──────────────────────────────────────── */
 .drawer-scrim {
@@ -159,29 +184,57 @@ body.busy .hairline {
 .ses-item .st   { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ses-item .sm   { font: 10.5px var(--mono); color: var(--dim-2); }
 
-@media (max-width: 820px) {
+@media (max-width: 768px) {
+  /* Single, uncluttered row: menu · logo · project · jobs · status.
+     Secondary controls (model, agent, route, reset) move into the drawer /
+     controls sheet, so nothing is lost — just reorganised. */
   .top {
-    flex-wrap: wrap;
-    align-items: flex-start;
-    gap: 8px;
+    gap: var(--space-2);
+    padding: 10px 14px;
+    padding-top: max(10px, env(safe-area-inset-top));
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
+    flex-wrap: nowrap;
   }
   .top .nm,
   .top .sp,
-  .top .brain:last-child {
+  .top .crumb.soft,
+  .top .brain.model,
+  .top .agent,
+  .top .ic.reset {
     display: none;
   }
-  .headpills {
-    order: 3;
-    min-width: 0;
-    width: 100%;
-  }
+  .headpills { flex: 1; min-width: 0; }
   .top .crumb {
-    max-width: calc(100vw - 72px);
+    flex: 1; min-width: 0; max-width: none;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .top .crumb.soft { display: none; }
+  /* Connection state collapses to just its dot. */
+  .top .brain.status { padding: 7px; border-color: transparent; }
+  .top .brain.status span:not(.conn) { display: none; }
+
+  .dock {
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
+  }
+
+  /* Calmer, more intentional empty state on phones. The hero renders the same
+     composer as the dock, so it gets the matching home-indicator inset. */
+  .hero {
+    padding: 0 var(--space-5);
+    padding-bottom: max(var(--space-5), calc(env(safe-area-inset-bottom) + 12px));
+  }
+  .greet { font-size: clamp(24px, 7vw, 30px); letter-spacing: -0.6px; }
+  .tag { margin: var(--space-3) 0 var(--space-5); font-size: 14px; }
+  .ghosts { gap: var(--space-2); }
+
   .drawer { width: min(92vw, 320px); }
+  .drawer .dh { padding-top: max(16px, env(safe-area-inset-top)); }
+  .drawer .list { padding-bottom: max(14px, calc(env(safe-area-inset-bottom) + 8px)); }
   .drawer .dmeta { grid-template-columns: 1fr; }
+  .drawer .dh .x { width: var(--tap); height: var(--tap); }
+  .drawer .newbtn { padding: var(--space-3); }
+  .ses-item { padding: var(--space-3); }
 }
