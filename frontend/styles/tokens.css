@@ -12,7 +12,9 @@
   /* text */
   --text:     #f0f1f5;
   --dim:      #888b99;
-  --dim-2:    #585b69;
+  /* --dim-2 is the lightest secondary-text token; kept >=4.5:1 on the dark
+     surfaces (bg/panel) so metadata, hints and placeholders meet WCAG AA. */
+  --dim-2:    #80828f;
 
   /* accent palette */
   --accent:   #7c8cff;
