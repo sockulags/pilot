@@ -11,8 +11,11 @@ function useCopy() {
   const toast = useToast();
   return useCallback(
     (text: string) => {
-      copyText(text);
-      toast.show(t.messageActions.copied, { kind: "success" });
+      void copyText(text).then((ok) =>
+        toast.show(ok ? t.messageActions.copied : t.messageActions.copyFailed, {
+          kind: ok ? "success" : "error",
+        })
+      );
     },
     [toast]
   );
@@ -20,10 +23,13 @@ function useCopy() {
 
 const ROUTE_LABEL: Record<Route, string> = t.routeLabel;
 
-async function copyText(value: string) {
+async function copyText(value: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(value);
-  } catch {}
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 type ArtifactDescriptor = {

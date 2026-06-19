@@ -59,6 +59,7 @@ export const t = {
     copyAnswer: "Kopiera svar",
     copy: "Kopiera",
     copied: "Kopierat.",
+    copyFailed: "Kunde inte kopiera.",
   },
 
   drawer: {

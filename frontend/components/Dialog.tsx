@@ -13,6 +13,10 @@ function focusableWithin(node: HTMLElement | null): HTMLElement[] {
   );
 }
 
+// Tracks open dialogs so only the topmost handles Escape / Tab trapping when
+// overlays are stacked (e.g. drawer open + Cmd-K controls).
+const dialogStack: symbol[] = [];
+
 /**
  * Wires a container as an accessible dialog: Escape closes it, Tab is trapped
  * inside, focus moves in on open and is restored to the trigger on close.
@@ -22,12 +26,17 @@ export function useDialogA11y(onClose: () => void) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const token = Symbol("dialog");
+    dialogStack.push(token);
     const previouslyFocused = document.activeElement as HTMLElement | null;
     const node = ref.current;
     const items = focusableWithin(node);
     (items[0] ?? node)?.focus();
 
+    const isTopmost = () => dialogStack[dialogStack.length - 1] === token;
+
     const onKey = (e: KeyboardEvent) => {
+      if (!isTopmost()) return; // only the front overlay reacts
       if (e.key === "Escape") {
         e.preventDefault();
         onClose();
@@ -40,7 +49,11 @@ export function useDialogA11y(onClose: () => void) {
           return;
         }
         const idx = current.indexOf(document.activeElement as HTMLElement);
-        if (e.shiftKey && idx <= 0) {
+        if (idx === -1) {
+          // Focus escaped the dialog — pull it back in.
+          e.preventDefault();
+          (e.shiftKey ? current[current.length - 1] : current[0]).focus();
+        } else if (e.shiftKey && idx === 0) {
           e.preventDefault();
           current[current.length - 1].focus();
         } else if (!e.shiftKey && idx === current.length - 1) {
@@ -53,6 +66,8 @@ export function useDialogA11y(onClose: () => void) {
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
+      const at = dialogStack.indexOf(token);
+      if (at !== -1) dialogStack.splice(at, 1);
       previouslyFocused?.focus?.();
     };
   }, [onClose]);

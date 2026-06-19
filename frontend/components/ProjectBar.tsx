@@ -71,7 +71,7 @@ export default function ProjectBar({ projects, selected, agent, modelMode, model
     try {
       localStorage.setItem(RECENT_KEY, JSON.stringify(nextRecent));
     } catch {}
-    toast.show("Lägger till projekt…", { kind: "success" });
+    toast.show("Lägger till projekt…", { kind: "info" });
     setPath("");
     setError("");
     setAdding(false);

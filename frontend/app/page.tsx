@@ -169,6 +169,10 @@ function modelLabel(mode: string, models: ModelOption[]) {
   return models.find((model) => model.id === mode)?.label ?? mode;
 }
 
+function agentLabel(agent: Agent) {
+  return t.agents.find((option) => option.id === agent)?.label ?? agent;
+}
+
 function approximateTokens(transcript: TranscriptItem[]) {
   return transcript.reduce((sum, item) => {
     const text = item.kind === "user" ? item.text : `${item.text} ${item.summary ?? ""}`;
@@ -271,7 +275,7 @@ function Drawer({
             <div className="st">{selectedProject?.name ?? t.drawer.noProject}</div>
             <div className="sm">{selectedProject?.path ?? t.drawer.openControls}</div>
             <div className="pillrow">
-              <span className="microtag">{agent === "claude" ? "Claude Code" : "Codex"}</span>
+              <span className="microtag">{agentLabel(agent)}</span>
               <span className="microtag">{modelLabel(modelMode, models)}</span>
               <span className="microtag">{routeMode === "auto" ? "Auto route" : routeMode}</span>
             </div>
@@ -418,7 +422,12 @@ function Workspace() {
   }, []);
 
   const jumpToMessage = useCallback((id: number) => {
-    document.getElementById(`msg-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    // Focus view hides older turns, so reveal the full transcript first, then
+    // scroll once the target anchor has rendered.
+    setFocusView(null);
+    requestAnimationFrame(() => {
+      document.getElementById(`msg-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }, []);
 
   // Load a previous prompt into the composer for editing (re-key to reseed).
@@ -665,6 +674,8 @@ function Workspace() {
 
   const selectedProjectObject = projects.find((project) => project.path === selectedProject) ?? null;
   const hasConversation = transcript.length > 0;
+  const lastDone = [...transcript].reverse().find((item) => item.kind === "assistant" && item.done);
+  const liveAnnouncement = lastDone && lastDone.kind === "assistant" ? lastDone.text : "";
   const visibleTranscript = focusView ? transcript.slice(-focusView) : transcript;
   const hiddenCount = transcript.length - visibleTranscript.length;
 
@@ -694,11 +705,18 @@ function Workspace() {
           </button>
           <div className={`agent${agentMenuOpen ? " open" : ""}`}>
             <button className="agent-trigger" onClick={() => setAgentMenuOpen((value) => !value)}>
-              {agent === "claude" ? "Claude Code" : "Codex"}
+              {agentLabel(agent)}
             </button>
             <div className="menu">
-              <button className={agent === "claude" ? "on" : ""} onClick={() => selectAgent("claude")}>Claude Code</button>
-              <button className={agent === "codex" ? "on" : ""} onClick={() => selectAgent("codex")}>Codex</button>
+              {t.agents.map((option) => (
+                <button
+                  key={option.id}
+                  className={agent === option.id ? "on" : ""}
+                  onClick={() => selectAgent(option.id as Agent)}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
           </div>
           <button className="ic" onClick={() => setJobsOpen(true)} title={t.header.scheduledJobs} aria-label={t.header.scheduledJobs}>
@@ -724,6 +742,8 @@ function Workspace() {
           </div>
         )}
 
+        <div className="sr-only" aria-live="polite" aria-atomic="true">{liveAnnouncement}</div>
+
         <main id="main" className="scroll" ref={scrollRef} onScroll={handleScroll} tabIndex={-1}>
           {!hasConversation ? (
             <section className="hero">
@@ -741,7 +761,7 @@ function Workspace() {
               <ChatInput onSend={handleSend} onAbort={handleAbort} onOpenContext={() => setContextOpen(true)} disabled={wsStatus !== "connected"} running={running} />
             </section>
           ) : (
-            <section className="conv on" aria-live="polite" aria-atomic="false">
+            <section className="conv on">
               <Transcript items={visibleTranscript} onEdit={editPrompt} onResend={handleSend} />
             </section>
           )}
