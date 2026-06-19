@@ -58,7 +58,7 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
         <div className="mh">
           <span>⏰</span>
           <span className="nm">Schemalagda jobb</span>
-          <button className="x" onClick={onClose}>✕</button>
+          <button className="x" onClick={onClose} aria-label="Stäng">✕</button>
         </div>
         <div className="mb">
           {jobs.length === 0 ? (
@@ -76,10 +76,13 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
                   </div>
                 </div>
                 <div className="jx">
-                  <button onClick={() => (job.enabled ? onPause(job.id) : onResume(job.id))}>
+                  <button
+                    onClick={() => (job.enabled ? onPause(job.id) : onResume(job.id))}
+                    aria-label={job.enabled ? "Pausa jobb" : "Återuppta jobb"}
+                  >
                     {job.enabled ? "⏸" : "▶"}
                   </button>
-                  <button onClick={() => onDelete(job.id)}>✕</button>
+                  <button onClick={() => onDelete(job.id)} aria-label="Ta bort jobb">✕</button>
                 </div>
               </div>
             ))

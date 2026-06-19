@@ -210,7 +210,7 @@ function ContextModal({
         <div className="mh">
           <span>◔</span>
           <span className="nm">Huvudagentens kontext</span>
-          <button className="x" onClick={onClose}>✕</button>
+          <button className="x" onClick={onClose} aria-label="Stäng">✕</button>
         </div>
         <div className="mb">
           <p style={{ color: "var(--dim)", marginBottom: 12 }}>
@@ -272,7 +272,7 @@ function Drawer({
       <aside className="drawer open">
         <div className="dh">
           <div className="t">Session</div>
-          <button className="x" onClick={onClose}>✕</button>
+          <button className="x" onClick={onClose} aria-label="Stäng">✕</button>
         </div>
         <button className="newbtn" onClick={onReset}>＋ Ny konversation</button>
         <div className="dsect">
@@ -343,14 +343,6 @@ export default function Home() {
   useEffect(() => {
     document.body.classList.toggle("busy", running);
   }, [running]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const apply = () => document.body.classList.toggle("m", window.innerWidth < 820);
-    apply();
-    window.addEventListener("resize", apply);
-    return () => window.removeEventListener("resize", apply);
-  }, []);
 
   useEffect(() => {
     let id = localStorage.getItem("pilot_session_id");
@@ -594,7 +586,7 @@ export default function Home() {
       <div className="hairline" />
       <div className="shell">
         <header className="top">
-          <button className="ic" onClick={() => setDrawerOpen(true)} title="Öppna session">
+          <button className="ic" onClick={() => setDrawerOpen(true)} title="Öppna session" aria-label="Öppna session">
             ☰
           </button>
           <div className="mk">✦</div>
@@ -608,7 +600,7 @@ export default function Home() {
             </button>
           </div>
           <div className="sp" />
-          <button className="brain" onClick={() => setContextOpen(true)}>
+          <button className="brain model" onClick={() => setContextOpen(true)}>
             <span className="orb" />
             <span id="brainTxt">{modelMode === "auto" ? "auto orchestration" : modelLabel(modelMode, models)}</span>
           </button>
@@ -621,12 +613,12 @@ export default function Home() {
               <button className={agent === "codex" ? "on" : ""} onClick={() => selectAgent("codex")}>Codex</button>
             </div>
           </div>
-          <button className="ic" onClick={() => setJobsOpen(true)} title="Schemalagda jobb">
+          <button className="ic" onClick={() => setJobsOpen(true)} title="Schemalagda jobb" aria-label="Schemalagda jobb">
             ⏰
             {jobs.length > 0 && <span className="badge">{jobs.length}</span>}
           </button>
-          <button className="ic" onClick={handleReset} title="Ny konversation">⟲</button>
-          <div className="brain" title={STATUS_LABEL[wsStatus]}>
+          <button className="ic reset" onClick={handleReset} title="Ny konversation" aria-label="Ny konversation">⟲</button>
+          <div className="brain status" title={STATUS_LABEL[wsStatus]}>
             <span className="conn" style={{ background: wsStatus === "error" ? "var(--del)" : wsStatus === "connecting" ? "var(--amber)" : "var(--green)" }} />
             <span>{STATUS_LABEL[wsStatus]}</span>
           </div>
@@ -688,7 +680,7 @@ export default function Home() {
             <div className="mh">
               <span>⌘</span>
               <span className="nm">Projekt, modell och agent</span>
-              <button className="x" onClick={() => setControlsOpen(false)}>✕</button>
+              <button className="x" onClick={() => setControlsOpen(false)} aria-label="Stäng">✕</button>
             </div>
             <div className="mb">
               <ProjectBar
