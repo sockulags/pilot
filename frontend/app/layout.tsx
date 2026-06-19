@@ -11,7 +11,6 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
   viewportFit: "cover",
   // Resize the layout (and thus 100dvh) when the on-screen keyboard opens,
   // so the composer stays pinned above the keyboard instead of being covered.
