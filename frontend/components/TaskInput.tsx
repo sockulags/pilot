@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, KeyboardEvent } from "react";
+import { t } from "@/app/strings";
 
 interface Props {
   onSend: (text: string) => void;
@@ -24,7 +25,7 @@ export default function ChatInput({
   onOpenContext,
   disabled,
   running = false,
-  placeholder = "Be Pilot om något, eller ge en tydlig uppgift…",
+  placeholder = t.composer.placeholder,
   initialValue = "",
 }: Props) {
   const [value, setValue] = useState(initialValue);
@@ -91,7 +92,7 @@ export default function ChatInput({
             className={`send${running ? " stop" : ""}`}
             disabled={!running && (disabled || !value.trim())}
             onClick={running ? onAbort : submit}
-            title={running ? "Avbryt pågående körning" : "Skicka"}
+            title={running ? t.composer.abort : t.composer.send}
           >
             {running ? "■" : "➜"}
           </button>
@@ -99,15 +100,11 @@ export default function ChatInput({
         <div className="l2">
           <button type="button" className="ctxm" onClick={onOpenContext}>
             <span className="ring" />
-            <span className="lbl">Kontext</span>
+            <span className="lbl">{t.composer.context}</span>
           </button>
           <span className="sp2" />
           <span className="hint">
-            {running
-              ? "Pilot arbetar…"
-              : disabled
-                ? "Väntar på anslutning…"
-                : "Enter skickar · Shift+Enter ny rad"}
+            {running ? t.composer.working : disabled ? t.composer.waiting : t.composer.enterHint}
           </span>
         </div>
       </div>
