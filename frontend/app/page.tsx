@@ -369,6 +369,19 @@ function Workspace() {
     document.body.classList.toggle("busy", running);
   }, [running]);
 
+  // Global shortcut: Cmd/Ctrl+K opens the project/model/agent controls.
+  // (Escape-to-close for overlays is handled by the Dialog/drawer a11y hook.)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setControlsOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   useEffect(() => {
     let id = localStorage.getItem("pilot_session_id");
     if (!id) {
@@ -676,7 +689,7 @@ function Workspace() {
           <div className="mk">✦</div>
           <div className="nm">Pilot</div>
           <div className="headpills">
-          <button className="crumb" onClick={() => setControlsOpen(true)}>
+          <button className="crumb" onClick={() => setControlsOpen(true)} title="Projekt, modell och agent (⌘K)">
             {selectedProjectObject?.name ?? "Välj projekt"}
           </button>
             <button className="crumb soft" onClick={() => setControlsOpen(true)}>
