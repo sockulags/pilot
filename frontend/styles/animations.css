@@ -28,3 +28,13 @@
 @keyframes flow {
   to { stroke-dashoffset: -18; }
 }
+
+/* Respect users who prefer reduced motion — drop the decorative loops
+   (hairline slide, orb breathe, spinners, blink) and snap transitions. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

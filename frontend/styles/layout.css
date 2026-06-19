@@ -220,6 +220,12 @@ body.busy .hairline {
     padding-right: max(14px, env(safe-area-inset-right));
   }
 
+  /* Calmer, more intentional empty state on phones. */
+  .hero { padding: 0 var(--space-5); }
+  .greet { font-size: clamp(24px, 7vw, 30px); letter-spacing: -0.6px; }
+  .tag { margin: var(--space-3) 0 var(--space-5); font-size: 14px; }
+  .ghosts { gap: var(--space-2); }
+
   .drawer { width: min(92vw, 320px); }
   .drawer .dmeta { grid-template-columns: 1fr; }
   .drawer .dh .x { width: 40px; height: 40px; }
