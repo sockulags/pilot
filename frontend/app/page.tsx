@@ -348,6 +348,7 @@ function Workspace() {
   const [running, _setRunning] = useState(false);
   const [wsStatus, setWsStatus] = useState<WsStatus>("disconnected");
   const [showJump, setShowJump] = useState(false);
+  const [reconnectNonce, setReconnectNonce] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
   const wsRef = useRef<WebSocket | null>(null);
@@ -555,7 +556,13 @@ function Workspace() {
       if (retryTimer) clearTimeout(retryTimer);
       wsRef.current?.close();
     };
-  }, [applyEvent, setRunning]);
+  }, [applyEvent, setRunning, reconnectNonce]);
+
+  // Force an immediate reconnect (tears down and re-runs the socket effect).
+  const reconnect = useCallback(() => {
+    setWsStatus("connecting");
+    setReconnectNonce((n) => n + 1);
+  }, []);
 
   const handleSend = useCallback((text: string) => {
     const ws = wsRef.current;
@@ -691,6 +698,20 @@ function Workspace() {
             <span>{STATUS_LABEL[wsStatus]}</span>
           </div>
         </header>
+
+        {wsStatus !== "connected" && (
+          <div className={`connbanner ${wsStatus}`} role="status">
+            <span className="cb-dot" />
+            <span className="cb-msg">
+              {wsStatus === "connecting"
+                ? "Ansluter till Pilot…"
+                : "Anslutningen bröts. Försöker återansluta…"}
+            </span>
+            {wsStatus !== "connecting" && (
+              <button className="cb-retry" onClick={reconnect}>Försök igen</button>
+            )}
+          </div>
+        )}
 
         <div className="scroll" ref={scrollRef} onScroll={handleScroll}>
           {!hasConversation ? (
