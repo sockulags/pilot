@@ -53,29 +53,29 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
   const submit = () => {
     const text = payload.trim();
     if (!text) {
-      setError(kind === "task" ? "Skriv en instruktion till Pilot." : "Skriv en påminnelsetext.");
+      setError(kind === "task" ? t.jobs.needInstruction : t.jobs.needReminder);
       return;
     }
     if (stype === "weekly" && weekdays.length === 0) {
-      setError("Välj minst en veckodag.");
+      setError(t.jobs.needWeekday);
       return;
     }
     const schedule = buildSchedule();
     if (!schedule) {
-      setError("Kontrollera schemat innan du lägger till.");
+      setError(t.jobs.badSchedule);
       return;
     }
     setError("");
     onAdd(text, schedule, text.slice(0, 60), kind);
     setPayload("");
-    toast.show("Jobb tillagt.", { kind: "success" });
+    toast.show(t.jobs.added, { kind: "success" });
   };
 
   return (
     <Dialog icon="⏰" title={t.header.scheduledJobs} className="narrow" onClose={onClose}>
         <div className="mb">
           {jobs.length === 0 ? (
-            <p style={{ color: "var(--dim)" }}>Inga jobb ännu.</p>
+            <p style={{ color: "var(--dim)" }}>{t.jobs.none}</p>
           ) : (
             jobs.map((job) => (
               <div key={job.id} className="jrow" style={{ opacity: job.enabled ? 1 : 0.55 }}>
@@ -83,28 +83,28 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
                 <div>
                   <div className="jt">{job.title}</div>
                   <div className="js">
-                    {job.kind === "task" ? "uppgift · " : ""}
+                    {job.kind === "task" ? t.jobs.taskPrefix : ""}
                     {job.summary} · nästa {job.next_run_label}
-                    {!job.enabled ? " · pausad" : ""}
+                    {!job.enabled ? t.jobs.paused : ""}
                   </div>
                 </div>
                 <div className="jx">
                   <button
                     onClick={() => (job.enabled ? onPause(job.id) : onResume(job.id))}
-                    aria-label={job.enabled ? "Pausa jobb" : "Återuppta jobb"}
+                    aria-label={job.enabled ? t.jobs.pause : t.jobs.resume}
                   >
                     {job.enabled ? "⏸" : "▶"}
                   </button>
-                  <button onClick={() => onDelete(job.id)} aria-label="Ta bort jobb">✕</button>
+                  <button onClick={() => onDelete(job.id)} aria-label={t.jobs.delete}>✕</button>
                 </div>
               </div>
             ))
           )}
 
-          <div className="seclabel">Nytt jobb</div>
+          <div className="seclabel">{t.jobs.newJob}</div>
           <div className="seg2" style={{ marginBottom: 10 }}>
-            <button className={kind === "reminder" ? "on" : ""} onClick={() => setKind("reminder")}>Påminnelse</button>
-            <button className={kind === "task" ? "on" : ""} onClick={() => setKind("task")}>Uppgift</button>
+            <button className={kind === "reminder" ? "on" : ""} onClick={() => setKind("reminder")}>{t.jobs.reminderKind}</button>
+            <button className={kind === "task" ? "on" : ""} onClick={() => setKind("task")}>{t.jobs.taskKind}</button>
           </div>
 
           <div className="jadd" style={{ marginBottom: 10 }}>
@@ -156,11 +156,11 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
                   submit();
                 }
               }}
-              placeholder={kind === "task" ? "Instruktion till Pilot…" : "Påminnelsetext…"}
+              placeholder={kind === "task" ? t.jobs.instructionPlaceholder : t.jobs.reminderPlaceholder}
               aria-invalid={error ? true : undefined}
               style={{ flex: 1 }}
             />
-            <button className="addbtn" onClick={submit}>Lägg till</button>
+            <button className="addbtn" onClick={submit}>{t.common.add}</button>
           </div>
           {error && <div className="form-error" role="alert">{error}</div>}
         </div>

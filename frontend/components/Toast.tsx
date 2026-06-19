@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { t } from "@/app/strings";
 
 type ToastKind = "info" | "success" | "error";
 
@@ -64,22 +65,22 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     <ToastContext.Provider value={{ show }}>
       {children}
       <div className="toasts" role="region" aria-label="Notiser">
-        {toasts.map((t) => (
-          <div key={t.id} className={`toast ${t.kind}`} role="status">
-            <span className="toast-msg">{t.message}</span>
-            {t.action && (
+        {toasts.map((toast) => (
+          <div key={toast.id} className={`toast ${toast.kind}`} role="status">
+            <span className="toast-msg">{toast.message}</span>
+            {toast.action && (
               <button
                 type="button"
                 className="toast-action"
                 onClick={() => {
-                  t.action!.onClick();
-                  remove(t.id);
+                  toast.action!.onClick();
+                  remove(toast.id);
                 }}
               >
-                {t.action.label}
+                {toast.action.label}
               </button>
             )}
-            <button type="button" className="toast-x" aria-label="Stäng" onClick={() => remove(t.id)}>
+            <button type="button" className="toast-x" aria-label={t.common.close} onClick={() => remove(toast.id)}>
               ✕
             </button>
           </div>

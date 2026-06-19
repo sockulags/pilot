@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Project, Agent, ModelOption, AgentRoleOption } from "@/app/page";
 import { useToast } from "@/components/Toast";
+import { t } from "@/app/strings";
 
 const RECENT_KEY = "pilot_recent_paths";
 
@@ -31,17 +32,8 @@ interface Props {
   onSelectRoute: (mode: string) => void;
 }
 
-const ROUTE_MODES: { id: string; label: string }[] = [
-  { id: "auto", label: "Auto" },
-  { id: "chat", label: "Chatt" },
-  { id: "computer", label: "Dator" },
-  { id: "code", label: "Kod" },
-];
-
-const AGENTS: { id: Agent; label: string }[] = [
-  { id: "claude", label: "Claude Code" },
-  { id: "codex", label: "Codex" },
-];
+const ROUTE_MODES = t.routeModes;
+const AGENTS = t.agents;
 
 export default function ProjectBar({ projects, selected, agent, modelMode, models, agentRoles, routeMode, onSelect, onAdd, onRemove, onSelectAgent, onSelectModel, onSelectRoute }: Props) {
   const [adding, setAdding] = useState(false);
@@ -58,11 +50,11 @@ export default function ProjectBar({ projects, selected, agent, modelMode, model
   const addPath = (raw: string) => {
     const v = raw.trim();
     if (!v) {
-      setError("Ange en sökväg till projektet.");
+      setError(t.projects.needPath);
       return;
     }
     if (projects.some((p) => p.path === v)) {
-      setError("Projektet finns redan i listan.");
+      setError(t.projects.duplicate);
       return;
     }
     onAdd(v);
@@ -71,7 +63,7 @@ export default function ProjectBar({ projects, selected, agent, modelMode, model
     try {
       localStorage.setItem(RECENT_KEY, JSON.stringify(nextRecent));
     } catch {}
-    toast.show("Lägger till projekt…", { kind: "info" });
+    toast.show(t.projects.adding, { kind: "info" });
     setPath("");
     setError("");
     setAdding(false);
@@ -132,7 +124,7 @@ export default function ProjectBar({ projects, selected, agent, modelMode, model
             {error && <div className="form-error" role="alert">{error}</div>}
             {recent.filter((p) => !projects.some((proj) => proj.path === p)).length > 0 && (
               <div className="control-list">
-                <span className="seclabel">Senaste sökvägar</span>
+                <span className="seclabel">{t.projects.recentPaths}</span>
                 <div className="control-inline">
                   {recent
                     .filter((p) => !projects.some((proj) => proj.path === p))
@@ -146,7 +138,7 @@ export default function ProjectBar({ projects, selected, agent, modelMode, model
             )}
           </>
         ) : (
-          <button className="control-pill" onClick={() => setAdding(true)}>＋ Lägg till projekt</button>
+          <button className="control-pill" onClick={() => setAdding(true)}>{t.projects.addProject}</button>
         )}
       </section>
 
@@ -208,7 +200,7 @@ export default function ProjectBar({ projects, selected, agent, modelMode, model
           {AGENTS.map((a) => (
             <button
               key={a.id}
-              onClick={() => onSelectAgent(a.id)}
+              onClick={() => onSelectAgent(a.id as Agent)}
               title={`Kör kod-uppgifter med ${a.label}`}
               className={`control-pill${agent === a.id ? " on" : ""}`}
             >
