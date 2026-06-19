@@ -108,6 +108,14 @@
 }
 
 @media (max-width: 768px) {
+  /* Overlays present as bottom sheets on phones. */
+  .scrim { align-items: flex-end; padding: 0; }
+  .modal,
+  .modal.narrow {
+    width: 100%; max-width: 100%; max-height: 88vh;
+    border-radius: 18px 18px 0 0;
+  }
+
   .control-grid { grid-template-columns: 1fr; }
   /* Comfortable thumb targets for close / confirm controls. */
   .modal .mh .x { width: 40px; height: 40px; }

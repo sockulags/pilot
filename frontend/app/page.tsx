@@ -345,14 +345,6 @@ export default function Home() {
   }, [running]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const apply = () => document.body.classList.toggle("m", window.innerWidth < 820);
-    apply();
-    window.addEventListener("resize", apply);
-    return () => window.removeEventListener("resize", apply);
-  }, []);
-
-  useEffect(() => {
     let id = localStorage.getItem("pilot_session_id");
     if (!id) {
       id = makeSessionId();
