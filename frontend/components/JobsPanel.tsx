@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Job, JobSchedule } from "@/app/page";
 import Dialog from "@/components/Dialog";
 import { useToast } from "@/components/Toast";
+import { t } from "@/app/strings";
 
 interface Props {
   jobs: Job[];
@@ -71,7 +72,7 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
   };
 
   return (
-    <Dialog icon="⏰" title="Schemalagda jobb" className="narrow" onClose={onClose}>
+    <Dialog icon="⏰" title={t.header.scheduledJobs} className="narrow" onClose={onClose}>
         <div className="mb">
           {jobs.length === 0 ? (
             <p style={{ color: "var(--dim)" }}>Inga jobb ännu.</p>

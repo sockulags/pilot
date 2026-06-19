@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef } from "react";
+import { t } from "@/app/strings";
 
 const FOCUSABLE =
   'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
@@ -91,7 +92,7 @@ export default function Dialog({
           <span className="nm" id={titleId}>
             {title}
           </span>
-          <button className="x" onClick={onClose} aria-label="Stäng">
+          <button className="x" onClick={onClose} aria-label={t.common.close}>
             ✕
           </button>
         </div>

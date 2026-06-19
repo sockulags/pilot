@@ -7,6 +7,7 @@ import ProjectBar from "@/components/ProjectBar";
 import JobsPanel from "@/components/JobsPanel";
 import { ToastProvider, useToast } from "@/components/Toast";
 import Dialog, { useDialogA11y } from "@/components/Dialog";
+import { t } from "@/app/strings";
 
 export type Route = "chat" | "computer" | "code";
 export type Project = { id: string; name: string; path: string };
@@ -133,19 +134,9 @@ export type TranscriptItem =
 
 type WsStatus = "disconnected" | "connecting" | "connected" | "error";
 
-const STATUS_LABEL: Record<WsStatus, string> = {
-  disconnected: "Frånkopplad",
-  connecting: "Ansluter",
-  connected: "Ansluten",
-  error: "Fel",
-};
+const STATUS_LABEL: Record<WsStatus, string> = t.status;
 
-const HERO_SUGGESTIONS = [
-  "Granska den här diffen och säg vad som är riskabelt",
-  "Kör igenom repo:t och föreslå nästa tekniska steg",
-  "Jämför lokala modeller och föreslå rätt standardstack",
-  "Öppna projektet, kör testerna och förklara vad som faller",
-];
+const HERO_SUGGESTIONS = t.hero.suggestions;
 
 const RECONNECT_DELAY = 3000;
 
@@ -207,7 +198,7 @@ function ContextModal({
   const percent = Math.min(100, Math.round((total / 8192) * 100));
 
   return (
-    <Dialog icon="◔" title="Huvudagentens kontext" className="narrow" onClose={onClose}>
+    <Dialog icon="◔" title={t.dialogs.context} className="narrow" onClose={onClose}>
         <div className="mb">
           <p style={{ color: "var(--dim)", marginBottom: 12 }}>
             Uppskattad fördelning – inte exakta siffror. Värdena beräknas lokalt
@@ -270,15 +261,15 @@ function Drawer({
       <div className="drawer-scrim on" onClick={onClose} />
       <aside className="drawer open" ref={drawerRef} role="dialog" aria-modal="true" aria-label="Session" tabIndex={-1}>
         <div className="dh">
-          <div className="t">Session</div>
-          <button className="x" onClick={onClose} aria-label="Stäng">✕</button>
+          <div className="t">{t.drawer.session}</div>
+          <button className="x" onClick={onClose} aria-label={t.common.close}>✕</button>
         </div>
-        <button className="newbtn" onClick={onReset}>＋ Ny konversation</button>
+        <button className="newbtn" onClick={onReset}>＋ {t.header.newConversation}</button>
         <div className="dsect">
-          <div className="seclabel">Aktiv nu</div>
+          <div className="seclabel">{t.drawer.activeNow}</div>
           <button className="ses-item on dsession" onClick={onOpenControls}>
-            <div className="st">{selectedProject?.name ?? "Inget projekt valt"}</div>
-            <div className="sm">{selectedProject?.path ?? "Öppna kontrollpanelen för projekt, modell och agent."}</div>
+            <div className="st">{selectedProject?.name ?? t.drawer.noProject}</div>
+            <div className="sm">{selectedProject?.path ?? t.drawer.openControls}</div>
             <div className="pillrow">
               <span className="microtag">{agent === "claude" ? "Claude Code" : "Codex"}</span>
               <span className="microtag">{modelLabel(modelMode, models)}</span>
@@ -286,19 +277,19 @@ function Drawer({
             </div>
           </button>
           <div className="dmeta">
-            <div className="sessionstat"><span>Status</span><b>{STATUS_LABEL[wsStatus]}</b></div>
-            <div className="sessionstat"><span>Turer</span><b>{items.length}</b></div>
-            <div className="sessionstat"><span>Senast</span><b>{lastPrompt ? `Tur ${lastPrompt.turn}` : "Tom"}</b></div>
+            <div className="sessionstat"><span>{t.drawer.statusLabel}</span><b>{STATUS_LABEL[wsStatus]}</b></div>
+            <div className="sessionstat"><span>{t.drawer.turns}</span><b>{items.length}</b></div>
+            <div className="sessionstat"><span>{t.drawer.last}</span><b>{lastPrompt ? `${t.drawer.turn} ${lastPrompt.turn}` : t.drawer.empty}</b></div>
           </div>
         </div>
         <div className="dsect">
-          <div className="seclabel">Sök i historik</div>
-          <input className="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filtrera tidigare prompts…" />
+          <div className="seclabel">{t.drawer.searchHistory}</div>
+          <input className="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.drawer.searchPlaceholder} />
         </div>
         <div className="list">
-          <div className="seclabel">Senaste prompts</div>
+          <div className="seclabel">{t.drawer.recentPrompts}</div>
           {filtered.length === 0 ? (
-            <div className="ses-empty">{query ? "Inga träffar." : "Inga prompts ännu."}</div>
+            <div className="ses-empty">{query ? t.drawer.noMatches : t.drawer.noPrompts}</div>
           ) : (
             filtered.map((item) => (
               <button
@@ -310,7 +301,7 @@ function Drawer({
                 }}
               >
                 <div className="st">{preview(item.text)}</div>
-                <div className="sm">Tur {item.turn}</div>
+                <div className="sm">{t.drawer.turn} {item.turn}</div>
               </button>
             ))
           )}
@@ -683,23 +674,23 @@ function Workspace() {
       <div className="hairline" />
       <div className="shell">
         <header className="top">
-          <button className="ic" onClick={() => setDrawerOpen(true)} title="Öppna session" aria-label="Öppna session">
+          <button className="ic" onClick={() => setDrawerOpen(true)} title={t.header.openSession} aria-label={t.header.openSession}>
             ☰
           </button>
           <div className="mk">✦</div>
-          <div className="nm">Pilot</div>
+          <div className="nm">{t.appName}</div>
           <div className="headpills">
-          <button className="crumb" onClick={() => setControlsOpen(true)} title="Projekt, modell och agent (⌘K)">
-            {selectedProjectObject?.name ?? "Välj projekt"}
+          <button className="crumb" onClick={() => setControlsOpen(true)} title={t.header.controlsHint}>
+            {selectedProjectObject?.name ?? t.header.chooseProject}
           </button>
             <button className="crumb soft" onClick={() => setControlsOpen(true)}>
-              {routeMode === "auto" ? "Auto route" : routeMode}
+              {routeMode === "auto" ? t.header.autoRoute : routeMode}
             </button>
           </div>
           <div className="sp" />
           <button className="brain model" onClick={() => setContextOpen(true)}>
             <span className="orb" />
-            <span id="brainTxt">{modelMode === "auto" ? "auto orchestration" : modelLabel(modelMode, models)}</span>
+            <span id="brainTxt">{modelMode === "auto" ? t.header.autoOrchestration : modelLabel(modelMode, models)}</span>
           </button>
           <div className={`agent${agentMenuOpen ? " open" : ""}`}>
             <button className="agent-trigger" onClick={() => setAgentMenuOpen((value) => !value)}>
@@ -710,11 +701,11 @@ function Workspace() {
               <button className={agent === "codex" ? "on" : ""} onClick={() => selectAgent("codex")}>Codex</button>
             </div>
           </div>
-          <button className="ic" onClick={() => setJobsOpen(true)} title="Schemalagda jobb" aria-label="Schemalagda jobb">
+          <button className="ic" onClick={() => setJobsOpen(true)} title={t.header.scheduledJobs} aria-label={t.header.scheduledJobs}>
             ⏰
             {jobs.length > 0 && <span className="badge">{jobs.length}</span>}
           </button>
-          <button className="ic reset" onClick={requestReset} title="Ny konversation" aria-label="Ny konversation">⟲</button>
+          <button className="ic reset" onClick={requestReset} title={t.header.newConversation} aria-label={t.header.newConversation}>⟲</button>
           <div className="brain status" title={STATUS_LABEL[wsStatus]}>
             <span className="conn" style={{ background: wsStatus === "error" ? "var(--del)" : wsStatus === "connecting" ? "var(--amber)" : "var(--green)" }} />
             <span>{STATUS_LABEL[wsStatus]}</span>
@@ -725,12 +716,10 @@ function Workspace() {
           <div className={`connbanner ${wsStatus}`} role="status">
             <span className="cb-dot" />
             <span className="cb-msg">
-              {wsStatus === "connecting"
-                ? "Ansluter till Pilot…"
-                : "Anslutningen bröts. Försöker återansluta…"}
+              {wsStatus === "connecting" ? t.connection.connecting : t.connection.dropped}
             </span>
             {wsStatus !== "connecting" && (
-              <button className="cb-retry" onClick={reconnect}>Försök igen</button>
+              <button className="cb-retry" onClick={reconnect}>{t.connection.retry}</button>
             )}
           </div>
         )}
@@ -739,11 +728,9 @@ function Workspace() {
           {!hasConversation ? (
             <section className="hero">
               <h1 className="greet">
-                Bygg, granska och kör <span className="g">lokala agentflöden</span>.
+                {t.hero.titleLead}<span className="g">{t.hero.titleAccent}</span>.
               </h1>
-              <p className="tag">
-                Pilot håller ihop chatt, kod, datorstyrning och modellval i ett enda arbetsflöde.
-              </p>
+              <p className="tag">{t.hero.tagline}</p>
               <div className="ghosts">
                 {HERO_SUGGESTIONS.map((suggestion) => (
                   <button key={suggestion} className="ghost" onClick={() => handleSend(suggestion)}>
@@ -793,7 +780,7 @@ function Workspace() {
       )}
 
       {controlsOpen && (
-        <Dialog icon="⌘" title="Projekt, modell och agent" onClose={() => setControlsOpen(false)}>
+        <Dialog icon="⌘" title={t.dialogs.controls} onClose={() => setControlsOpen(false)}>
           <div className="mb">
             <ProjectBar
               projects={projects}

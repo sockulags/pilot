@@ -5,23 +5,20 @@ import type { Route, TranscriptItem, TurnEvent } from "@/app/page";
 import Markdown from "@/components/Markdown";
 import Dialog from "@/components/Dialog";
 import { useToast } from "@/components/Toast";
+import { t } from "@/app/strings";
 
 function useCopy() {
   const toast = useToast();
   return useCallback(
     (text: string) => {
       copyText(text);
-      toast.show("Kopierat.", { kind: "success" });
+      toast.show(t.messageActions.copied, { kind: "success" });
     },
     [toast]
   );
 }
 
-const ROUTE_LABEL: Record<Route, string> = {
-  chat: "chatt",
-  computer: "dator",
-  code: "kod",
-};
+const ROUTE_LABEL: Record<Route, string> = t.routeLabel;
 
 async function copyText(value: string) {
   try {
@@ -399,9 +396,9 @@ function UserBubble({
     <div className="u-wrap">
       <div className="u" id={`msg-${id}`}>{text}</div>
       <div className="msg-actions">
-        <button onClick={() => copy(text)} aria-label="Kopiera prompt">⎘</button>
-        <button onClick={() => onEdit(text)} aria-label="Redigera i rutan">✎</button>
-        <button onClick={() => onResend(text)} aria-label="Skicka igen">↻</button>
+        <button onClick={() => copy(text)} aria-label={t.messageActions.copyPrompt}>⎘</button>
+        <button onClick={() => onEdit(text)} aria-label={t.messageActions.edit}>✎</button>
+        <button onClick={() => onResend(text)} aria-label={t.messageActions.resend}>↻</button>
       </div>
     </div>
   );
@@ -474,7 +471,7 @@ function AssistantTurn({ item }: { item: Extract<TranscriptItem, { kind: "assist
         {item.cwd && <div className="rbadge" style={{ marginTop: 10 }}>cwd · {item.cwd}</div>}
         {item.text && item.done && (
           <div className="msg-actions left">
-            <button onClick={() => copy(item.text)} aria-label="Kopiera svar">⎘ Kopiera</button>
+            <button onClick={() => copy(item.text)} aria-label={t.messageActions.copyAnswer}>⎘ {t.messageActions.copy}</button>
           </div>
         )}
       </div>
