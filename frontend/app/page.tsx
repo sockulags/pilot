@@ -214,17 +214,18 @@ function ContextModal({
         </div>
         <div className="mb">
           <p style={{ color: "var(--dim)", marginBottom: 12 }}>
-            Ungefärlig fördelning för den här konversationen just nu.
+            Uppskattad fördelning – inte exakta siffror. Värdena beräknas lokalt
+            i webbläsaren och är till för att ge en känsla för storleken.
           </p>
           <div className="ctxbar">
             <span style={{ width: `${(system / 8192) * 100}%`, background: "var(--accent)" }} />
             <span style={{ width: `${(skills / 8192) * 100}%`, background: "var(--violet)" }} />
             <span style={{ width: `${(conversation / 8192) * 100}%`, background: "var(--green)" }} />
           </div>
-          <div className="ctxrow"><span className="sw" style={{ background: "var(--accent)" }} /><span className="nm2">System</span><span className="tk">{system} tok</span></div>
-          <div className="ctxrow"><span className="sw" style={{ background: "var(--violet)" }} /><span className="nm2">Skills</span><span className="tk">{skills} tok</span></div>
-          <div className="ctxrow"><span className="sw" style={{ background: "var(--green)" }} /><span className="nm2">Samtal</span><span className="tk">{conversation} tok</span></div>
-          <div className="ctxrow" style={{ borderBottom: "none" }}><span className="sw" style={{ background: "var(--panel-2)" }} /><span className="nm2">Totalt</span><span className="tk">{total} tok · {percent}% av 8k</span></div>
+          <div className="ctxrow"><span className="sw" style={{ background: "var(--accent)" }} /><span className="nm2">System</span><span className="tk">~{system} tok</span></div>
+          <div className="ctxrow"><span className="sw" style={{ background: "var(--violet)" }} /><span className="nm2">Skills</span><span className="tk">~{skills} tok</span></div>
+          <div className="ctxrow"><span className="sw" style={{ background: "var(--green)" }} /><span className="nm2">Samtal</span><span className="tk">~{conversation} tok</span></div>
+          <div className="ctxrow" style={{ borderBottom: "none" }}><span className="sw" style={{ background: "var(--panel-2)" }} /><span className="nm2">Totalt</span><span className="tk">~{total} tok · ~{percent}% av kontexten</span></div>
           <p className="ctxhint">
             {compacted ? `Fokusvy aktiv. ${hiddenCount} äldre inlägg är dolda i UI:t, men finns kvar i den underliggande sessionen.` : "Fokusvy visar bara de senaste turerna för att minska visuellt brus utan att kasta bort sessionen."}
           </p>
