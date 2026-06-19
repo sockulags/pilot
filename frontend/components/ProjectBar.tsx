@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Project, Agent, ModelOption } from "@/app/page";
+import type { Project, Agent, ModelOption, AgentRoleOption } from "@/app/page";
 
 interface Props {
   projects: Project[];
@@ -9,6 +9,7 @@ interface Props {
   agent: Agent;
   modelMode: string; // "auto" or a pinned model id
   models: ModelOption[];
+  agentRoles: AgentRoleOption[];
   routeMode: string; // "auto" or a forced route
   onSelect: (id: string) => void;
   onAdd: (path: string) => void;
@@ -30,7 +31,7 @@ const AGENTS: { id: Agent; label: string }[] = [
   { id: "codex", label: "Codex" },
 ];
 
-export default function ProjectBar({ projects, selected, agent, modelMode, models, routeMode, onSelect, onAdd, onRemove, onSelectAgent, onSelectModel, onSelectRoute }: Props) {
+export default function ProjectBar({ projects, selected, agent, modelMode, models, agentRoles, routeMode, onSelect, onAdd, onRemove, onSelectAgent, onSelectModel, onSelectRoute }: Props) {
   const [adding, setAdding] = useState(false);
   const [path, setPath] = useState("");
   const selectedProj = projects.find((p) => p.path === selected) ?? null;
@@ -127,12 +128,15 @@ export default function ProjectBar({ projects, selected, agent, modelMode, model
           ))}
         </select>
         <div className="control-list">
-          {models.slice(0, 3).map((m) => (
-            <div key={m.id} className="mrow">
-              <div className="mi">◔</div>
+          {agentRoles.map((role) => (
+            <div key={role.role} className="mrow">
+              <div className="mi">{role.available ? "◔" : "!"}</div>
               <div>
-                <div className="mt">{m.label}</div>
-                <div className="ms">{m.hint}</div>
+                <div className="mt">{role.label}</div>
+                <div className="ms">
+                  {role.model_label}
+                  {!role.available && ` (${role.model} saknas)`}
+                </div>
               </div>
             </div>
           ))}

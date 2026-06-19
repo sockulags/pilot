@@ -95,6 +95,45 @@ class TurnPolicyTests(unittest.TestCase):
 
         self.assertEqual("gpt-oss:20b", choose_coordinator_model("auto", ctx))
 
+    def test_select_agent_for_intent_uses_configured_available_role(self):
+        from agents import turn_policy
+        from agents.turn_policy import TaskContext, select_agent_for_intent
+
+        ctx = TaskContext(intent="research")
+        with mock.patch.object(turn_policy, "AGENT_ROLE_MODELS", {
+            "default_agent": "gemma4:12b",
+            "research_agent": "gpt-oss:20b",
+        }):
+            selected = select_agent_for_intent(
+                "auto",
+                ctx,
+                available_models={"gemma4:12b", "gpt-oss:20b"},
+            )
+
+        self.assertEqual("research_agent", selected.role)
+        self.assertEqual("gpt-oss:20b", selected.model)
+        self.assertIsNone(selected.fallback_reason)
+
+    def test_select_agent_for_intent_falls_back_and_records_reason_when_missing(self):
+        from agents import turn_policy
+        from agents.turn_policy import TaskContext, select_agent_for_intent
+
+        ctx = TaskContext(intent="research")
+        with mock.patch.object(turn_policy, "AGENT_ROLE_MODELS", {
+            "default_agent": "gemma4:12b",
+            "research_agent": "missing:latest",
+        }):
+            selected = select_agent_for_intent(
+                "auto",
+                ctx,
+                available_models={"gemma4:12b"},
+            )
+
+        self.assertEqual("research_agent", selected.role)
+        self.assertEqual("gemma4:12b", selected.model)
+        self.assertIn("missing:latest", selected.fallback_reason)
+        self.assertEqual("default_agent", selected.fallback_role)
+
     def test_task_contract_intent_maps_core_tool_backed_intents(self):
         from agents.turn_policy import build_task_context, task_contract_intent
 
