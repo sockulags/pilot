@@ -217,4 +217,7 @@ body.busy .hairline {
 
   .drawer { width: min(92vw, 320px); }
   .drawer .dmeta { grid-template-columns: 1fr; }
+  .drawer .dh .x { width: 40px; height: 40px; }
+  .drawer .newbtn { padding: 12px; }
+  .ses-item { padding: 12px; }
 }
