@@ -46,6 +46,12 @@ export default function ChatInput({
     }
   };
 
+  // On mobile the keyboard can briefly overlap the input before the layout
+  // settles; nudge the composer back into view once it opens.
+  const onFocus = () => {
+    setTimeout(() => ref.current?.scrollIntoView({ block: "nearest" }), 300);
+  };
+
   return (
     <div className="composer">
       <div className="box">
@@ -55,6 +61,7 @@ export default function ChatInput({
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={onKey}
+            onFocus={onFocus}
             disabled={disabled || running}
             placeholder={placeholder}
             rows={1}

@@ -12,12 +12,22 @@ body.busy .hairline {
 }
 
 /* ── page shell ───────────────────────────────────────────── */
-.shell { height: 100vh; display: flex; flex-direction: column; }
+/* 100dvh (with a 100vh fallback) keeps the layout exactly as tall as the
+   visible viewport, so the bottom composer is never pushed below the fold by
+   the mobile URL bar or the on-screen keyboard. */
+.shell {
+  height: 100vh;
+  height: 100dvh;
+  display: flex; flex-direction: column;
+}
 
 /* ── top bar ──────────────────────────────────────────────── */
 .top {
   display: flex; align-items: center; gap: 10px;
   padding: 14px 22px;
+  padding-top: max(14px, env(safe-area-inset-top));
+  padding-left: max(22px, env(safe-area-inset-left));
+  padding-right: max(22px, env(safe-area-inset-right));
 }
 
 .top .mk {
@@ -41,7 +51,15 @@ body.busy .hairline {
 .top .sp { flex: 1; }
 
 /* ── scrollable content area ──────────────────────────────── */
-.scroll { flex: 1; overflow-y: auto; }
+/* Only this region scrolls; the header and composer stay fixed in place so the
+   text box is always reachable without scrolling the whole page. */
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
 
 /* ── hero (empty state) ───────────────────────────────────── */
 .hero {
@@ -66,7 +84,14 @@ body.busy .hairline {
 .tag { color: var(--dim); margin: 10px 0 26px; text-align: center; }
 
 /* ── dock (bottom composer in chat mode) ──────────────────── */
-.dock { padding: 0 22px 24px; }
+/* Pinned below the scroll region; padded for the home indicator / safe area. */
+.dock {
+  flex-shrink: 0;
+  padding: 0 22px 24px;
+  padding-bottom: max(24px, calc(env(safe-area-inset-bottom) + 12px));
+  padding-left: max(22px, env(safe-area-inset-left));
+  padding-right: max(22px, env(safe-area-inset-right));
+}
 
 /* ── sessions drawer ──────────────────────────────────────── */
 .drawer-scrim {
