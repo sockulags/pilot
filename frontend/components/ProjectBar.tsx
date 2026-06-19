@@ -1,7 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Project, Agent, ModelOption, AgentRoleOption } from "@/app/page";
+import { useToast } from "@/components/Toast";
+
+const RECENT_KEY = "pilot_recent_paths";
+
+function loadRecent(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    return raw ? (JSON.parse(raw) as string[]) : [];
+  } catch {
+    return [];
+  }
+}
 
 interface Props {
   projects: Project[];
@@ -34,15 +46,38 @@ const AGENTS: { id: Agent; label: string }[] = [
 export default function ProjectBar({ projects, selected, agent, modelMode, models, agentRoles, routeMode, onSelect, onAdd, onRemove, onSelectAgent, onSelectModel, onSelectRoute }: Props) {
   const [adding, setAdding] = useState(false);
   const [path, setPath] = useState("");
+  const [error, setError] = useState("");
+  const [recent, setRecent] = useState<string[]>([]);
+  const toast = useToast();
   const selectedProj = projects.find((p) => p.path === selected) ?? null;
 
-  const submitAdd = () => {
-    const v = path.trim();
-    if (!v) return;
+  useEffect(() => {
+    setRecent(loadRecent());
+  }, []);
+
+  const addPath = (raw: string) => {
+    const v = raw.trim();
+    if (!v) {
+      setError("Ange en sökväg till projektet.");
+      return;
+    }
+    if (projects.some((p) => p.path === v)) {
+      setError("Projektet finns redan i listan.");
+      return;
+    }
     onAdd(v);
+    const nextRecent = [v, ...recent.filter((p) => p !== v)].slice(0, 5);
+    setRecent(nextRecent);
+    try {
+      localStorage.setItem(RECENT_KEY, JSON.stringify(nextRecent));
+    } catch {}
+    toast.show("Lägger till projekt…", { kind: "success" });
     setPath("");
+    setError("");
     setAdding(false);
   };
+
+  const submitAdd = () => addPath(path);
 
   return (
     <div className="control-grid">
@@ -69,25 +104,47 @@ export default function ProjectBar({ projects, selected, agent, modelMode, model
         </select>
         {selectedProj && <div className="pathline" title={selectedProj.path}>{selectedProj.path}</div>}
         {adding ? (
-          <div className="addrow">
-            <input
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  submitAdd();
-                } else if (e.key === "Escape") {
-                  setAdding(false);
-                  setPath("");
-                }
-              }}
-              placeholder="C:\\sökväg\\till\\projekt"
-              autoFocus
-              className="fld"
-            />
-            <button className="control-pill on" onClick={submitAdd}>Lägg till</button>
-          </div>
+          <>
+            <div className="addrow">
+              <input
+                value={path}
+                onChange={(e) => {
+                  setPath(e.target.value);
+                  if (error) setError("");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    submitAdd();
+                  } else if (e.key === "Escape") {
+                    setAdding(false);
+                    setPath("");
+                    setError("");
+                  }
+                }}
+                placeholder="C:\\sökväg\\till\\projekt"
+                autoFocus
+                aria-invalid={error ? true : undefined}
+                className="fld"
+              />
+              <button className="control-pill on" onClick={submitAdd}>Lägg till</button>
+            </div>
+            {error && <div className="form-error" role="alert">{error}</div>}
+            {recent.filter((p) => !projects.some((proj) => proj.path === p)).length > 0 && (
+              <div className="control-list">
+                <span className="seclabel">Senaste sökvägar</span>
+                <div className="control-inline">
+                  {recent
+                    .filter((p) => !projects.some((proj) => proj.path === p))
+                    .map((p) => (
+                      <button key={p} className="control-pill" title={p} onClick={() => addPath(p)}>
+                        {p.split(/[\\/]/).filter(Boolean).at(-1) ?? p}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            )}
+          </>
         ) : (
           <button className="control-pill" onClick={() => setAdding(true)}>＋ Lägg till projekt</button>
         )}
