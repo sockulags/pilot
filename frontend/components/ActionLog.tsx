@@ -1,9 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Route, TranscriptItem, TurnEvent } from "@/app/page";
 import Markdown from "@/components/Markdown";
 import Dialog from "@/components/Dialog";
+import { useToast } from "@/components/Toast";
+
+function useCopy() {
+  const toast = useToast();
+  return useCallback(
+    (text: string) => {
+      copyText(text);
+      toast.show("Kopierat.", { kind: "success" });
+    },
+    [toast]
+  );
+}
 
 const ROUTE_LABEL: Record<Route, string> = {
   chat: "chatt",
@@ -371,11 +383,32 @@ function Insyn({ events, done }: { events: TurnEvent[]; done: boolean }) {
   );
 }
 
-function UserBubble({ id, text }: { id: number; text: string }) {
-  return <div className="u" id={`msg-${id}`}>{text}</div>;
+function UserBubble({
+  id,
+  text,
+  onEdit,
+  onResend,
+}: {
+  id: number;
+  text: string;
+  onEdit: (text: string) => void;
+  onResend: (text: string) => void;
+}) {
+  const copy = useCopy();
+  return (
+    <div className="u-wrap">
+      <div className="u" id={`msg-${id}`}>{text}</div>
+      <div className="msg-actions">
+        <button onClick={() => copy(text)} aria-label="Kopiera prompt">⎘</button>
+        <button onClick={() => onEdit(text)} aria-label="Redigera i rutan">✎</button>
+        <button onClick={() => onResend(text)} aria-label="Skicka igen">↻</button>
+      </div>
+    </div>
+  );
 }
 
 function AssistantTurn({ item }: { item: Extract<TranscriptItem, { kind: "assistant" }> }) {
+  const copy = useCopy();
   const memoryEvents = item.events.filter((event) => event.type === "memory" && event.content);
   const artifactUnits = collectArtifactUnits(item.events);
   const actionEvents = item.events.filter((event) => event.type === "action");
@@ -439,17 +472,30 @@ function AssistantTurn({ item }: { item: Extract<TranscriptItem, { kind: "assist
           </div>
         )}
         {item.cwd && <div className="rbadge" style={{ marginTop: 10 }}>cwd · {item.cwd}</div>}
+        {item.text && item.done && (
+          <div className="msg-actions left">
+            <button onClick={() => copy(item.text)} aria-label="Kopiera svar">⎘ Kopiera</button>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-export default function Transcript({ items }: { items: TranscriptItem[] }) {
+export default function Transcript({
+  items,
+  onEdit,
+  onResend,
+}: {
+  items: TranscriptItem[];
+  onEdit: (text: string) => void;
+  onResend: (text: string) => void;
+}) {
   return (
     <>
       {items.map((item) =>
         item.kind === "user" ? (
-          <UserBubble key={item.id} id={item.id} text={item.text} />
+          <UserBubble key={item.id} id={item.id} text={item.text} onEdit={onEdit} onResend={onResend} />
         ) : (
           <AssistantTurn key={item.id} item={item} />
         )

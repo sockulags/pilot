@@ -9,6 +9,7 @@ interface Props {
   disabled: boolean;
   running?: boolean;
   placeholder?: string;
+  initialValue?: string;
 }
 
 function autosize(el: HTMLTextAreaElement | null) {
@@ -24,14 +25,25 @@ export default function ChatInput({
   disabled,
   running = false,
   placeholder = "Be Pilot om något, eller ge en tydlig uppgift…",
+  initialValue = "",
 }: Props) {
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(initialValue);
   const ref = useRef<HTMLTextAreaElement>(null);
   const focusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     autosize(ref.current);
   }, [value]);
+
+  // When seeded with an edited prompt (component is re-keyed), focus and place
+  // the caret at the end so the user can tweak and resend.
+  useEffect(() => {
+    if (!initialValue) return;
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [initialValue]);
 
   useEffect(() => () => {
     if (focusTimer.current) clearTimeout(focusTimer.current);
