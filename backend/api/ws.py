@@ -264,7 +264,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
         project = os.path.basename(cwd.rstrip("\\/")) if cwd else None
         # Recall relevant long-term memories for this turn (degrades to "" on failure).
-        memories = format_for_prompt(await search_memories(text))
+        memories = format_for_prompt(
+            await search_memories(text, session_id=session_id, project=project)
+        )
         # route_mode "auto" lets the classifier decide; otherwise the user has
         # pinned the route (Läge toggle) and we skip classification entirely.
         if route_mode == "auto":

@@ -498,7 +498,18 @@ async def run_coordinator(
         if action == "remember":
             fact = str(decision.get("text") or "").strip()
             if fact:
-                mem_id = await save_memory(fact, kind="fact", session_id=session_id)
+                # Default to a global memory; project_cwd scopes it to a project
+                # when present. source_session is recorded for provenance.
+                if project_cwd:
+                    mem_id = await save_memory(
+                        fact,
+                        kind="fact",
+                        session_id=session_id,
+                        scope="project",
+                        project=Path(project_cwd).name or None,
+                    )
+                else:
+                    mem_id = await save_memory(fact, kind="fact", session_id=session_id)
                 if mem_id:
                     emit(make_event("memory", content=fact))
                     notes.append(f"Saved to long-term memory: {fact}")

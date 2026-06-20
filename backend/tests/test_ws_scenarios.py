@@ -345,7 +345,7 @@ class WebSocketScenarioTests(unittest.TestCase):
         async def fake_compose_reply(conversation, grounding=None, model=None, memories=""):
             yield reply
 
-        async def fake_search_memories(text):
+        async def fake_search_memories(text, *args, **kwargs):
             return []
 
         with tempfile.TemporaryDirectory() as tmp, \
