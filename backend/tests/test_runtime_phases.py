@@ -67,5 +67,87 @@ class RuntimePhaseTests(unittest.TestCase):
         self.assertTrue(can_compose_final_answer(contract, runtime_state))
 
 
+    def test_default_contracts_block_premature_answer_until_evidence(self):
+        from agents.runtime_phases import can_compose_final_answer, verify_contract
+        from agents.runtime_state import RuntimeState
+        from agents.task_contracts import build_task_contract
+
+        cases = {
+            "desktop_action": [
+                ("type_text", {"text": "hi"}, "typed", True),
+                ("perceive", {}, "screen after typing", True),
+            ],
+            "shell_action": [
+                ("run_command", {"cmd": "dir"}, "Command: dir\nOutput:\nfile.txt", True),
+            ],
+            "code_change": [
+                ("read_file", {"path": "x.py"}, "File: x.py\nContent:\n...", True),
+            ],
+            "github_operation": [
+                ("github_issues", {"repo": "o/r"}, "Open issues in o/r (1):", True),
+            ],
+        }
+        for intent, evidence in cases.items():
+            contract = build_task_contract(intent)
+            state = RuntimeState()
+            # No evidence yet: premature answer must be blocked.
+            self.assertFalse(can_compose_final_answer(contract, state), intent)
+            verify_contract(contract, state)
+            self.assertFalse(can_compose_final_answer(contract, state), intent)
+            for tool, args, result, ok in evidence:
+                state.record_tool_result(tool, args, result, ok)
+            verify_contract(contract, state)
+            self.assertTrue(can_compose_final_answer(contract, state), intent)
+
+    def test_no_contract_still_answers(self):
+        from agents.runtime_phases import can_compose_final_answer
+        from agents.runtime_state import RuntimeState
+
+        self.assertTrue(can_compose_final_answer(None, RuntimeState()))
+
+    def test_runtime_metadata_exposes_contract_phase(self):
+        from agents.runtime_phases import verify_contract
+        from agents.runtime_state import RuntimeState
+        from agents.task_contracts import build_task_contract
+
+        state = RuntimeState()
+        contract = build_task_contract("shell_action")
+
+        # Before any contract result is set: no_contract phase.
+        prompt = state.to_prompt_dict()
+        self.assertIsNone(prompt["contract_intent"])
+        self.assertFalse(prompt["contract_satisfied"])
+        self.assertEqual("no_contract", prompt["phase"])
+
+        verify_contract(contract, state)
+        gathering = state.to_prompt_dict()
+        self.assertEqual("shell_action", gathering["contract_intent"])
+        self.assertFalse(gathering["contract_satisfied"])
+        self.assertEqual("gathering", gathering["phase"])
+
+        state.record_tool_result("run_command", {"cmd": "dir"}, "Command: dir\nOutput:\nok", True)
+        verify_contract(contract, state)
+        verified = state.to_prompt_dict()
+        self.assertTrue(verified["contract_satisfied"])
+        self.assertEqual("verified", verified["phase"])
+
+    def test_resolver_maps_side_effecting_action_but_not_chat(self):
+        from agents.turn_policy import build_task_context, resolve_task_contract_intent
+
+        # A side-effecting desktop action with no run_command match -> default.
+        self.assertEqual(
+            "desktop_action",
+            resolve_task_contract_intent(build_task_context([], "Öppna Notepad")),
+        )
+        # A shell run still resolves to the specific run_command contract.
+        self.assertEqual(
+            "run_command",
+            resolve_task_contract_intent(build_task_context([], "Kör git status")),
+        )
+        # A plain conversational/Q&A turn maps to None (no over-gating).
+        self.assertIsNone(resolve_task_contract_intent(build_task_context([], "Vad är huvudstaden i Sverige?")))
+        self.assertIsNone(resolve_task_contract_intent(build_task_context([], "Berätta en rolig historia")))
+
+
 if __name__ == "__main__":
     unittest.main()

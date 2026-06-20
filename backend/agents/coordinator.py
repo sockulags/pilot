@@ -550,11 +550,16 @@ async def run_coordinator(
                 if mem_id:
                     emit(make_event("memory", content=fact))
                     notes.append(f"Saved to long-term memory: {fact}")
+                    # Record the save so the memory_write contract can verify it.
+                    runtime_state.record_memory_write(fact, mem_id)
             continue
 
         if action == "perceive":
             last_observation = await agent_loop.perceive(task, history, emit)
             notes.append(f"Screen observation:\n{last_observation[:1200]}")
+            # Record the observation as evidence so action+verify contracts (e.g.
+            # desktop_action) can confirm a post-action screen check happened.
+            runtime_state.record_tool_result("perceive", {}, last_observation, ok=True)
             continue
 
         # action == "tool"
@@ -631,6 +636,8 @@ async def run_coordinator(
             file_output_done = True
         if tool in agent_loop.POST_ACTION_OBSERVE_TOOLS:
             last_observation = await agent_loop.perceive(task, history, emit)
+            # Record the post-action observation as evidence (action+verify).
+            runtime_state.record_tool_result("perceive", {}, last_observation, ok=True)
         await asyncio.sleep(0.2)
 
     return LoopOutcome(
