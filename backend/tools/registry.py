@@ -20,6 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from tools import command_risk
+
 
 @dataclass(frozen=True)
 class ToolSpec:
@@ -465,41 +467,17 @@ def side_effects_for(tool: str) -> bool:
 
 def confirmation_reason(tool: str, args: dict | None = None) -> str:
     if tool == "run_command":
+        args = args or {}
+        cmd = str(args.get("cmd") or args.get("command") or "")
+        risk = command_risk.classify_command(cmd)
+        if risk.requires_confirmation:
+            return risk.reason
         return "High-risk shell command requires confirmation."
     return f"High-risk tool {tool!r} requires confirmation."
 
 
 def _command_requires_confirmation(cmd: str) -> bool:
-    lowered = f" {cmd.lower()} "
-    high_risk_tokens = (
-        " remove-item ",
-        " set-content ",
-        " out-file ",
-        " add-content ",
-        " new-item ",
-        " tee-object ",
-        " >",
-        ">>",
-        " rm ",
-        " rmdir ",
-        " del ",
-        " erase ",
-        " format ",
-        " npm install",
-        " pnpm install",
-        " yarn add",
-        " pip install",
-        " uv add",
-        " git push",
-        " gh issue close",
-        " gh pr merge",
-        ".env",
-        " id_rsa",
-        " credentials",
-        " secret",
-        " token",
-    )
-    return any(token in lowered for token in high_risk_tokens)
+    return command_risk.command_requires_confirmation(cmd)
 
 
 def _path_requires_confirmation(path: str) -> bool:
