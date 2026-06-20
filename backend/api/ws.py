@@ -30,6 +30,7 @@ from agents.coordinator import run_coordinator
 from agents.gateway import refine_query
 from agents.model_inventory import get_model_inventory
 from agents.orchestrator import classify_turn, compose_reply, should_offload_code
+from agents.routing import build_routing_decision
 from agents.turn_policy import (
     build_task_context,
     select_agent_for_intent,
@@ -309,8 +310,18 @@ async def websocket_endpoint(websocket: WebSocket):
         # Local-first: a code turn only reaches the external agent on an explicit
         # offload signal (Läge=code, or "use codex/claude" in the message). All
         # other turns — chat, computer, and a locally-kept code turn — run through
-        # the in-turn coordinator.
-        offload = route == "code" and should_offload_code(route_mode, text)
+        # the in-turn coordinator. The RoutingDecision consolidates this logic and
+        # explains it; it is surfaced before any expensive/risky action starts.
+        routing = build_routing_decision(
+            route_mode=route_mode,
+            classified_route=route,
+            agent=agent,
+            text=text,
+            project=project,
+            cwd=cwd,
+        )
+        emit(routing.to_event())
+        offload = routing.is_offload()
 
         if not offload:
             # gemma4 (or the pinned model) auto-orchestrates over the installed
@@ -383,6 +394,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         turn, route, coordinator_model, diagnostic_events,
                         outcome.status, task_context.intent,
                         runtime_state=outcome.runtime_state,
+                        routing=routing,
                     ),
                 })
                 emit({"type": "done"})
@@ -446,17 +458,27 @@ async def websocket_endpoint(websocket: WebSocket):
                         turn, route, coordinator_model, diagnostic_events,
                         outcome.status, task_context.intent,
                         runtime_state=outcome.runtime_state,
+                        routing=routing,
                     ),
                 })
                 emit({"type": "done"})
 
         else:  # explicit offload to the external coding agent
+            # The route/execution-engine reason rides along on the persisted
+            # offloaded turn so every turn carries an explainable decision.
+            code_meta = {
+                "turn": turn,
+                "route": route,
+                "execution_engine": routing.execution_engine,
+                "routing_reason": routing.reason,
+                "required_permissions": list(routing.required_permissions),
+            }
             if not cwd:
                 turn_status = "blocked"
                 msg = ("Välj en projektmapp först (dropdown ovanför inmatningen) för att "
                        "offloada till kodagenten.")
                 emit({"type": "assistant_delta", "content": msg})
-                conversation.append({"role": "assistant", "content": msg})
+                conversation.append({"role": "assistant", "content": msg, "meta": code_meta})
                 emit({"type": "done"})
             else:
                 # Refine/translate the instruction (English pivot) before the
@@ -469,12 +491,14 @@ async def websocket_endpoint(websocket: WebSocket):
                     codex_session_id = await _run_code_turn(
                         run_codex_cli, code_prompt, cwd, codex_session_id,
                         emit, abort, conversation, trace_provider=summarize_codex_session,
+                        meta=code_meta,
                     )
                 else:
                     emit({"type": "thinking", "content": f"Claude Code i {cwd}..."})
                     emit({"type": "context", "content": f"Working directory: {cwd}"})
                     claude_session_id = await _run_code_turn(
-                        run_codex, code_prompt, cwd, claude_session_id, emit, abort, conversation
+                        run_codex, code_prompt, cwd, claude_session_id, emit, abort, conversation,
+                        meta=code_meta,
                     )
 
         persist()
@@ -677,6 +701,7 @@ def _turn_meta(
     status: str,
     intent: str = "",
     runtime_state=None,
+    routing=None,
 ) -> dict:
     turn_start = next((event for event in events if event.get("type") == "turn_start"), {})
     meta = {
@@ -695,6 +720,19 @@ def _turn_meta(
     for key in ("agent_role", "agent_role_model", "agent_role_fallback"):
         if turn_start.get(key):
             meta[key] = turn_start[key]
+    # Every turn carries an explainable route/execution-engine reason.
+    if routing is not None:
+        meta["execution_engine"] = routing.execution_engine
+        meta["routing_reason"] = routing.reason
+        meta["required_permissions"] = list(routing.required_permissions)
+    else:
+        routing_event = next(
+            (event for event in events if event.get("type") == "routing_decision"), {}
+        )
+        if routing_event:
+            meta["execution_engine"] = routing_event.get("execution_engine")
+            meta["routing_reason"] = routing_event.get("reason")
+            meta["required_permissions"] = list(routing_event.get("required_permissions") or [])
     if runtime_state is not None:
         meta.update(runtime_state.to_meta())
     return meta
@@ -901,11 +939,14 @@ async def _run_code_turn(
     abort,
     conversation,
     trace_provider=None,
+    meta=None,
 ) -> str | None:
     """Drive a coding agent (Claude Code or Codex) for one turn.
 
     ``runner`` is run_codex or run_codex_cli — both yield the same typed events.
-    Returns the (possibly new) coding-agent session id for resume.
+    ``meta`` is merged into the persisted assistant message so every offloaded
+    turn carries its route/execution-engine reason. Returns the (possibly new)
+    coding-agent session id for resume.
     """
     parts: list[str] = []
     result_text: str | None = None
@@ -956,6 +997,8 @@ async def _run_code_turn(
         "cwd": cwd,
         "code_session_id": session_id,
     }
+    if meta:
+        message["meta"] = dict(meta)
 
     # Independently inspect the repo after the agent finishes: changed files,
     # unexpected changes outside the project, and (opt-in) a verification run.
