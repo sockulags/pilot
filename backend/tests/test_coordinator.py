@@ -127,7 +127,7 @@ class CoordinatorTests(unittest.TestCase):
         events: list[dict] = []
         saved: list[tuple] = []
 
-        async def fake_save(text, kind="fact", session_id=None):
+        async def fake_save(text, kind="fact", session_id=None, **kwargs):
             saved.append((text, kind, session_id))
             return "mem-123"
 
