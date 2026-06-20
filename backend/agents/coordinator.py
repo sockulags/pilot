@@ -43,6 +43,7 @@ from agents.runtime_phases import (
 )
 from agents.runtime_state import RuntimeState
 from agents.safety import unsafe_tool_block_reason
+from job_permissions import tool_allowed
 from agents.task_contracts import TaskContract, build_task_contract
 from config import (
     COORDINATOR_MAX_STEPS,
@@ -404,8 +405,19 @@ async def run_coordinator(
     require_file_output: bool = False,
     task_contract_intent: str | None = None,
     inventory: ModelInventory | None = None,
+    capabilities: str | None = None,
+    max_tool_calls: int | None = None,
 ) -> LoopOutcome:
-    """Run the in-turn coordinator loop. See module docstring."""
+    """Run the in-turn coordinator loop. See module docstring.
+
+    ``capabilities`` optionally bounds which tools may run. When None (the
+    default — interactive chat/computer turns), tools are unrestricted and all
+    existing behaviour is preserved. When set to a permission-profile name
+    (e.g. a scheduled job's "read-only"/"shell"; see job_permissions.py), any
+    tool not granted by that profile is skipped with an audit note instead of
+    executed. ``max_tool_calls`` optionally caps how many tools a run may execute
+    (a per-job override of COORDINATOR_MAX_STEPS); None means no extra cap.
+    """
     coordinator_model = coordinator_model or OLLAMA_MODEL
     experts = await available_expert_models(coordinator_model, inventory)
     contract = build_task_contract(task_contract_intent or ("create_file" if require_file_output else ""))
@@ -423,6 +435,7 @@ async def run_coordinator(
     consulted: set[str] = set()
     refined: str | None = None  # English-pivot instruction, computed lazily on first consult
     steps = 0
+    tool_calls = 0  # executed tool count, for the optional per-job max_tool_calls cap
     file_output_done = False
 
     if required_first_tool and not abort.is_set():
@@ -541,6 +554,19 @@ async def run_coordinator(
         if tool not in registry.coordinator_tool_names():
             notes.append(f"(unknown tool {tool!r}; skipped)")
             continue
+        # Per-job capability gate: a scheduled job's profile bounds which tools
+        # may run. None = unrestricted (interactive turns). A denied tool is
+        # skipped (not executed) and recorded for the audit trail — e.g. a
+        # read-only/web-only job may never run run_command or desktop tools.
+        if capabilities is not None and not tool_allowed(tool, capabilities):
+            note = (
+                f"(tool {tool!r} not permitted for this scheduled job's "
+                f"{capabilities!r} profile; skipped)"
+            )
+            emit(make_event("error", content=note))
+            notes.append(note)
+            runtime_state.record_error(note, tool, args)
+            continue
         if contract and tool not in contract.allowed_tools:
             notes.append(
                 f"(tool {tool!r} is outside the {contract.intent} contract allowlist; skipped)"
@@ -564,6 +590,14 @@ async def run_coordinator(
             notes.append(f"Confirmation required for {tool}: {confirmation}")
             runtime_state.record_confirmation_required(tool, args, confirmation)
             return LoopOutcome("needs_input", _render_notes(notes), confirmation, runtime_state)
+        # Per-job tool-call budget: a runaway scheduled job is stopped once it has
+        # executed max_tool_calls tools (None = no extra cap beyond the step loop).
+        if max_tool_calls is not None and tool_calls >= max_tool_calls:
+            note = f"(per-job tool-call limit {max_tool_calls} reached; stopping)"
+            notes.append(note)
+            runtime_state.record_error(note, tool, args)
+            break
+        tool_calls += 1
         args = agent_loop.apply_project_cwd_to_args(tool, args, project_cwd)
         tool, args, repair_note = agent_loop.repair_web_tool_call(tool, args, task)
         if repair_note:

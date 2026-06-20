@@ -49,6 +49,11 @@ JOBS_FILE = os.getenv(
     "JOBS_FILE", os.path.join(os.path.dirname(__file__), "data", "jobs.json")
 )
 JOBS_TICK_SECONDS = int(os.getenv("JOBS_TICK_SECONDS", "20"))
+# Safety bounds for background task-kind jobs (no interactive user at fire time):
+# a hard wall-clock timeout so a runaway coordinator run is cancelled, and a per-
+# job cap on executed tool calls (an override layered on COORDINATOR_MAX_STEPS).
+JOB_MAX_RUNTIME_SECONDS = int(os.getenv("JOB_MAX_RUNTIME_SECONDS", "300"))
+JOB_MAX_TOOL_CALLS = int(os.getenv("JOB_MAX_TOOL_CALLS", "20"))
 
 # --- Local model registry (dynamic per-turn model selection) ----------------
 # The orchestrator picks the best local model for each turn ("auto"), or the

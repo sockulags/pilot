@@ -202,6 +202,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 session_id=session_id, title=spec["title"],
                 payload=spec["payload"], schedule=spec["schedule"],
                 kind=spec.get("kind", "reminder"),
+                permissions=spec.get("permissions"),
             )
             await send_jobs()
             kind_label = "uppgift" if job["kind"] == "task" else "påminnelse"
@@ -613,6 +614,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             payload=payload,
                             schedule=schedule,
                             kind=kind,
+                            permissions=msg.get("permissions"),
                         )
                 await send_jobs()
 

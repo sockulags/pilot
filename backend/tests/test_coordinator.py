@@ -470,6 +470,70 @@ class CoordinatorTests(unittest.TestCase):
         self.assertTrue(any(e["type"] == "confirmation_required" for e in events))
 
 
+class CoordinatorCapabilityGateTests(unittest.TestCase):
+    """Scheduled-job permission profiles bound which tools the coordinator runs."""
+
+    def test_read_only_profile_skips_run_command(self):
+        asyncio.run(self._read_only_profile_skips_run_command())
+
+    def test_unrestricted_default_runs_run_command(self):
+        asyncio.run(self._unrestricted_default_runs_run_command())
+
+    async def _read_only_profile_skips_run_command(self):
+        from agents import coordinator
+
+        executed: list[str] = []
+
+        async def fake_execute(tool, args, emit):
+            executed.append(tool)
+            return "ran"
+
+        with mock.patch.object(coordinator, "available_expert_models", new=_av(self._experts())), \
+             mock.patch.object(coordinator, "search_skills", new=_av([])), \
+             mock.patch.object(coordinator.agent_loop, "execute_tool", new=fake_execute), \
+             mock.patch.object(coordinator, "_decide_step", new=_seq([
+                 {"action": "tool", "tool": "run_command", "args": {"cmd": "echo hi"}},
+                 {"action": "answer", "thinking": "done"},
+             ])):
+            outcome = await coordinator.run_coordinator(
+                "do a thing", lambda e: None, asyncio.Event(),
+                coordinator_model="gemma4:12b", capabilities="read-only",
+            )
+
+        # run_command must NOT execute under read-only; it's recorded as denied.
+        self.assertEqual([], executed)
+        self.assertTrue(any(
+            "not permitted" in e.get("error", "") for e in outcome.runtime_state.errors
+        ))
+
+    async def _unrestricted_default_runs_run_command(self):
+        from agents import coordinator
+
+        executed: list[str] = []
+
+        async def fake_execute(tool, args, emit):
+            executed.append(tool)
+            return "ran"
+
+        with mock.patch.object(coordinator, "available_expert_models", new=_av(self._experts())), \
+             mock.patch.object(coordinator, "search_skills", new=_av([])), \
+             mock.patch.object(coordinator.agent_loop, "execute_tool", new=fake_execute), \
+             mock.patch.object(coordinator, "_decide_step", new=_seq([
+                 {"action": "tool", "tool": "run_command", "args": {"cmd": "echo hi"}},
+                 {"action": "answer", "thinking": "done"},
+             ])):
+            # capabilities=None (default) preserves interactive behaviour: it runs.
+            await coordinator.run_coordinator(
+                "do a thing", lambda e: None, asyncio.Event(),
+                coordinator_model="gemma4:12b",
+            )
+
+        self.assertEqual(["run_command"], executed)
+
+    def _experts(self):
+        return {"qwen2.5-coder:14b": {"label": "Coder", "hint": "code", "tools": True}}
+
+
 class ToolCallMappingTests(unittest.TestCase):
     """Fas B: native tool-calling decisions map to the coordinator's action dict,
     with a hardened JSON-from-content fallback."""
