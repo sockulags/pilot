@@ -11,12 +11,20 @@ from .input import click
 
 def click_element(element_id: int, button: str = "left") -> str:
     from agents.perception import get_element
+    from agents.safety import desktop_action_freshness_reason
+
+    # Refuse if the foreground window changed since perception. This also
+    # invalidates the cached ids, so the get_element lookup below then fails too.
+    freshness_reason = desktop_action_freshness_reason("click_element")
+    if freshness_reason:
+        return f"click_element failed: {freshness_reason}"
 
     el = get_element(element_id)
     if el is None:
         return (
             f"click_element failed: no element with id {element_id} in the last screen "
-            "perception. Re-observe the screen, or use click(x, y)."
+            "perception (it may be stale or from a different window). Re-observe the "
+            "screen, or use click(x, y)."
         )
     cx, cy = el.center
     click(cx, cy, button)

@@ -1,7 +1,10 @@
+import logging
 import os
 from env_loader import load_env_file
 
 load_env_file()
+
+logger = logging.getLogger(__name__)
 
 # Directory where chat sessions are persisted (one JSON file per session_id).
 # Defaults to backend/data/sessions relative to this file.
@@ -46,6 +49,11 @@ JOBS_FILE = os.getenv(
     "JOBS_FILE", os.path.join(os.path.dirname(__file__), "data", "jobs.json")
 )
 JOBS_TICK_SECONDS = int(os.getenv("JOBS_TICK_SECONDS", "20"))
+# Safety bounds for background task-kind jobs (no interactive user at fire time):
+# a hard wall-clock timeout so a runaway coordinator run is cancelled, and a per-
+# job cap on executed tool calls (an override layered on COORDINATOR_MAX_STEPS).
+JOB_MAX_RUNTIME_SECONDS = int(os.getenv("JOB_MAX_RUNTIME_SECONDS", "300"))
+JOB_MAX_TOOL_CALLS = int(os.getenv("JOB_MAX_TOOL_CALLS", "20"))
 
 # --- Local model registry (dynamic per-turn model selection) ----------------
 # The orchestrator picks the best local model for each turn ("auto"), or the
@@ -192,7 +200,63 @@ CODEX_CLI = os.getenv("CODEX_CLI", "codex")
 # Sandbox policy for headless `codex exec`. "workspace-write" mirrors
 # acceptEdits (writes within the project, no prompts). Other valid values:
 # "read-only", "danger-full-access". See `codex exec --help`.
-CODEX_SANDBOX_MODE = os.getenv("CODEX_SANDBOX_MODE", "workspace-write")
+#
+# "danger-full-access" disables the sandbox entirely, so it is NOT honored from
+# CODEX_SANDBOX_MODE alone — it requires the explicit opt-in flag
+# CODEX_ALLOW_DANGER_FULL_ACCESS. Without it, the mode is downgraded to the safe
+# default "workspace-write" (see resolve_codex_sandbox_mode).
+_CODEX_SANDBOX_MODES = {"read-only", "workspace-write", "danger-full-access"}
+_CODEX_SANDBOX_DEFAULT = "workspace-write"
+
+
+def resolve_codex_sandbox_mode(
+    configured: str | None = None, allow_danger: str | None = None
+) -> str:
+    """Resolve the effective `codex exec --sandbox` mode.
+
+    Reads CODEX_SANDBOX_MODE (and CODEX_ALLOW_DANGER_FULL_ACCESS) from the
+    environment when not given explicitly (the explicit args exist for tests).
+
+    Rules:
+      * An unknown/invalid mode falls back to the safe default (never crashes).
+      * "danger-full-access" is only honored when CODEX_ALLOW_DANGER_FULL_ACCESS
+        is truthy; otherwise it is downgraded to the safe default with a warning.
+    """
+    if configured is None:
+        configured = os.getenv("CODEX_SANDBOX_MODE", _CODEX_SANDBOX_DEFAULT)
+    if allow_danger is None:
+        allow_danger = os.getenv("CODEX_ALLOW_DANGER_FULL_ACCESS", "false")
+
+    mode = (configured or "").strip()
+    if mode not in _CODEX_SANDBOX_MODES:
+        logger.warning(
+            "Invalid CODEX_SANDBOX_MODE %r; falling back to %r",
+            configured,
+            _CODEX_SANDBOX_DEFAULT,
+        )
+        return _CODEX_SANDBOX_DEFAULT
+
+    if mode == "danger-full-access" and (allow_danger or "").strip().lower() != "true":
+        logger.warning(
+            "CODEX_SANDBOX_MODE=danger-full-access requires "
+            "CODEX_ALLOW_DANGER_FULL_ACCESS=true to opt in; "
+            "downgrading to %r.",
+            _CODEX_SANDBOX_DEFAULT,
+        )
+        return _CODEX_SANDBOX_DEFAULT
+
+    return mode
+
+
+CODEX_SANDBOX_MODE = resolve_codex_sandbox_mode()
+
+# After a coding agent finishes, Pilot independently inspects the repo (git
+# status/diff, changed-files summary, unexpected-change detection). Auto-running
+# the project's verification command (e.g. `pytest -q`, `npm test`) is OPT-IN —
+# it can be slow or have side effects — so it defaults off. When disabled (or
+# when no known command exists) verification is reported as SKIPPED with a
+# reason; the diff summary is always produced.
+CODE_VERIFY_RUN_TESTS = os.getenv("CODE_VERIFY_RUN_TESTS", "false").lower() == "true"
 
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
 MCP_PORT = int(os.getenv("MCP_PORT", "3001"))
@@ -210,6 +274,32 @@ PILOT_MCP_BROWSER_CMD = os.getenv("PILOT_MCP_BROWSER_CMD", "npx @playwright/mcp@
 # their `hello` message. Empty = no auth (LAN behaviour). Defense-in-depth for
 # remote access; the Tailscale network is the primary boundary.
 PILOT_AUTH_TOKEN = os.getenv("PILOT_AUTH_TOKEN", "")
+
+# Optional shared secret guarding the MCP HTTP surface (/mcp and /mcp/call),
+# which exposes computer-control tools (run_command, click, type, open_app, ...).
+# Falls back to PILOT_AUTH_TOKEN when unset, so a single token can protect both
+# the WS and MCP boundaries. When a token is configured, MCP requests must
+# present it as `Authorization: Bearer <token>` or an `X-Pilot-Token` header;
+# requests without a valid token are rejected with 401. Empty = no auth.
+PILOT_MCP_AUTH_TOKEN = os.getenv("PILOT_MCP_AUTH_TOKEN", "") or PILOT_AUTH_TOKEN
+
+# Bind hosts. Default to loopback (127.0.0.1) so a local app is not reachable
+# from the LAN out of the box — the MCP server in particular drives the desktop
+# with no per-call OS prompts. Set these to 0.0.0.0 only when you intentionally
+# expose the backend (e.g. behind Tailscale) AND have configured an auth token.
+BACKEND_HOST = os.getenv("BACKEND_HOST", "127.0.0.1")
+MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
+
+# Allowed CORS origins for the main app (comma-separated). Defaults to the local
+# frontend dev origins; widen this only deliberately. Wildcard "*" is honored if
+# explicitly set but is discouraged because the app exposes computer control.
+PILOT_CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "PILOT_CORS_ORIGINS", "http://localhost:3000,http://localhost:3001"
+    ).split(",")
+    if origin.strip()
+]
 
 # Built frontend (Next static export). When present, the backend serves the UI
 # from this directory so everything is one origin. Defaults to ../frontend/out.

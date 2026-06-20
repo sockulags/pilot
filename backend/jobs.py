@@ -15,7 +15,9 @@ Shape on disk: {"jobs": [job, ...]} where a job is::
      schedule: {type: "interval"|"daily"|"weekly"|"once",
                 interval_seconds?, time? "HH:MM", weekdays? [0..6 mon=0],
                 date? "YYYY-MM-DD"},
-     enabled, next_run (epoch|None), created_ts, last_run|None, last_result|None}
+     permissions: <profile name>,  # capability bound for task-kind jobs
+     enabled, next_run (epoch|None), created_ts, last_run|None, last_result|None,
+     last_audit|None}  # structured record of the last fired run (tool calls etc.)
 
 ``next_run`` is the single source of truth for *when* — recomputed on fire and
 reconciled on startup, so jobs survive a backend restart. Times for
@@ -34,6 +36,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from config import JOBS_FILE
+from job_permissions import DEFAULT_PROFILE_BY_KIND, is_valid_profile, normalize_profile
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +112,13 @@ def _load() -> dict:
         with open(JOBS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data.get("jobs"), list):
+            for job in data["jobs"]:
+                # Back-compat: jobs written before permission profiles existed
+                # default to their kind's safe profile (reminder-only / read-only).
+                if "permissions" not in job:
+                    job["permissions"] = DEFAULT_PROFILE_BY_KIND.get(
+                        job.get("kind"), "read-only"
+                    )
             return data
     except FileNotFoundError:
         pass
@@ -137,10 +147,19 @@ def create_job(
     payload: str,
     schedule: dict,
     kind: str = "reminder",
+    permissions: str | None = None,
     now: float | None = None,
 ) -> dict:
-    """Persist a new job and return it (with its computed first ``next_run``)."""
+    """Persist a new job and return it (with its computed first ``next_run``).
+
+    ``permissions`` names the capability profile a task-kind job's background
+    coordinator run is bound to (see job_permissions.JOB_PERMISSION_PROFILES).
+    It defaults to ``reminder-only`` for reminders and the safe ``read-only`` for
+    tasks; an invalid name falls back to that kind's default.
+    """
     now = time.time() if now is None else now
+    kind = kind if kind in VALID_KINDS else "reminder"
+    permissions = normalize_profile(permissions, kind)
     if schedule.get("type") == "once":
         # A `once` target in the past still fires once (overdue catch-up), so we
         # seed next_run with the raw target rather than compute_next_run (which
@@ -153,14 +172,16 @@ def create_job(
         "id": uuid.uuid4().hex[:12],
         "session_id": session_id,
         "title": (title or "").strip() or "Jobb",
-        "kind": kind if kind in VALID_KINDS else "reminder",
+        "kind": kind,
         "payload": payload or "",
         "schedule": schedule,
+        "permissions": permissions,
         "enabled": True,
         "next_run": next_run,
         "created_ts": now,
         "last_run": None,
         "last_result": None,
+        "last_audit": None,
     }
     data = _load()
     data["jobs"].append(job)
@@ -248,6 +269,24 @@ def mark_ran(job_id: str, result: str | None = None, now: float | None = None) -
         job["next_run"] = nxt
         if nxt is None:
             job["enabled"] = False
+        _save(data)
+        return job
+    return None
+
+
+def record_audit(job_id: str, audit: dict, now: float | None = None) -> dict | None:
+    """Persist the structured audit record of a fired task run on the job.
+
+    Stored under ``last_audit`` in jobs.json (mirroring last_run/last_result).
+    ``audit`` is the dict produced by build_audit_record() in scheduler.py:
+    {status, output, tool_calls: [...], errors: [...], permissions, timed_out}.
+    """
+    now = time.time() if now is None else now
+    data = _load()
+    for job in data["jobs"]:
+        if job["id"] != job_id:
+            continue
+        job["last_audit"] = {"ts": now, **audit}
         _save(data)
         return job
     return None
@@ -351,14 +390,26 @@ def parse_job_command(arg: str) -> dict:
     def _create(payload: str, schedule: dict) -> dict:
         payload = payload.strip()
         # "task: <instruction>" runs the coordinator on a schedule; otherwise the
-        # text is delivered verbatim as a reminder.
+        # text is delivered verbatim as a reminder. An optional leading
+        # "[<profile>]" after "task:" opts a task into a wider permission profile
+        # (e.g. "task:[shell] ...") — see job_permissions.JOB_PERMISSION_PROFILES.
         kind = "reminder"
+        permissions: str | None = None
         if payload.lower().startswith("task:"):
             kind = "task"
             payload = payload[len("task:"):].strip()
+            m = re.match(r"\[([a-z\-]+)\]\s*", payload)
+            if m:
+                requested = m.group(1)
+                if not is_valid_profile(requested):
+                    return {"action": "error",
+                            "message": f"Okänd behörighetsprofil {requested!r}."}
+                permissions = requested
+                payload = payload[m.end():].strip()
         if not payload:
             return {"action": "error", "message": "Ange en text för jobbet."}
-        return {"action": "create", "kind": kind, "title": payload[:60], "payload": payload, "schedule": schedule}
+        return {"action": "create", "kind": kind, "permissions": permissions,
+                "title": payload[:60], "payload": payload, "schedule": schedule}
 
     if head == "every":
         d = rest.split(None, 1)

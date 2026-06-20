@@ -14,7 +14,15 @@ from fastapi.websockets import WebSocket
 from api.ws import websocket_endpoint
 from api.mcp import create_mcp_app
 from agents.vision import validate_vision_model
-from config import BACKEND_PORT, MCP_PORT, OLLAMA_VISION_ENABLED, FRONTEND_DIR
+from config import (
+    BACKEND_HOST,
+    BACKEND_PORT,
+    MCP_HOST,
+    MCP_PORT,
+    OLLAMA_VISION_ENABLED,
+    FRONTEND_DIR,
+    PILOT_CORS_ORIGINS,
+)
 from mcp_client import manager as mcp_manager, configs_from_env
 from scheduler import run_scheduler
 
@@ -52,7 +60,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=PILOT_CORS_ORIGINS,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -80,8 +88,8 @@ async def main():
     main_app = create_app()
     mcp_app = create_mcp_app()
 
-    config_main = uvicorn.Config(main_app, host="0.0.0.0", port=BACKEND_PORT, log_level="info")
-    config_mcp = uvicorn.Config(mcp_app, host="0.0.0.0", port=MCP_PORT, log_level="info")
+    config_main = uvicorn.Config(main_app, host=BACKEND_HOST, port=BACKEND_PORT, log_level="info")
+    config_mcp = uvicorn.Config(mcp_app, host=MCP_HOST, port=MCP_PORT, log_level="info")
 
     server_main = uvicorn.Server(config_main)
     server_mcp = uvicorn.Server(config_mcp)

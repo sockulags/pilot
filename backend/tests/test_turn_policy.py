@@ -91,9 +91,16 @@ class TurnPolicyTests(unittest.TestCase):
     def test_choose_coordinator_model_uses_stronger_model_for_research_when_auto(self):
         from agents.turn_policy import choose_coordinator_model
 
-        ctx = mock.Mock(requires_current_sources=True, preferred_model="gpt-oss:20b")
+        ctx = mock.Mock(intent="", requires_current_sources=True, preferred_model="gpt-oss:20b")
 
-        self.assertEqual("gpt-oss:20b", choose_coordinator_model("auto", ctx))
+        # Fail-closed: the stronger research model is only chosen when it is
+        # verifiably installed/healthy (passed in via the inventory's healthy set).
+        self.assertEqual(
+            "gpt-oss:20b",
+            choose_coordinator_model(
+                "auto", ctx, available_models={"gemma4:12b", "gpt-oss:20b"}
+            ),
+        )
 
     def test_select_agent_for_intent_uses_configured_available_role(self):
         from agents import turn_policy

@@ -202,10 +202,14 @@ def deterministic_route(
     return None
 
 
-def choose_coordinator_model(model_mode: str, ctx: TaskContext) -> str:
+def choose_coordinator_model(
+    model_mode: str,
+    ctx: TaskContext,
+    available_models: set[str] | None = None,
+) -> str:
     if model_mode and model_mode != "auto":
         return tools_capable_model(model_mode)
-    return select_agent_for_intent(model_mode, ctx).model
+    return select_agent_for_intent(model_mode, ctx, available_models).model
 
 
 def select_agent_for_intent(
@@ -226,7 +230,12 @@ def select_agent_for_intent(
             )
         return AgentSelection("pinned_model", model, configured)
 
-    available = available_models if available_models is not None else set(OLLAMA_MODELS)
+    # Fail closed: when no real installed/healthy set is threaded in, do NOT
+    # treat the whole configured registry as available (that would route turns to
+    # models that may not be installed). Restrict to the known-safe default model
+    # so an unverified configured expert is never selected; the caller should pass
+    # the real inventory (see model_inventory.get_model_inventory) to widen this.
+    available = available_models if available_models is not None else {OLLAMA_MODEL}
     raw_intent = getattr(ctx, "intent", "")
     if isinstance(raw_intent, str) and raw_intent:
         intent = raw_intent
@@ -280,6 +289,28 @@ def task_contract_intent(ctx: TaskContext) -> str | None:
         return "create_file"
     if ctx.intent == "computer_action" and _looks_like_run_command_request(ctx.standalone_task):
         return "run_command"
+    return None
+
+
+def resolve_task_contract_intent(ctx: TaskContext) -> str | None:
+    """Resolve the contract intent for a turn, falling back to a default contract
+    for genuinely side-effecting tool tasks that have no specific contract.
+
+    A specific contract (research/create_file/project_analysis/run_command/...) is
+    preferred. Otherwise, ONLY when the turn is a side-effecting desktop action
+    (``computer_action`` that is not a plain run_command) do we assign the generic
+    ``desktop_action`` default — so the answer gate requires a post-action screen
+    observation before claiming success. Conversational/read-only Q&A turns
+    (``chat`` etc.) keep returning None so they answer without a contract and
+    existing behaviour is preserved (see can_compose_final_answer(None, ...)).
+    """
+    specific = task_contract_intent(ctx)
+    if specific is not None:
+        return specific
+    if ctx.intent == "computer_action":
+        # A side-effecting desktop action with no run_command match: gate it
+        # behind the generic desktop_action contract (action + verify).
+        return "desktop_action"
     return None
 
 

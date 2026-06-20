@@ -21,6 +21,7 @@ import httpx
 
 from agents.json_utils import extract_json_object
 from agents.turn_policy import deterministic_route, sanitize_final_reply
+from agents.untrusted import UNTRUSTED_RULE, wrap_untrusted
 from config import (
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
@@ -72,7 +73,8 @@ CHAT_SYSTEM = (
     "never say you have no tools. Never claim you ran a tool, searched, or "
     "navigated this turn, and never invent a 'technical error' to excuse not "
     "acting; if you haven't run something, say so plainly or just answer. "
-    "Match the user's language (they often write Swedish)."
+    "Match the user's language (they often write Swedish). "
+    + UNTRUSTED_RULE
 )
 
 REPLY_SYSTEM = (
@@ -82,7 +84,8 @@ REPLY_SYSTEM = (
     "often write Swedish), conversationally and concisely — as a real answer, not "
     "a status report. Ground every claim in the activity log below (including any "
     "expert answers); never invent results that aren't shown there. If something "
-    "failed or looks wrong, say so honestly and suggest the fix."
+    "failed or looks wrong, say so honestly and suggest the fix. "
+    + UNTRUSTED_RULE
 )
 
 
@@ -299,7 +302,8 @@ def _build_reply_messages(conversation: list[dict], outcome=None, memories: str 
     if memories:
         system += (
             "\n\nLong-term memory about the user (use when relevant; do not contradict "
-            f"or repeat verbatim unless asked):\n{memories}"
+            "or repeat verbatim unless asked):\n"
+            + wrap_untrusted(memories, source="memory")
         )
     messages = [{"role": "system", "content": system}]
     messages.extend(
@@ -313,14 +317,18 @@ def _build_reply_messages(conversation: list[dict], outcome=None, memories: str 
             if structured is not None
             else "{}"
         )
+        evidence = wrap_untrusted(
+            "Strukturerat underlag jag (assistenten) samlade denna tur:\n"
+            f"{structured_text}\n\n"
+            "Textlogg för bakåtkompatibilitet (expertsvar, skärmobservationer, "
+            "verktygsresultat):\n"
+            f"{outcome.action_log or '(inget registrerades)'}",
+            source="activity log",
+        )
         messages.append({
             "role": "user",
             "content": (
-                "Strukturerat underlag jag (assistenten) samlade denna tur:\n"
-                f"{structured_text}\n\n"
-                "Textlogg för bakåtkompatibilitet (expertsvar, skärmobservationer, "
-                "verktygsresultat):\n"
-                f"{outcome.action_log or '(inget registrerades)'}\n\n"
+                f"{evidence}\n\n"
                 f"Status: {outcome.status}\n\n"
                 "Väv ihop detta till ett svar på användarens språk. Använd det "
                 "strukturerade underlaget som primär evidens och hitta inte på "
