@@ -28,6 +28,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from agents.coordinator import run_coordinator
 from agents.gateway import refine_query
+from agents.model_inventory import get_model_inventory
 from agents.orchestrator import classify_turn, compose_reply, should_offload_code
 from agents.turn_policy import (
     build_task_context,
@@ -274,9 +275,15 @@ async def websocket_endpoint(websocket: WebSocket):
         else:
             decision = {"route": route_mode, "prompt": text, "thinking": f"forced route: {route_mode}"}
         route = decision["route"]
+        # Health-check the local model fleet once for this turn (fail closed on
+        # discovery failure) so routing and expert advertising consult what is
+        # actually installed, not just what is configured.
+        inventory = await get_model_inventory()
         # The coordinator (front brain) is fast gemma4 in auto mode; a pin makes
         # the chosen model the lead. It consults installed experts as needed.
-        agent_selection = select_agent_for_intent(model_mode, task_context)
+        agent_selection = select_agent_for_intent(
+            model_mode, task_context, available_models=set(inventory.healthy)
+        )
         coordinator_model = agent_selection.model
 
         def emit(event: dict):
@@ -360,6 +367,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 required_first_tool=required_first_tool,
                 require_file_output=task_context.creates_file,
                 task_contract_intent=task_contract_intent(task_context),
+                inventory=inventory,
             )
             turn_status = outcome.status
             if outcome.status == "needs_input":

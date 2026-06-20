@@ -31,6 +31,7 @@ from agents import loop as agent_loop
 from agents.gateway import refine_query
 from agents.json_utils import extract_json_object
 from agents.loop import LoopOutcome, make_event
+from agents.model_inventory import ModelInventory, get_model_inventory
 from agents.untrusted import UNTRUSTED_RULE, wrap_untrusted
 from agents.runtime_phases import (
     PlannedStep,
@@ -120,20 +121,29 @@ def _contract_prompt(contract: TaskContract | None) -> str:
 ANSWER_DEFAULT = {"action": "answer", "thinking": "defaulting to answer"}
 
 
-async def available_expert_models(coordinator_model: str) -> dict[str, dict]:
-    """Registry models actually installed in Ollama, minus the coordinator itself."""
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{OLLAMA_BASE_URL}/api/tags")
-            resp.raise_for_status()
-            installed = {m["name"] for m in resp.json().get("models", [])}
-    except Exception as exc:
-        logger.warning("expert discovery failed, assuming registry: %s", exc)
-        installed = set(OLLAMA_MODELS)
+async def available_expert_models(
+    coordinator_model: str, inventory: ModelInventory | None = None
+) -> dict[str, dict]:
+    """Registry models actually installed/healthy in Ollama, minus the coordinator.
+
+    Fails CLOSED: if model discovery fails (Ollama down, ``/api/tags`` error or
+    empty), the inventory reports no healthy models and we advertise NO experts,
+    so the coordinator answers itself or uses tools rather than routing a turn to
+    a model that is not actually installed. ``inventory`` may be passed by a
+    caller that already fetched it once for the turn.
+    """
+    if inventory is None:
+        inventory = await get_model_inventory()
+    if not inventory.discovery_ok:
+        logger.warning(
+            "model discovery failed; advertising no experts (fail closed) for "
+            "coordinator %r",
+            coordinator_model,
+        )
     return {
         mid: meta
         for mid, meta in OLLAMA_MODELS.items()
-        if mid in installed and mid != coordinator_model
+        if mid in inventory.healthy and mid != coordinator_model
     }
 
 
@@ -393,10 +403,11 @@ async def run_coordinator(
     required_first_tool: dict | None = None,
     require_file_output: bool = False,
     task_contract_intent: str | None = None,
+    inventory: ModelInventory | None = None,
 ) -> LoopOutcome:
     """Run the in-turn coordinator loop. See module docstring."""
     coordinator_model = coordinator_model or OLLAMA_MODEL
-    experts = await available_expert_models(coordinator_model)
+    experts = await available_expert_models(coordinator_model, inventory)
     contract = build_task_contract(task_contract_intent or ("create_file" if require_file_output else ""))
     system = _system_prompt(intent_hint + _contract_prompt(contract))
     # Tools-capable models drive their decisions via native function-calling;

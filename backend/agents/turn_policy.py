@@ -202,10 +202,14 @@ def deterministic_route(
     return None
 
 
-def choose_coordinator_model(model_mode: str, ctx: TaskContext) -> str:
+def choose_coordinator_model(
+    model_mode: str,
+    ctx: TaskContext,
+    available_models: set[str] | None = None,
+) -> str:
     if model_mode and model_mode != "auto":
         return tools_capable_model(model_mode)
-    return select_agent_for_intent(model_mode, ctx).model
+    return select_agent_for_intent(model_mode, ctx, available_models).model
 
 
 def select_agent_for_intent(
@@ -226,7 +230,12 @@ def select_agent_for_intent(
             )
         return AgentSelection("pinned_model", model, configured)
 
-    available = available_models if available_models is not None else set(OLLAMA_MODELS)
+    # Fail closed: when no real installed/healthy set is threaded in, do NOT
+    # treat the whole configured registry as available (that would route turns to
+    # models that may not be installed). Restrict to the known-safe default model
+    # so an unverified configured expert is never selected; the caller should pass
+    # the real inventory (see model_inventory.get_model_inventory) to widen this.
+    available = available_models if available_models is not None else {OLLAMA_MODEL}
     raw_intent = getattr(ctx, "intent", "")
     if isinstance(raw_intent, str) and raw_intent:
         intent = raw_intent
