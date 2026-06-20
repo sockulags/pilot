@@ -136,6 +136,20 @@ def _detect_verification_command(cwd):
     if not cwd or not os.path.isdir(cwd):
         return None, "cwd is not a directory"
 
+    # Prefer a test command the repo documented in AGENTS.md/CLAUDE.md when it
+    # maps to a known-safe runner. We do NOT execute arbitrary documented
+    # commands — only ones whose runner is on our existing allowlist.
+    try:
+        from project_instructions import extract_documented_commands
+
+        documented = extract_documented_commands(cwd).get("test", "")
+    except Exception:
+        documented = ""
+    if documented:
+        first = documented.split()[0]
+        if first in ("pytest", "npm", "pnpm", "yarn", "uv"):
+            return documented.split(), f"documented: {documented}"
+
     pkg = os.path.join(cwd, "package.json")
     if os.path.isfile(pkg):
         try:
