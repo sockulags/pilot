@@ -36,6 +36,7 @@ from agents.turn_policy import (
     task_contract_intent,
     tool_task,
 )
+from code_verification import git_status_snapshot, verify_code_run
 from codex_logs import summarize_codex_session
 from diagnostics import append_turn_diagnostic
 from config import (
@@ -909,6 +910,13 @@ async def _run_code_turn(
     error_text: str | None = None
     session_id = resume_id
 
+    # Snapshot the working tree BEFORE the agent runs so we can isolate what
+    # THIS turn changed (best-effort; empty/non-git cwd just yields no baseline).
+    try:
+        before_snapshot = await git_status_snapshot(cwd)
+    except Exception:
+        before_snapshot = None
+
     try:
         async for ev in runner(prompt, cwd=cwd, resume_session_id=resume_id):
             if abort.is_set():
@@ -946,6 +954,27 @@ async def _run_code_turn(
         "cwd": cwd,
         "code_session_id": session_id,
     }
+
+    # Independently inspect the repo after the agent finishes: changed files,
+    # unexpected changes outside the project, and (opt-in) a verification run.
+    # This is additive and best-effort — never let it break the turn.
+    try:
+        code_run = await verify_code_run(cwd, before=before_snapshot)
+    except Exception as exc:
+        code_run = {
+            "cwd": cwd,
+            "error": f"{type(exc).__name__}: {exc}",
+            "verification": {
+                "ran": False,
+                "passed": None,
+                "command": None,
+                "reason": "verification helper failed",
+                "returncode": None,
+            },
+        }
+    message["code_run"] = code_run
+    emit({"type": "code_verification", "code_run": code_run})
+
     if trace_provider and session_id:
         try:
             trace = trace_provider(session_id)
