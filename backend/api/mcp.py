@@ -1,13 +1,34 @@
-from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 import json
 import asyncio
+from config import PILOT_MCP_AUTH_TOKEN
 from tools import (
     screenshot, click, type_text, open_app,
     list_dir, read_file, find_file, list_windows, focus_window,
 )
 from tools import registry
 from tools.system import run_command_sync
+
+
+def _request_token(request: Request) -> str | None:
+    """Extract a presented auth token from an MCP request.
+
+    Accepts either `Authorization: Bearer <token>` (standard) or an
+    `X-Pilot-Token` header, mirroring the WS `hello` token boundary.
+    """
+    auth = request.headers.get("Authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[len("bearer "):].strip()
+    token = request.headers.get("X-Pilot-Token")
+    return token.strip() if token else None
+
+
+def _auth_ok(request: Request) -> bool:
+    """True when no token is configured, or the request presents a matching one."""
+    if not PILOT_MCP_AUTH_TOKEN:
+        return True
+    return _request_token(request) == PILOT_MCP_AUTH_TOKEN
 
 
 # Generated from the single tool registry (tools/registry.py) so this server's
@@ -25,7 +46,10 @@ def create_mcp_app() -> FastAPI:
     app = FastAPI(title="Pilot MCP Server")
 
     @app.get("/mcp")
-    async def mcp_sse():
+    async def mcp_sse(request: Request):
+        if not _auth_ok(request):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+
         async def event_stream():
             yield f"data: {json.dumps({'type': 'tools', **tools_manifest})}\n\n"
             while True:
@@ -39,7 +63,9 @@ def create_mcp_app() -> FastAPI:
         )
 
     @app.post("/mcp/call")
-    async def mcp_call(body: dict):
+    async def mcp_call(body: dict, request: Request):
+        if not _auth_ok(request):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
         tool = body.get("name")
         args = body.get("arguments", {})
         internal_tool = _MCP_TO_INTERNAL.get(tool)
