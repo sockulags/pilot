@@ -27,3 +27,12 @@ packages = ["tools", "agents", "api"]
 
 [dependency-groups]
 dev = []
+
+[tool.pytest.ini_options]
+# Markers used by the agent-flow eval harness (issue #44). The "eval" marker
+# labels the deterministic scenario suite as a group so it can be selected with
+# `-m eval` (or excluded with `-m 'not eval'`). Every eval scenario runs without
+# Ollama or network; the marker is a label, not a gate for extras.
+markers = [
+    "eval: deterministic agent-flow + adversarial eval scenarios (no Ollama/network)",
+]
