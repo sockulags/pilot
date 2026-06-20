@@ -90,6 +90,64 @@ def _has_requirement(name: str, evidence: tuple[dict, ...]) -> bool:
             if item.get("ok") and item.get("tool") == "read_file"
             for path in ("readme.md", "getting_started.md", "backend/.env")
         )
+    if name == "desktop_input_action":
+        # A successful desktop input tool (click/type/key/etc.) actually ran.
+        return any(
+            item.get("ok") and item.get("tool") in _DESKTOP_INPUT_TOOLS
+            for item in evidence
+        )
+    if name == "post_action_observation":
+        # A perceive/screen observation recorded AFTER a desktop input action,
+        # so the effect of the action was actually verified on screen.
+        last_input = -1
+        for index, item in enumerate(evidence):
+            if item.get("ok") and item.get("tool") in _DESKTOP_INPUT_TOOLS:
+                last_input = index
+        if last_input < 0:
+            return False
+        return any(
+            item.get("tool") in _SCREEN_OBSERVE_TOOLS
+            for item in evidence[last_input + 1:]
+        )
+    if name == "code_change_inspection":
+        # Lenient: at least one concrete inspection/verification of the changed
+        # code — a read_file/search_files, a run_command (test/diff/build), or a
+        # verified code_verification artifact.
+        for item in evidence:
+            if not item.get("ok"):
+                continue
+            if item.get("artifact_verified"):
+                return True
+            if item.get("tool") in {"read_file", "search_files", "find_file", "run_command"}:
+                return True
+        return False
+    if name == "github_operation_result":
+        # A successful github tool result, OR a successful run_command that ran
+        # gh/git and produced output.
+        for item in evidence:
+            if not item.get("ok"):
+                continue
+            tool = item.get("tool")
+            if tool in _GITHUB_TOOLS:
+                return True
+            if tool == "run_command":
+                cmd = _command_text(item).lower()
+                if (cmd.startswith("gh ") or " gh " in f" {cmd}" or cmd.startswith("git ")) and (
+                    "output:" in str(item.get("text", "")).lower()
+                ):
+                    return True
+        return False
+    if name == "memory_write_confirmed":
+        # The coordinator's remember path confirmed a save: a memory_write
+        # evidence record, or a note that the fact was saved to long-term memory.
+        return any(
+            item.get("ok")
+            and (
+                item.get("tool") == "memory_write"
+                or "saved to long-term memory" in str(item.get("text", "")).lower()
+            )
+            for item in evidence
+        )
     return False
 
 
@@ -142,6 +200,22 @@ _BACKEND_FLOW_PLAYBOOK_FILES = (
     "backend/store.py",
     "backend/tools/registry.py",
 )
+
+# Desktop input tools (side-effecting GUI actions) and the screen-observation
+# tools used to verify their effect. Kept in sync with the registry's desktop
+# specs / perceive path; listed literally so the contract checks stay pure.
+_DESKTOP_INPUT_TOOLS = frozenset({
+    "click",
+    "click_element",
+    "type_text",
+    "key_press",
+    "hotkey",
+    "scroll",
+    "move_mouse",
+    "open_app",
+})
+_SCREEN_OBSERVE_TOOLS = frozenset({"perceive", "screenshot"})
+_GITHUB_TOOLS = frozenset({"github_issues", "github_prs", "github_repo"})
 
 
 _CONTRACTS: dict[str, TaskContract] = {
@@ -203,6 +277,94 @@ _CONTRACTS: dict[str, TaskContract] = {
         completion_criteria="The requested command ran and produced output or an explicit error.",
         failure_criteria="The command cannot be executed or is blocked by safety policy.",
         final_answer_requirements="Summarize the command output, including errors if the command failed.",
+    ),
+    # --- Default/fallback contracts for tool-backed, side-effecting intents ---
+    "desktop_action": TaskContract(
+        intent="desktop_action",
+        required_evidence=(
+            EvidenceRequirement("desktop_input_action", "a successful desktop input action"),
+            EvidenceRequirement(
+                "post_action_observation",
+                "a post-action screen observation verifying the effect",
+            ),
+        ),
+        allowed_tools=frozenset(
+            _DESKTOP_INPUT_TOOLS
+            | _SCREEN_OBSERVE_TOOLS
+            | {"list_windows", "focus_window", "get_screen_size"}
+        ),
+        completion_criteria=(
+            "Run the requested desktop input action, then perceive/observe the screen "
+            "again to confirm the action had the intended effect."
+        ),
+        failure_criteria="The desktop action cannot be performed or its effect cannot be observed.",
+        final_answer_requirements=(
+            "Describe what was done and what the screen showed afterward. Do not claim "
+            "an action succeeded unless a post-action screen observation confirms it."
+        ),
+    ),
+    "shell_action": TaskContract(
+        # Generic shell side-effect task — same evidence shape as run_command.
+        intent="shell_action",
+        required_evidence=(
+            EvidenceRequirement("command_output", "command output evidence"),
+        ),
+        allowed_tools=frozenset({"run_command"}),
+        completion_criteria="The requested command ran and produced output or an explicit error.",
+        failure_criteria="The command cannot be executed or is blocked by safety policy.",
+        final_answer_requirements="Summarize the command output, including errors if the command failed.",
+    ),
+    "code_change": TaskContract(
+        intent="code_change",
+        required_evidence=(
+            EvidenceRequirement(
+                "code_change_inspection",
+                "a concrete inspection/verification of the changed code",
+            ),
+        ),
+        allowed_tools=frozenset(
+            {"run_command", "read_file", "list_dir", "search_files", "find_file"}
+        ),
+        completion_criteria=(
+            "Apply the code change, then inspect/verify it — re-read the file, run the "
+            "relevant test/diff/build, or confirm the code_verification artifact."
+        ),
+        failure_criteria="The change cannot be applied or no inspection/verification can be run.",
+        final_answer_requirements=(
+            "Report the change and the evidence that verified it (file inspection, test, "
+            "or diff). Do not claim a code change succeeded without a concrete inspection."
+        ),
+    ),
+    "github_operation": TaskContract(
+        intent="github_operation",
+        required_evidence=(
+            EvidenceRequirement("github_operation_result", "a successful GitHub tool result"),
+        ),
+        allowed_tools=frozenset(
+            _GITHUB_TOOLS | {"run_command", "read_file"}
+        ),
+        completion_criteria=(
+            "Run the GitHub operation (a github_* tool, or gh/git via run_command) and "
+            "capture its output."
+        ),
+        failure_criteria="The GitHub operation fails or gh/git is unavailable.",
+        final_answer_requirements=(
+            "Base the answer on the actual GitHub tool output; do not invent issues, PRs, "
+            "or repository details that were not returned."
+        ),
+    ),
+    "memory_write": TaskContract(
+        intent="memory_write",
+        required_evidence=(
+            EvidenceRequirement("memory_write_confirmed", "a confirmed memory save"),
+        ),
+        allowed_tools=frozenset({"memory_write"}),
+        completion_criteria="The durable fact was saved to long-term memory and the save was confirmed.",
+        failure_criteria="The memory save did not occur or could not be confirmed.",
+        final_answer_requirements=(
+            "Confirm exactly what was saved to long-term memory. Do not claim a fact was "
+            "remembered unless RuntimeState records the save."
+        ),
     ),
     "local_model_audit_report": TaskContract(
         intent="local_model_audit_report",

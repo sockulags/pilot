@@ -87,6 +87,24 @@ class RuntimeState:
                 "summary": text[:500],
             })
 
+    def record_memory_write(self, fact: str, mem_id: str | None = None) -> None:
+        """Record that a durable fact was saved to long-term memory.
+
+        Surfaced as a ``memory_write`` evidence item so the ``memory_write``
+        contract can verify the save actually occurred before the turn answers.
+        """
+        text = f"Saved to long-term memory: {fact}"
+        self.evidence_items.append({
+            "tool": "memory_write",
+            "args": {"fact": fact, "mem_id": mem_id} if mem_id else {"fact": fact},
+            "ok": True,
+            "text": text,
+            "artifact_verified": False,
+            "risk_level": "low",
+            "side_effects": True,
+            "decision": "allowed",
+        })
+
     def record_error(self, message: str, tool: str | None = None, args: dict | None = None) -> None:
         error = {"error": str(message)}
         if tool:
@@ -127,6 +145,17 @@ class RuntimeState:
             "final_answer_requirements": result.final_answer_requirements,
         }
 
+    def _contract_status(self) -> dict[str, Any]:
+        """Small status block naming which contract/phase completed the turn."""
+        if not self.requirements:
+            return {"contract_intent": None, "contract_satisfied": False, "phase": "no_contract"}
+        satisfied = bool(self.requirements.get("satisfied"))
+        return {
+            "contract_intent": self.requirements.get("intent"),
+            "contract_satisfied": satisfied,
+            "phase": "verified" if satisfied else "gathering",
+        }
+
     def to_prompt_dict(self) -> dict[str, Any]:
         return {
             "actions": self.actions,
@@ -136,6 +165,7 @@ class RuntimeState:
             "commands": self.commands,
             "errors": self.errors,
             "requirements": self.requirements,
+            **self._contract_status(),
         }
 
     def to_meta(self) -> dict[str, Any]:

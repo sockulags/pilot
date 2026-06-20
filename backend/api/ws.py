@@ -33,8 +33,8 @@ from agents.orchestrator import classify_turn, compose_reply, should_offload_cod
 from agents.routing import build_routing_decision
 from agents.turn_policy import (
     build_task_context,
+    resolve_task_contract_intent,
     select_agent_for_intent,
-    task_contract_intent,
     tool_task,
 )
 from code_verification import git_status_snapshot, verify_code_run
@@ -379,7 +379,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 memories=memories, session_id=session_id,
                 required_first_tool=required_first_tool,
                 require_file_output=task_context.creates_file,
-                task_contract_intent=task_contract_intent(task_context),
+                task_contract_intent=resolve_task_contract_intent(task_context),
                 inventory=inventory,
             )
             turn_status = outcome.status

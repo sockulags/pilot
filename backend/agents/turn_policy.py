@@ -292,6 +292,28 @@ def task_contract_intent(ctx: TaskContext) -> str | None:
     return None
 
 
+def resolve_task_contract_intent(ctx: TaskContext) -> str | None:
+    """Resolve the contract intent for a turn, falling back to a default contract
+    for genuinely side-effecting tool tasks that have no specific contract.
+
+    A specific contract (research/create_file/project_analysis/run_command/...) is
+    preferred. Otherwise, ONLY when the turn is a side-effecting desktop action
+    (``computer_action`` that is not a plain run_command) do we assign the generic
+    ``desktop_action`` default — so the answer gate requires a post-action screen
+    observation before claiming success. Conversational/read-only Q&A turns
+    (``chat`` etc.) keep returning None so they answer without a contract and
+    existing behaviour is preserved (see can_compose_final_answer(None, ...)).
+    """
+    specific = task_contract_intent(ctx)
+    if specific is not None:
+        return specific
+    if ctx.intent == "computer_action":
+        # A side-effecting desktop action with no run_command match: gate it
+        # behind the generic desktop_action contract (action + verify).
+        return "desktop_action"
+    return None
+
+
 def sanitize_final_reply(text: str, had_actions: bool, needs_tools: bool = False) -> str:
     """Block pseudo tool syntax and false action claims from user-visible replies."""
     raw = text or ""
