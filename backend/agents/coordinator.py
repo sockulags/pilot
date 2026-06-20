@@ -52,6 +52,7 @@ from config import (
     OLLAMA_MODELS,
 )
 from memory import save_memory
+from project_instructions import build_instruction_block
 from skill_library import format_skills, search_skills
 from tools import registry
 
@@ -161,8 +162,11 @@ def _build_decision_context(
     notes: list[str],
     memories: str = "",
     skills: str = "",
+    project_instructions: str = "",
 ) -> str:
     parts = []
+    if project_instructions:
+        parts.append(project_instructions + "\n")
     if skills:
         parts.append(
             "Relevant know-how for this kind of request — follow it (it tells you "
@@ -427,6 +431,9 @@ async def run_coordinator(
     use_tools = bool(OLLAMA_MODELS.get(coordinator_model, {}).get("tools"))
     # Retrieve task-relevant skills once (the "how" layer); injected each step.
     skills = format_skills(await search_skills(task))
+    # Project instruction files (AGENTS.md/CLAUDE.md) from the user's selected
+    # repo — first-party, trusted guidance, computed once and injected each step.
+    project_instructions = build_instruction_block(project_cwd) if project_cwd else ""
 
     notes: list[str] = []  # human-readable evidence gathered this turn (grounds the reply)
     runtime_state = RuntimeState()
@@ -463,7 +470,9 @@ async def run_coordinator(
 
     while steps < COORDINATOR_MAX_STEPS and not abort.is_set():
         steps += 1
-        context = _build_decision_context(task, conversation, experts, notes, memories, skills)
+        context = _build_decision_context(
+            task, conversation, experts, notes, memories, skills, project_instructions
+        )
         try:
             decision = await _decide_step(coordinator_model, system, context, experts, use_tools)
         except Exception as exc:
