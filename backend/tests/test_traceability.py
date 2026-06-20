@@ -274,14 +274,70 @@ class CodexCliResolverTests(unittest.TestCase):
             finally:
                 codex_cli._resolved_cli = None
 
-    def test_codex_exec_always_uses_danger_full_access_sandbox(self):
+    def test_codex_exec_uses_configured_sandbox_mode(self):
         import tools.codex_cli as codex_cli
 
-        with mock.patch.object(codex_cli, "resolve_codex_cli", return_value="codex.exe"):
+        with mock.patch.object(codex_cli, "resolve_codex_cli", return_value="codex.exe"), \
+            mock.patch.object(codex_cli, "CODEX_SANDBOX_MODE", "read-only"):
             fresh_cmd = codex_cli._build_cmd("prompt", r"C:\repo", None)
             resume_cmd = codex_cli._build_cmd("prompt", r"C:\repo", "session-1")
 
         self.assertIn("--sandbox", fresh_cmd)
-        self.assertEqual("danger-full-access", fresh_cmd[fresh_cmd.index("--sandbox") + 1])
+        self.assertEqual("read-only", fresh_cmd[fresh_cmd.index("--sandbox") + 1])
         self.assertIn("--sandbox", resume_cmd)
-        self.assertEqual("danger-full-access", resume_cmd[resume_cmd.index("--sandbox") + 1])
+        self.assertEqual("read-only", resume_cmd[resume_cmd.index("--sandbox") + 1])
+
+    def test_codex_cli_does_not_hardcode_danger_full_access_default(self):
+        """Guard against re-introducing danger-full-access as an unconditional default."""
+        import config
+        import tools.codex_cli as codex_cli
+
+        # The module must not carry a hardcoded danger-full-access constant.
+        self.assertFalse(
+            any(
+                getattr(codex_cli, name, None) == "danger-full-access"
+                for name in dir(codex_cli)
+            ),
+            "codex_cli must not hardcode a danger-full-access sandbox mode",
+        )
+        # And the resolved default (no opt-in) must be the safe value.
+        self.assertEqual("workspace-write", config.resolve_codex_sandbox_mode("danger-full-access", "false"))
+
+
+class CodexSandboxModeTests(unittest.TestCase):
+    def test_default_is_workspace_write(self):
+        from config import resolve_codex_sandbox_mode
+
+        self.assertEqual("workspace-write", resolve_codex_sandbox_mode("workspace-write", "false"))
+
+    def test_default_from_env_is_workspace_write(self):
+        import config
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CODEX_SANDBOX_MODE", None)
+            os.environ.pop("CODEX_ALLOW_DANGER_FULL_ACCESS", None)
+            self.assertEqual("workspace-write", config.resolve_codex_sandbox_mode())
+
+    def test_read_only_is_honored(self):
+        from config import resolve_codex_sandbox_mode
+
+        self.assertEqual("read-only", resolve_codex_sandbox_mode("read-only", "false"))
+
+    def test_danger_full_access_is_downgraded_without_opt_in(self):
+        from config import resolve_codex_sandbox_mode
+
+        self.assertEqual("workspace-write", resolve_codex_sandbox_mode("danger-full-access", "false"))
+        self.assertEqual("workspace-write", resolve_codex_sandbox_mode("danger-full-access", None))
+
+    def test_danger_full_access_is_honored_with_opt_in(self):
+        from config import resolve_codex_sandbox_mode
+
+        self.assertEqual("danger-full-access", resolve_codex_sandbox_mode("danger-full-access", "true"))
+        self.assertEqual("danger-full-access", resolve_codex_sandbox_mode("danger-full-access", "TRUE"))
+
+    def test_invalid_value_falls_back_to_safe_default(self):
+        from config import resolve_codex_sandbox_mode
+
+        self.assertEqual("workspace-write", resolve_codex_sandbox_mode("yolo-mode", "false"))
+        self.assertEqual("workspace-write", resolve_codex_sandbox_mode("", "false"))
+        self.assertEqual("workspace-write", resolve_codex_sandbox_mode(None, "false"))

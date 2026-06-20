@@ -1,7 +1,10 @@
+import logging
 import os
 from env_loader import load_env_file
 
 load_env_file()
+
+logger = logging.getLogger(__name__)
 
 # Directory where chat sessions are persisted (one JSON file per session_id).
 # Defaults to backend/data/sessions relative to this file.
@@ -192,7 +195,55 @@ CODEX_CLI = os.getenv("CODEX_CLI", "codex")
 # Sandbox policy for headless `codex exec`. "workspace-write" mirrors
 # acceptEdits (writes within the project, no prompts). Other valid values:
 # "read-only", "danger-full-access". See `codex exec --help`.
-CODEX_SANDBOX_MODE = os.getenv("CODEX_SANDBOX_MODE", "workspace-write")
+#
+# "danger-full-access" disables the sandbox entirely, so it is NOT honored from
+# CODEX_SANDBOX_MODE alone — it requires the explicit opt-in flag
+# CODEX_ALLOW_DANGER_FULL_ACCESS. Without it, the mode is downgraded to the safe
+# default "workspace-write" (see resolve_codex_sandbox_mode).
+_CODEX_SANDBOX_MODES = {"read-only", "workspace-write", "danger-full-access"}
+_CODEX_SANDBOX_DEFAULT = "workspace-write"
+
+
+def resolve_codex_sandbox_mode(
+    configured: str | None = None, allow_danger: str | None = None
+) -> str:
+    """Resolve the effective `codex exec --sandbox` mode.
+
+    Reads CODEX_SANDBOX_MODE (and CODEX_ALLOW_DANGER_FULL_ACCESS) from the
+    environment when not given explicitly (the explicit args exist for tests).
+
+    Rules:
+      * An unknown/invalid mode falls back to the safe default (never crashes).
+      * "danger-full-access" is only honored when CODEX_ALLOW_DANGER_FULL_ACCESS
+        is truthy; otherwise it is downgraded to the safe default with a warning.
+    """
+    if configured is None:
+        configured = os.getenv("CODEX_SANDBOX_MODE", _CODEX_SANDBOX_DEFAULT)
+    if allow_danger is None:
+        allow_danger = os.getenv("CODEX_ALLOW_DANGER_FULL_ACCESS", "false")
+
+    mode = (configured or "").strip()
+    if mode not in _CODEX_SANDBOX_MODES:
+        logger.warning(
+            "Invalid CODEX_SANDBOX_MODE %r; falling back to %r",
+            configured,
+            _CODEX_SANDBOX_DEFAULT,
+        )
+        return _CODEX_SANDBOX_DEFAULT
+
+    if mode == "danger-full-access" and (allow_danger or "").strip().lower() != "true":
+        logger.warning(
+            "CODEX_SANDBOX_MODE=danger-full-access requires "
+            "CODEX_ALLOW_DANGER_FULL_ACCESS=true to opt in; "
+            "downgrading to %r.",
+            _CODEX_SANDBOX_DEFAULT,
+        )
+        return _CODEX_SANDBOX_DEFAULT
+
+    return mode
+
+
+CODEX_SANDBOX_MODE = resolve_codex_sandbox_mode()
 
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
 MCP_PORT = int(os.getenv("MCP_PORT", "3001"))

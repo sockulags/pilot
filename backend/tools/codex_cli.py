@@ -23,9 +23,7 @@ import shutil
 import sys
 from typing import AsyncGenerator
 
-from config import CODEX_CLI
-
-CODEX_EXEC_SANDBOX_MODE = "danger-full-access"
+from config import CODEX_CLI, CODEX_SANDBOX_MODE
 
 _resolved_cli: str | None = None
 
@@ -68,7 +66,7 @@ def _build_cmd(prompt: str, cwd: str | None, resume_session_id: str | None) -> l
     cli = resolve_codex_cli()
     flags = [
         "--json", "--skip-git-repo-check", "--color", "never",
-        "--sandbox", CODEX_EXEC_SANDBOX_MODE,
+        "--sandbox", CODEX_SANDBOX_MODE,
     ]
     if cwd:
         flags += ["-C", cwd]
