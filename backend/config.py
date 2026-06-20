@@ -262,6 +262,32 @@ PILOT_MCP_BROWSER_CMD = os.getenv("PILOT_MCP_BROWSER_CMD", "npx @playwright/mcp@
 # remote access; the Tailscale network is the primary boundary.
 PILOT_AUTH_TOKEN = os.getenv("PILOT_AUTH_TOKEN", "")
 
+# Optional shared secret guarding the MCP HTTP surface (/mcp and /mcp/call),
+# which exposes computer-control tools (run_command, click, type, open_app, ...).
+# Falls back to PILOT_AUTH_TOKEN when unset, so a single token can protect both
+# the WS and MCP boundaries. When a token is configured, MCP requests must
+# present it as `Authorization: Bearer <token>` or an `X-Pilot-Token` header;
+# requests without a valid token are rejected with 401. Empty = no auth.
+PILOT_MCP_AUTH_TOKEN = os.getenv("PILOT_MCP_AUTH_TOKEN", "") or PILOT_AUTH_TOKEN
+
+# Bind hosts. Default to loopback (127.0.0.1) so a local app is not reachable
+# from the LAN out of the box — the MCP server in particular drives the desktop
+# with no per-call OS prompts. Set these to 0.0.0.0 only when you intentionally
+# expose the backend (e.g. behind Tailscale) AND have configured an auth token.
+BACKEND_HOST = os.getenv("BACKEND_HOST", "127.0.0.1")
+MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
+
+# Allowed CORS origins for the main app (comma-separated). Defaults to the local
+# frontend dev origins; widen this only deliberately. Wildcard "*" is honored if
+# explicitly set but is discouraged because the app exposes computer control.
+PILOT_CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "PILOT_CORS_ORIGINS", "http://localhost:3000,http://localhost:3001"
+    ).split(",")
+    if origin.strip()
+]
+
 # Built frontend (Next static export). When present, the backend serves the UI
 # from this directory so everything is one origin. Defaults to ../frontend/out.
 FRONTEND_DIR = os.getenv(
