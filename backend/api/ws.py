@@ -28,13 +28,16 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from agents.coordinator import run_coordinator
 from agents.gateway import refine_query
+from agents.model_inventory import get_model_inventory
 from agents.orchestrator import classify_turn, compose_reply, should_offload_code
+from agents.routing import build_routing_decision
 from agents.turn_policy import (
     build_task_context,
+    resolve_task_contract_intent,
     select_agent_for_intent,
-    task_contract_intent,
     tool_task,
 )
+from code_verification import git_status_snapshot, verify_code_run
 from codex_logs import summarize_codex_session
 from diagnostics import append_turn_diagnostic
 from config import (
@@ -200,6 +203,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 session_id=session_id, title=spec["title"],
                 payload=spec["payload"], schedule=spec["schedule"],
                 kind=spec.get("kind", "reminder"),
+                permissions=spec.get("permissions"),
             )
             await send_jobs()
             kind_label = "uppgift" if job["kind"] == "task" else "påminnelse"
@@ -264,7 +268,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
         project = os.path.basename(cwd.rstrip("\\/")) if cwd else None
         # Recall relevant long-term memories for this turn (degrades to "" on failure).
-        memories = format_for_prompt(await search_memories(text))
+        memories = format_for_prompt(
+            await search_memories(text, session_id=session_id, project=project)
+        )
         # route_mode "auto" lets the classifier decide; otherwise the user has
         # pinned the route (Läge toggle) and we skip classification entirely.
         if route_mode == "auto":
@@ -272,9 +278,15 @@ async def websocket_endpoint(websocket: WebSocket):
         else:
             decision = {"route": route_mode, "prompt": text, "thinking": f"forced route: {route_mode}"}
         route = decision["route"]
+        # Health-check the local model fleet once for this turn (fail closed on
+        # discovery failure) so routing and expert advertising consult what is
+        # actually installed, not just what is configured.
+        inventory = await get_model_inventory()
         # The coordinator (front brain) is fast gemma4 in auto mode; a pin makes
         # the chosen model the lead. It consults installed experts as needed.
-        agent_selection = select_agent_for_intent(model_mode, task_context)
+        agent_selection = select_agent_for_intent(
+            model_mode, task_context, available_models=set(inventory.healthy)
+        )
         coordinator_model = agent_selection.model
 
         def emit(event: dict):
@@ -298,8 +310,18 @@ async def websocket_endpoint(websocket: WebSocket):
         # Local-first: a code turn only reaches the external agent on an explicit
         # offload signal (Läge=code, or "use codex/claude" in the message). All
         # other turns — chat, computer, and a locally-kept code turn — run through
-        # the in-turn coordinator.
-        offload = route == "code" and should_offload_code(route_mode, text)
+        # the in-turn coordinator. The RoutingDecision consolidates this logic and
+        # explains it; it is surfaced before any expensive/risky action starts.
+        routing = build_routing_decision(
+            route_mode=route_mode,
+            classified_route=route,
+            agent=agent,
+            text=text,
+            project=project,
+            cwd=cwd,
+        )
+        emit(routing.to_event())
+        offload = routing.is_offload()
 
         if not offload:
             # gemma4 (or the pinned model) auto-orchestrates over the installed
@@ -357,7 +379,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 memories=memories, session_id=session_id,
                 required_first_tool=required_first_tool,
                 require_file_output=task_context.creates_file,
-                task_contract_intent=task_contract_intent(task_context),
+                task_contract_intent=resolve_task_contract_intent(task_context),
+                inventory=inventory,
             )
             turn_status = outcome.status
             if outcome.status == "needs_input":
@@ -371,6 +394,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         turn, route, coordinator_model, diagnostic_events,
                         outcome.status, task_context.intent,
                         runtime_state=outcome.runtime_state,
+                        routing=routing,
                     ),
                 })
                 emit({"type": "done"})
@@ -434,17 +458,27 @@ async def websocket_endpoint(websocket: WebSocket):
                         turn, route, coordinator_model, diagnostic_events,
                         outcome.status, task_context.intent,
                         runtime_state=outcome.runtime_state,
+                        routing=routing,
                     ),
                 })
                 emit({"type": "done"})
 
         else:  # explicit offload to the external coding agent
+            # The route/execution-engine reason rides along on the persisted
+            # offloaded turn so every turn carries an explainable decision.
+            code_meta = {
+                "turn": turn,
+                "route": route,
+                "execution_engine": routing.execution_engine,
+                "routing_reason": routing.reason,
+                "required_permissions": list(routing.required_permissions),
+            }
             if not cwd:
                 turn_status = "blocked"
                 msg = ("Välj en projektmapp först (dropdown ovanför inmatningen) för att "
                        "offloada till kodagenten.")
                 emit({"type": "assistant_delta", "content": msg})
-                conversation.append({"role": "assistant", "content": msg})
+                conversation.append({"role": "assistant", "content": msg, "meta": code_meta})
                 emit({"type": "done"})
             else:
                 # Refine/translate the instruction (English pivot) before the
@@ -457,12 +491,14 @@ async def websocket_endpoint(websocket: WebSocket):
                     codex_session_id = await _run_code_turn(
                         run_codex_cli, code_prompt, cwd, codex_session_id,
                         emit, abort, conversation, trace_provider=summarize_codex_session,
+                        meta=code_meta,
                     )
                 else:
                     emit({"type": "thinking", "content": f"Claude Code i {cwd}..."})
                     emit({"type": "context", "content": f"Working directory: {cwd}"})
                     claude_session_id = await _run_code_turn(
-                        run_codex, code_prompt, cwd, claude_session_id, emit, abort, conversation
+                        run_codex, code_prompt, cwd, claude_session_id, emit, abort, conversation,
+                        meta=code_meta,
                     )
 
         persist()
@@ -602,6 +638,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             payload=payload,
                             schedule=schedule,
                             kind=kind,
+                            permissions=msg.get("permissions"),
                         )
                 await send_jobs()
 
@@ -664,6 +701,7 @@ def _turn_meta(
     status: str,
     intent: str = "",
     runtime_state=None,
+    routing=None,
 ) -> dict:
     turn_start = next((event for event in events if event.get("type") == "turn_start"), {})
     meta = {
@@ -682,6 +720,19 @@ def _turn_meta(
     for key in ("agent_role", "agent_role_model", "agent_role_fallback"):
         if turn_start.get(key):
             meta[key] = turn_start[key]
+    # Every turn carries an explainable route/execution-engine reason.
+    if routing is not None:
+        meta["execution_engine"] = routing.execution_engine
+        meta["routing_reason"] = routing.reason
+        meta["required_permissions"] = list(routing.required_permissions)
+    else:
+        routing_event = next(
+            (event for event in events if event.get("type") == "routing_decision"), {}
+        )
+        if routing_event:
+            meta["execution_engine"] = routing_event.get("execution_engine")
+            meta["routing_reason"] = routing_event.get("reason")
+            meta["required_permissions"] = list(routing_event.get("required_permissions") or [])
     if runtime_state is not None:
         meta.update(runtime_state.to_meta())
     return meta
@@ -888,16 +939,26 @@ async def _run_code_turn(
     abort,
     conversation,
     trace_provider=None,
+    meta=None,
 ) -> str | None:
     """Drive a coding agent (Claude Code or Codex) for one turn.
 
     ``runner`` is run_codex or run_codex_cli — both yield the same typed events.
-    Returns the (possibly new) coding-agent session id for resume.
+    ``meta`` is merged into the persisted assistant message so every offloaded
+    turn carries its route/execution-engine reason. Returns the (possibly new)
+    coding-agent session id for resume.
     """
     parts: list[str] = []
     result_text: str | None = None
     error_text: str | None = None
     session_id = resume_id
+
+    # Snapshot the working tree BEFORE the agent runs so we can isolate what
+    # THIS turn changed (best-effort; empty/non-git cwd just yields no baseline).
+    try:
+        before_snapshot = await git_status_snapshot(cwd)
+    except Exception:
+        before_snapshot = None
 
     try:
         async for ev in runner(prompt, cwd=cwd, resume_session_id=resume_id):
@@ -936,6 +997,29 @@ async def _run_code_turn(
         "cwd": cwd,
         "code_session_id": session_id,
     }
+    if meta:
+        message["meta"] = dict(meta)
+
+    # Independently inspect the repo after the agent finishes: changed files,
+    # unexpected changes outside the project, and (opt-in) a verification run.
+    # This is additive and best-effort — never let it break the turn.
+    try:
+        code_run = await verify_code_run(cwd, before=before_snapshot)
+    except Exception as exc:
+        code_run = {
+            "cwd": cwd,
+            "error": f"{type(exc).__name__}: {exc}",
+            "verification": {
+                "ran": False,
+                "passed": None,
+                "command": None,
+                "reason": "verification helper failed",
+                "returncode": None,
+            },
+        }
+    message["code_run"] = code_run
+    emit({"type": "code_verification", "code_run": code_run})
+
     if trace_provider and session_id:
         try:
             trace = trace_provider(session_id)

@@ -42,6 +42,11 @@ Opens at `http://localhost:3000`.
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama URL |
 | `BACKEND_PORT` | `8000` | FastAPI port |
 | `MCP_PORT` | `3001` | MCP server port |
+| `BACKEND_HOST` | `127.0.0.1` | Bind host for the main app. Loopback by default; set `0.0.0.0` only to expose it (behind Tailscale + a token) |
+| `MCP_HOST` | `127.0.0.1` | Bind host for the MCP server (exposes computer-control tools). Loopback by default; set `0.0.0.0` only with `PILOT_MCP_AUTH_TOKEN` set |
+| `PILOT_AUTH_TOKEN` | _(empty)_ | Shared secret for the WebSocket `hello`. Empty = no auth |
+| `PILOT_MCP_AUTH_TOKEN` | = `PILOT_AUTH_TOKEN` | Shared secret for `/mcp` and `/mcp/call`. When set, MCP requests must send `Authorization: Bearer <token>` or `X-Pilot-Token`; otherwise 401 |
+| `PILOT_CORS_ORIGINS` | `http://localhost:3000,http://localhost:3001` | Comma-separated CORS allowlist for the main app |
 | `MAX_AGENT_STEPS` | `20` | Max agent loop iterations |
 
 ## Coordinator & dynamic model use
