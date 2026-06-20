@@ -245,6 +245,14 @@ def resolve_codex_sandbox_mode(
 
 CODEX_SANDBOX_MODE = resolve_codex_sandbox_mode()
 
+# After a coding agent finishes, Pilot independently inspects the repo (git
+# status/diff, changed-files summary, unexpected-change detection). Auto-running
+# the project's verification command (e.g. `pytest -q`, `npm test`) is OPT-IN —
+# it can be slow or have side effects — so it defaults off. When disabled (or
+# when no known command exists) verification is reported as SKIPPED with a
+# reason; the diff summary is always produced.
+CODE_VERIFY_RUN_TESTS = os.getenv("CODE_VERIFY_RUN_TESTS", "false").lower() == "true"
+
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
 MCP_PORT = int(os.getenv("MCP_PORT", "3001"))
 
