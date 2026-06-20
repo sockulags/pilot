@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import time
 from dataclasses import dataclass
 
 from PIL import Image, ImageDraw, ImageFont
@@ -60,12 +61,64 @@ class Element:
 # Cache of the most recent perception so click_element can resolve ids -> coords.
 _LAST_ELEMENTS: dict[int, Element] = {}
 
+# Observation record captured alongside the element cache. Element ids are only
+# valid for the observation they were perceived in: if the active window changes
+# (or a newer perception runs), older ids are stale. The id is monotonically
+# increasing so callers can detect "this element came from an older observation".
+_observation_counter: int = 0
+_current_observation_id: int = 0
+_observation_timestamp: float = 0.0
+_observation_window: str = ""
+
+
+def _active_window_title_safe() -> str:
+    """Best-effort foreground window title (empty on any failure)."""
+    try:
+        from tools.os_tools import active_window_title  # lazy: avoid import cycle
+
+        return active_window_title() or ""
+    except Exception:
+        return ""
+
+
+def current_observation_id() -> int:
+    """Id of the most recent perception (0 if nothing has been perceived)."""
+    return _current_observation_id
+
+
+def observation_active_window() -> str:
+    """Foreground window title captured when the last perception ran."""
+    return _observation_window
+
+
+def observation_timestamp() -> float:
+    return _observation_timestamp
+
+
+def invalidate_observation() -> None:
+    """Drop cached element ids so click_element fails until re-perception.
+
+    Used when a focus/window change is detected at action time: the cached
+    rects/centers no longer describe what is on screen.
+    """
+    global _current_observation_id
+    _LAST_ELEMENTS.clear()
+    _current_observation_id = 0
+
 
 def get_element(element_id: int) -> Element | None:
     try:
         return _LAST_ELEMENTS.get(int(element_id))
     except (TypeError, ValueError):
         return None
+
+
+def get_element_observation(element_id: int) -> int | None:
+    """Return the observation id an element belongs to, or None if it is not in
+    the current cache (i.e. it is stale / from a superseded observation)."""
+    if get_element(element_id) is None:
+        return None
+    return _current_observation_id or None
 
 
 def _foreground_control():
@@ -177,12 +230,22 @@ def perceive_screen() -> tuple[str, list[Element], str]:
     """
     from tools import screenshot  # lazy import to avoid an import cycle
 
+    global _observation_counter, _current_observation_id
+    global _observation_timestamp, _observation_window
+
     img_b64 = screenshot()
     elements = enumerate_elements()
 
     _LAST_ELEMENTS.clear()
     for el in elements:
         _LAST_ELEMENTS[el.id] = el
+
+    # Record the context this perception was captured in so action tools can
+    # verify freshness (same window, current observation) before clicking/typing.
+    _observation_counter += 1
+    _current_observation_id = _observation_counter
+    _observation_timestamp = time.time()
+    _observation_window = _active_window_title_safe()
 
     annotated = annotate_screenshot(img_b64, elements)
     return annotated, elements, elements_text(elements)
