@@ -21,6 +21,7 @@ project the `code` route runs in and the Claude Code session to resume.
 import asyncio
 import json
 import os
+import secrets
 from datetime import datetime
 from pathlib import Path
 
@@ -98,6 +99,10 @@ async def websocket_endpoint(websocket: WebSocket):
     turn_task: asyncio.Task | None = None
     turn_counter = 0
     registered_session: str | None = None  # which session this conn is registered under
+    # Fail closed: when a token is configured, nothing but a successful "hello"
+    # may be processed. The WS drives run_command and desktop input, and the
+    # server binds 0.0.0.0 — an unauthenticated message must never reach a turn.
+    authenticated = not PILOT_AUTH_TOKEN
 
     def send(event: dict):
         asyncio.create_task(websocket.send_json(event))
@@ -522,11 +527,18 @@ async def websocket_endpoint(websocket: WebSocket):
             msg = json.loads(raw)
             msg_type = msg.get("type")
 
+            if msg_type != "hello" and not authenticated:
+                await websocket.send_json({"type": "error", "content": "unauthorized"})
+                await websocket.close()
+                return
+
             if msg_type == "hello":
-                if PILOT_AUTH_TOKEN and msg.get("token") != PILOT_AUTH_TOKEN:
+                token = str(msg.get("token") or "")
+                if PILOT_AUTH_TOKEN and not secrets.compare_digest(token, PILOT_AUTH_TOKEN):
                     await websocket.send_json({"type": "error", "content": "unauthorized"})
                     await websocket.close()
                     return
+                authenticated = True
                 session_id = msg.get("session_id") or None
                 stored = load_session(session_id) if session_id else dict(load_session(""))
                 conversation = list(stored["messages"])
