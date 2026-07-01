@@ -391,6 +391,25 @@ REGISTRY: tuple[ToolSpec, ...] = (
         category="web",
         deterministic=True,
     ),
+    # --- Image generation ---------------------------------------------------
+    ToolSpec(
+        name="generate_image",
+        summary="Generate an image with local ComfyUI",
+        description="generate_image(prompt, width?, height?, steps?, seed?): create an image using the local ComfyUI server",
+        when_to_use="When the user asks to generate, create, draw, or make a new image from text. Do not use for screenshot interpretation.",
+        params={
+            "prompt": {"type": "string", "description": "Image prompt to generate"},
+            "width": {"type": "integer", "description": "Image width in pixels (optional, default 1024)"},
+            "height": {"type": "integer", "description": "Image height in pixels (optional, default 1024)"},
+            "steps": {"type": "integer", "description": "Sampling steps (optional, default 25)"},
+            "seed": {"type": "integer", "description": "Seed (optional; random when omitted)"},
+        },
+        required=("prompt",),
+        category="image",
+        deterministic=True,
+        risk_level="medium",
+        side_effects=True,
+    ),
     # --- Code agent (driven by the loop, not the coordinator) ----------------
     ToolSpec(
         name="run_codex",
@@ -541,6 +560,7 @@ _CATEGORY_LABELS = {
     "github": "GitHub",
     "web": "Web",
     "desktop": "Desktop & screen",
+    "image": "Image generation",
     "code": "Coding agent",
     "general": "Other",
 }

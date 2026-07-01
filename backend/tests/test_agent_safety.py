@@ -3,6 +3,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -162,6 +163,9 @@ class AgentLoopTests(unittest.TestCase):
 
     def test_blocks_type_text_when_opened_app_is_not_focused(self):
         asyncio.run(self._blocks_type_text_when_opened_app_is_not_focused())
+
+    def test_execute_tool_dispatches_generate_image(self):
+        asyncio.run(self._execute_tool_dispatches_generate_image())
 
     async def _blocks_unsafe_desktop_action_without_visual_context(self):
         from agents import loop
@@ -405,6 +409,23 @@ class AgentLoopTests(unittest.TestCase):
         self.assertEqual(["open_app"], executed)
         self.assertEqual("blocked", outcome.status)
         self.assertTrue(any(e["type"] == "error" and "active window" in e["content"] for e in events))
+
+    async def _execute_tool_dispatches_generate_image(self):
+        from agents import loop
+
+        with mock.patch.object(
+            loop,
+            "generate_image",
+            return_value="Generated image with ComfyUI\nFiles:\nC:\\out\\pilot.png",
+        ) as generate:
+            result = await loop.execute_tool(
+                "generate_image",
+                {"prompt": "red robot", "width": 512, "height": 512, "steps": 12, "seed": 42},
+                lambda e: None,
+            )
+
+        self.assertIn("C:\\out\\pilot.png", result)
+        generate.assert_called_once_with("red robot", width=512, height=512, steps=12, seed=42)
 
     # --- helper -------------------------------------------------------------
     class _patched:

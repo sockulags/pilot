@@ -17,6 +17,7 @@ from tools import (
 )
 from tools.web import infer_requested_source_count, infer_web_query, task_requires_sources
 from tools import registry
+from tools.comfyui import generate_image
 from tool_results import ToolResult
 from config import MAX_AGENT_STEPS, OLLAMA_VISION_ENABLED, PERCEPTION_ENABLED
 
@@ -530,6 +531,16 @@ async def _execute_tool_text(tool: str, args: dict, emit: Callable[[dict], None]
 
     elif tool == "fetch_url":
         return await fetch_url(args["url"], args.get("max_chars", 4000))
+
+    elif tool == "generate_image":
+        return await asyncio.to_thread(
+            generate_image,
+            args["prompt"],
+            width=args.get("width", 1024),
+            height=args.get("height", 1024),
+            steps=args.get("steps", 25),
+            seed=args.get("seed"),
+        )
 
     elif tool.startswith(registry.EXTERNAL_PREFIX):
         # A tool from an external MCP server (e.g. browser control).

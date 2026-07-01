@@ -7,6 +7,7 @@ Local AI agent that controls the computer via Ollama models, controlled from web
 - [Ollama](https://ollama.com) running locally with `gemma4:12b` (or edit `backend/config.py`)
 - [uv](https://docs.astral.sh/uv/) for Python
 - [pnpm](https://pnpm.io) + Node 18+ for the frontend
+- Optional for image generation: [ComfyUI](https://github.com/comfyanonymous/ComfyUI) running locally on `http://127.0.0.1:8188` with at least one checkpoint under `models/checkpoints`.
 
 ## Quick start
 
@@ -47,6 +48,12 @@ Opens at `http://localhost:3000`.
 | `PILOT_AUTH_TOKEN` | _(empty)_ | Shared secret for the WebSocket `hello`. Empty = no auth |
 | `PILOT_MCP_AUTH_TOKEN` | = `PILOT_AUTH_TOKEN` | Shared secret for `/mcp` and `/mcp/call`. When set, MCP requests must send `Authorization: Bearer <token>` or `X-Pilot-Token`; otherwise 401 |
 | `PILOT_CORS_ORIGINS` | `http://localhost:3000,http://localhost:3001` | Comma-separated CORS allowlist for the main app |
+| `CODEX_SANDBOX_MODE` | `workspace-write` | Sandbox mode passed to headless `codex exec` |
+| `CODEX_APPROVAL_POLICY` | `never` | Approval policy passed to headless `codex exec --ask-for-approval` |
+| `COMFYUI_BASE_URL` | `http://127.0.0.1:8188` | Local ComfyUI API URL used by `generate_image` |
+| `COMFYUI_DIR` | `C:\Users\lucas\Code\ComfyUI` | ComfyUI installation folder |
+| `COMFYUI_CHECKPOINT` | *(first checkpoint found)* | Checkpoint filename to use for image generation |
+| `COMFYUI_OUTPUT_DIR` | `<COMFYUI_DIR>\output` | Folder where generated images are reported |
 | `MAX_AGENT_STEPS` | `20` | Max agent loop iterations |
 
 ## Coordinator & dynamic model use

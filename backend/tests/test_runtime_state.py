@@ -123,6 +123,25 @@ class RuntimeStateTests(unittest.TestCase):
             state.sources,
         )
 
+    def test_generate_image_records_output_files_as_verified_artifacts(self):
+        from agents.runtime_state import RuntimeState
+
+        state = RuntimeState()
+        state.record_tool_result(
+            "generate_image",
+            {"prompt": "blue cube"},
+            "Generated image with ComfyUI\n"
+            "Prompt: blue cube\n"
+            "Files:\n"
+            "C:\\Users\\lucas\\Code\\ComfyUI\\output\\pilot_00002_.png",
+            ok=True,
+        )
+
+        self.assertEqual(
+            [{"path": "C:\\Users\\lucas\\Code\\ComfyUI\\output\\pilot_00002_.png", "verified": True}],
+            state.artifacts,
+        )
+
 
 class RuntimeStateIntegrationTests(unittest.TestCase):
     def test_final_answer_messages_include_structured_evidence(self):
