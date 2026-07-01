@@ -86,6 +86,9 @@ class RuntimeState:
                 "url": str(args.get("url") or ""),
                 "summary": text[:500],
             })
+        elif tool == "generate_image":
+            for path in _generated_image_paths(text):
+                self._record_artifact(path, True)
 
     def record_memory_write(self, fact: str, mem_id: str | None = None) -> None:
         """Record that a durable fact was saved to long-term memory.
@@ -202,6 +205,26 @@ def _path_from_tool_text(text: str) -> str:
     if first_line.startswith("File: "):
         return first_line.removeprefix("File: ").strip()
     return ""
+
+
+def _generated_image_paths(text: str) -> list[str]:
+    lines = str(text or "").splitlines()
+    paths: list[str] = []
+    in_files = False
+    for raw_line in lines:
+        line = raw_line.strip()
+        if line == "Files:":
+            in_files = True
+            continue
+        if not in_files:
+            continue
+        if not line:
+            continue
+        if re.match(r"^[A-Za-z][A-Za-z ]+:", line) and not re.match(r"^[A-Za-z]:[\\/]", line):
+            break
+        if re.search(r"\.(png|jpe?g|webp|bmp)$", line, re.IGNORECASE):
+            paths.append(line)
+    return paths
 
 
 def _source_summary(text: str) -> str:

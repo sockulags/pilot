@@ -157,6 +157,20 @@ class WebSocketPolicyTests(unittest.TestCase):
             self.assertIn("gemma4:12b", path.read_text(encoding="utf-8"))
             self.assertEqual("pilot_report_sess_3.md", path.name)
 
+    def test_chat_prompt_lists_image_generation_capability(self):
+        from agents.orchestrator import _build_reply_messages
+
+        messages = _build_reply_messages(
+            [{"role": "user", "content": "Kan du generera bilder?"}],
+            outcome=None,
+        )
+        system = messages[0]["content"]
+
+        self.assertIn("run_command", system)
+        self.assertIn("generate_image", system)
+        self.assertIn("Image generation", system)
+        self.assertNotIn("not have a built-in image generation tool", system)
+
 
 if __name__ == "__main__":
     unittest.main()

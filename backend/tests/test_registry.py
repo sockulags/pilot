@@ -19,6 +19,7 @@ class RegistryDerivationTests(unittest.TestCase):
                 "run_command", "read_file", "list_dir", "find_file", "list_windows",
                 "focus_window", "screenshot", "get_screen_size", "open_app",
                 "click_element", "click", "type_text", "key_press", "hotkey", "scroll",
+                "generate_image",
                 # New tools (Fas C)
                 "search_files", "github_issues", "github_prs", "github_repo",
                 "web_research", "web_search", "fetch_url",
@@ -42,7 +43,7 @@ class RegistryDerivationTests(unittest.TestCase):
             {
                 "list_dir", "read_file", "find_file", "list_windows", "focus_window",
                 "search_files", "github_issues", "github_prs", "github_repo",
-                "web_research", "web_search", "fetch_url",
+                "web_research", "web_search", "fetch_url", "generate_image",
             },
             registry.deterministic_tool_names(),
         )
@@ -75,11 +76,12 @@ class RegistryDerivationTests(unittest.TestCase):
 
     def test_capability_manifest_lists_real_tools_grouped(self):
         manifest = registry.capability_manifest()
-        for needle in ("read_file", "find_file", "run_command", "click_element", "open_app"):
+        for needle in ("read_file", "find_file", "run_command", "click_element", "open_app", "generate_image"):
             self.assertIn(needle, manifest)
         # Grouped by human-readable category labels, not raw category keys.
         self.assertIn("Files & folders", manifest)
         self.assertIn("Desktop & screen", manifest)
+        self.assertIn("Image generation", manifest)
 
     def test_tool_menu_only_exposes_coordinator_tools(self):
         menu = registry.tool_menu()
@@ -92,6 +94,10 @@ class RegistryDerivationTests(unittest.TestCase):
         self.assertTrue(all(s["type"] == "function" for s in schemas))
         names = {s["function"]["name"] for s in schemas}
         self.assertEqual(registry.coordinator_tool_names(), names)
+        generate_image = next(s for s in schemas if s["function"]["name"] == "generate_image")
+        props = generate_image["function"]["parameters"]["properties"]
+        self.assertEqual({"prompt", "width", "height", "steps", "seed"}, set(props))
+        self.assertEqual(["prompt"], generate_image["function"]["parameters"]["required"])
 
     def test_tool_specs_expose_risk_and_side_effect_metadata(self):
         read_file = registry.get("read_file")

@@ -182,6 +182,16 @@ def resolve_answer_model(model_mode: str | None, suggested: str | None) -> str:
 # correctly identified a smoke-test image.
 OLLAMA_VISION_ENABLED = os.getenv("OLLAMA_VISION_ENABLED", "true").lower() == "true"
 
+# --- ComfyUI image generation ----------------------------------------------
+COMFYUI_BASE_URL = os.getenv("COMFYUI_BASE_URL", "http://127.0.0.1:8188")
+COMFYUI_DIR = os.getenv("COMFYUI_DIR", r"C:\Users\lucas\Code\ComfyUI")
+COMFYUI_CHECKPOINT = os.getenv("COMFYUI_CHECKPOINT", "")
+COMFYUI_OUTPUT_DIR = os.getenv(
+    "COMFYUI_OUTPUT_DIR",
+    os.path.join(COMFYUI_DIR, "output"),
+)
+COMFYUI_TIMEOUT_SECONDS = float(os.getenv("COMFYUI_TIMEOUT_SECONDS", "180"))
+
 # Path/name of the Claude CLI binary. tools/codex.py resolves this: an absolute
 # path wins, then PATH, then the Claude desktop app's bundled CLI (Windows MSIX).
 # On win32 a .cmd/.bat wrapper is invoked via "cmd /c" automatically.
