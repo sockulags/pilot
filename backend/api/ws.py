@@ -104,8 +104,34 @@ async def websocket_endpoint(websocket: WebSocket):
     # server binds 0.0.0.0 — an unauthenticated message must never reach a turn.
     authenticated = not PILOT_AUTH_TOKEN
 
+    # Single-writer outbox: Starlette websockets are not safe for concurrent
+    # send_json calls, and fire-and-forget tasks lose ordering under load
+    # (streamed assistant_delta events must arrive in emit order). Everything
+    # goes through the queue; one sender task owns the socket.
+    outbox: asyncio.Queue = asyncio.Queue()
+    sender_dead = False
+
+    async def _sender() -> None:
+        nonlocal sender_dead
+        while True:
+            event = await outbox.get()
+            try:
+                if not sender_dead:
+                    await websocket.send_json(event)
+            except Exception:
+                # Client is gone; keep draining so flush() never blocks.
+                sender_dead = True
+            finally:
+                outbox.task_done()
+
+    sender_task = asyncio.create_task(_sender())
+
     def send(event: dict):
-        asyncio.create_task(websocket.send_json(event))
+        outbox.put_nowait(event)
+
+    async def flush() -> None:
+        """Wait until every queued event has been handed to the socket."""
+        await outbox.join()
 
     def deliver_turn(content: str, title: str = ""):
         """Push a fired job's finished message to this client as its own turn.
@@ -133,7 +159,7 @@ async def websocket_endpoint(websocket: WebSocket):
             )
 
     async def send_projects():
-        await websocket.send_json({
+        send({
             "type": "projects",
             "projects": list_projects(),
             "selected": cwd,
@@ -151,7 +177,7 @@ async def websocket_endpoint(websocket: WebSocket):
             {**j, "summary": describe_schedule(j["schedule"]), "next_run_label": _fmt_next(j["next_run"])}
             for j in list_jobs(session_id)
         ]
-        await websocket.send_json({"type": "jobs", "jobs": jobs})
+        send({"type": "jobs", "jobs": jobs})
 
     def _format_job_list() -> str:
         jobs = list_jobs(session_id)
@@ -528,14 +554,16 @@ async def websocket_endpoint(websocket: WebSocket):
             msg_type = msg.get("type")
 
             if msg_type != "hello" and not authenticated:
-                await websocket.send_json({"type": "error", "content": "unauthorized"})
+                send({"type": "error", "content": "unauthorized"})
+                await flush()
                 await websocket.close()
                 return
 
             if msg_type == "hello":
                 token = str(msg.get("token") or "")
                 if PILOT_AUTH_TOKEN and not secrets.compare_digest(token, PILOT_AUTH_TOKEN):
-                    await websocket.send_json({"type": "error", "content": "unauthorized"})
+                    send({"type": "error", "content": "unauthorized"})
+                    await flush()
                     await websocket.close()
                     return
                 authenticated = True
@@ -567,9 +595,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 if session_id:
                     register(session_id, deliver_turn)
                     registered_session = session_id
-                await websocket.send_json(
-                    {"type": "history", "messages": conversation, "turn": turn_counter}
-                )
+                send({"type": "history", "messages": conversation, "turn": turn_counter})
                 await send_projects()
                 await send_jobs()
 
@@ -585,7 +611,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             elif msg_type == "abort":
                 current_abort.set()
-                await websocket.send_json({"type": "done", "turn": turn_counter, "summary": "Avbruten"})
+                send({"type": "done", "turn": turn_counter, "summary": "Avbruten"})
 
             elif msg_type == "reset":
                 current_abort.set()
@@ -596,12 +622,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 if session_id:
                     clear_session(session_id)
                     persist()
-                await websocket.send_json({"type": "reset_ok"})
+                send({"type": "reset_ok"})
 
             elif msg_type == "add_project":
                 _projects, error = add_project(msg.get("path", ""))
                 if error:
-                    await websocket.send_json({"type": "error", "content": error})
+                    send({"type": "error", "content": error})
                 await send_projects()
 
             elif msg_type == "remove_project":
@@ -668,6 +694,8 @@ async def websocket_endpoint(websocket: WebSocket):
             turn_task.cancel()
         if registered_session:
             unregister(registered_session, deliver_turn)
+    finally:
+        sender_task.cancel()
 
 
 def _fmt_next(ts: float | None) -> str:
