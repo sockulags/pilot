@@ -1,191 +1,164 @@
 # Pilot
 
-Local AI agent that controls the computer via Ollama models, controlled from web/mobile.
+**A local-first, tool-using AI agent that carries out — and then verifies — grounded desktop-and-web tasks on a Windows machine.**
 
-## Requirements
+Pilot runs on your machine, on local [Ollama](https://ollama.com) models by default. You talk to it in natural language (Swedish or English); it classifies the turn, gathers what it needs (reads project files, runs read-only shell commands, does web research), performs the action, and answers **only from evidence it actually gathered**. When a task produces a file, Pilot writes it and verifies it exists before claiming success.
 
-- [Ollama](https://ollama.com) running locally with `gemma4:12b` (or edit `backend/config.py`)
-- [uv](https://docs.astral.sh/uv/) for Python
-- [pnpm](https://pnpm.io) + Node 18+ for the frontend
-- Optional for image generation: [ComfyUI](https://github.com/comfyanonymous/ComfyUI) running locally on `http://127.0.0.1:8188` with at least one checkpoint under `models/checkpoints`.
+**Trust model / intended user:** a technically comfortable person running Pilot on their own machine, who wants an assistant that can actually touch their files, shell and screen — not a cloud chatbot — and accepts "it runs on my machine with my permissions." Pilot is a working personal agent and a public code sample, **not** a hosted multi-user product, and this README never claims production-grade reliability: see [Evaluation](#evaluation--measured-not-claimed) for what is actually measured.
+
+---
 
 ## Quick start
 
-### Backend
+Requirements: [Ollama](https://ollama.com) with `gemma4:12b` pulled, [uv](https://docs.astral.sh/uv/), [pnpm](https://pnpm.io) + Node 18+. Optional: [ComfyUI](https://github.com/comfyanonymous/ComfyUI) for image generation.
 
 ```bash
+# Backend — FastAPI + WebSocket on :8000, MCP server on :3001
 cd backend
 uv run python main.py
-```
 
-Starts:
-- `http://localhost:8000` — FastAPI + WebSocket (`/ws`)
-- `http://localhost:3001` — MCP server (`/mcp`)
-
-### Frontend
-
-```bash
+# Frontend — http://localhost:3000
 cd frontend
-pnpm install   # first time only
-pnpm dev
+pnpm install && pnpm dev
 ```
 
-Opens at `http://localhost:3000`.
-
-## Environment variables (backend)
+Configuration is env-based (`backend/.env`, template in `backend/.env.example`). The important ones:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OLLAMA_MODEL` | `gemma4:12b` | Primary / default LLM |
-| `OLLAMA_ROUTER_MODEL` | = `OLLAMA_MODEL` | Model the orchestrator classifies + picks on (must be fast & tools-capable) |
-| `OLLAMA_VISION_MODEL` | `qwen3.5:9b` | Vision model |
-| `OLLAMA_FALLBACK_MODEL` | `gpt-oss:20b` | Fallback / research LLM |
+| `OLLAMA_MODEL` | `gemma4:12b` | Default coordinator/answer model |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama URL |
-| `BACKEND_PORT` | `8000` | FastAPI port |
-| `MCP_PORT` | `3001` | MCP server port |
-| `BACKEND_HOST` | `127.0.0.1` | Bind host for the main app. Loopback by default; set `0.0.0.0` only to expose it (behind Tailscale + a token) |
-| `MCP_HOST` | `127.0.0.1` | Bind host for the MCP server (exposes computer-control tools). Loopback by default; set `0.0.0.0` only with `PILOT_MCP_AUTH_TOKEN` set |
-| `PILOT_AUTH_TOKEN` | _(empty)_ | Shared secret for the WebSocket `hello`. Empty = no auth |
-| `PILOT_MCP_AUTH_TOKEN` | = `PILOT_AUTH_TOKEN` | Shared secret for `/mcp` and `/mcp/call`. When set, MCP requests must send `Authorization: Bearer <token>` or `X-Pilot-Token`; otherwise 401 |
-| `PILOT_CORS_ORIGINS` | `http://localhost:3000,http://localhost:3001` | Comma-separated CORS allowlist for the main app |
-| `CODEX_SANDBOX_MODE` | `workspace-write` | Sandbox mode passed to headless `codex exec` |
-| `CODEX_APPROVAL_POLICY` | `never` | Approval policy passed to headless `codex exec --ask-for-approval` |
-| `COMFYUI_BASE_URL` | `http://127.0.0.1:8188` | Local ComfyUI API URL used by `generate_image` |
-| `COMFYUI_DIR` | `~/ComfyUI` | ComfyUI installation folder |
-| `COMFYUI_CHECKPOINT` | *(first checkpoint found)* | Checkpoint filename to use for image generation |
-| `COMFYUI_OUTPUT_DIR` | `<COMFYUI_DIR>\output` | Folder where generated images are reported |
-| `MAX_AGENT_STEPS` | `20` | Max agent loop iterations |
+| `PILOT_ANSWER_BACKEND` | `ollama` | `ollama` (fully local) or `openai` — see [Model backends](#model-backends-local-first-api-optional) |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | — / `gpt-4o-mini` | Only used when the backend is `openai` |
+| `BACKEND_HOST` / `MCP_HOST` | `127.0.0.1` | Loopback by default; expose deliberately only behind a private network **and** with tokens set |
+| `PILOT_AUTH_TOKEN` / `PILOT_MCP_AUTH_TOKEN` | _(empty)_ | Shared secrets for the WebSocket `hello` and the MCP endpoints |
+| `COMMAND_TIMEOUT_SECONDS` | `60` | Wall-clock bound for one `run_command`; the process tree is killed on timeout |
+| `COORDINATOR_MAX_STEPS` | `6` | Max consults/tool calls one turn may chain |
 
-## Coordinator & dynamic model use
+The full list (memory, ComfyUI, code agents, scheduled jobs) is in `backend/.env.example` and `backend/config.py`.
 
-Chat/computer turns run through an **in-turn coordinator** (`agents/coordinator.py`).
-A fast front-brain model receives the turn and, within that single turn, can:
+---
 
-- **consult** a specialist model — for code it can ask `devstral` or
-  `qwen2.5-coder`, for research/general reasoning `gpt-oss`, and for manual
-  hard reasoning `deepseek-r1` — and weave the answer in;
-- **perceive** the screen (screenshot + Set-of-Marks element list — the
-  text-based "vision" path, no multimodal model needed);
-- run **OS/desktop tools** (run_command, read_file, click_element, …);
-- then **answer**, synthesised from everything gathered.
+## Architecture
 
-Only models actually installed in Ollama are offered as experts, so it adapts to
-what's available. Each expert hand-off and the coordinator's reasoning stream
-live (you see "🔀 frågar qwen2.5-coder" and the expert's tokens as they arrive),
-collapsing into a **Detaljer** panel once the turn finishes.
-
-The **Modell** dropdown / `/model` command picks the policy:
-
-- **Auto** (default) — the front brain is `gemma4:12b`; it consults experts as
-  needed. This is the "best model per question, automatically" path.
-- **Pinned** (`/model gpt-oss`, `/model <prefix>`, or the dropdown) — that model
-  leads the turn instead. `/model` alone shows the current choice + options;
-  `/model auto` returns to auto. Persisted per session.
-
-Models that can't emit tool calls (e.g. `deepseek-r1`, `tools:false` in the
-registry) are never used to drive tools/perception — a tools-capable model is
-substituted automatically.
-
-`COORDINATOR_MAX_STEPS` (default 6) bounds how many consults/tool calls one turn
-may chain.
-
-## Toggles (top bar)
-
-- **Läge** — Auto lets the classifier route each turn; or force **Chatt** /
-  **Dator** / **Kod** to do one thing distinctly. Forcing skips classification.
-- **Modell** — Auto (`gemma4:12b` front brain, consults experts) or pin a model.
-- **Agent** — Claude Code vs Codex for the code route.
-
-All three persist per session.
-
-## Language gateway (clarify + refine)
-
-Before the coordinator hands work to another model, two things happen:
-
-- **Clarify** — if the request is too vague to act on well, the coordinator asks
-  **one** question back instead of guessing or looping. This rides on the
-  coordinator's existing decision step (`clarify` action), so it costs no extra
-  model call.
-- **Refine + English pivot** — when handing off to an expert model or the code
-  agent, the request is rewritten into one clear **English** instruction
-  (`agents/gateway.py`), since local models reason/code better in English. The
-  user's verbatim words are kept alongside, and the final reply is still written
-  in the user's language.
-
-This role needs a model strong at the user's language. Local validation showed
-`gemma4:12b` preserves Swedish requests such as "vänd en sträng" correctly and
-returns usable short refinement output, so `OLLAMA_GATEWAY_MODEL` defaults to
-`gemma4:12b` and falls open to the verbatim request if that model isn't installed
-(safe — no corruption). Set `GATEWAY_REFINE_ENABLED=false` to skip refinement
-entirely.
-
-## Long-term memory
-
-Pilot remembers durable facts across sessions with a small semantic store
-(`backend/memory.py`, embeddings via `nomic-embed-text`):
-
-- **Recall** — every chat/computer turn embeds the message and retrieves the
-  most similar stored memories (cosine ≥ `MEMORY_MIN_SCORE`), injecting them into
-  the coordinator and the final reply. So "vad heter jag?" works in a brand-new
-  session once you've told it your name.
-- **Save** — the coordinator's `remember` action stores a fact (e.g. when you
-  say "kom ihåg att…", or share a lasting preference). A 💾 chip marks the turn.
-  Facts are saved in **your language** — `nomic-embed-text` is weak cross-lingual,
-  so a translated memory wouldn't match a same-language query.
-
-The store is a JSON file under `backend/data/` (gitignored). Tunables:
-`MEMORY_TOP_K`, `MEMORY_MIN_SCORE`, `OLLAMA_EMBED_MODEL`.
-
-## MCP integration (Claude Desktop)
-
-Add to your Claude Desktop config:
-
-```json
-{
-  "mcpServers": {
-    "pilot": {
-      "url": "http://localhost:3001/mcp",
-      "transport": "sse"
-    }
-  }
-}
-```
-
-Available tools: `pilot_screenshot`, `pilot_click`, `pilot_type`, `pilot_run_command`, `pilot_open_app`.
-
-## WebSocket events
+One user turn flows through four stages, all in `backend/`:
 
 ```
-client → server: {"type": "run", "task": "Open Notepad and write Hello"}
-client → server: {"type": "abort"}
-
-server → client: {"type": "thinking", "content": "..."}
-server → client: {"type": "action", "tool": "click", "args": {"x": 100, "y": 200}}
-server → client: {"type": "result", "content": "..."}
-server → client: {"type": "screenshot", "image": "<base64>"}
-server → client: {"type": "done", "summary": "..."}
-server → client: {"type": "error", "content": "..."}
+WebSocket (api/ws.py)
+  └─ classify_turn (agents/orchestrator.py)      what kind of turn is this?
+      └─ RoutingDecision (agents/routing.py)     explainable engine choice, surfaced to the UI
+          └─ run_coordinator (agents/coordinator.py)
+              • decides the next step via native tool-calling
+              • runs OS/web tools, consults installed specialist models
+              • task contracts gate the answer on real evidence
+              └─ compose_reply (agents/orchestrator.py)
+                    final answer, grounded in (bounded) gathered evidence
 ```
+
+- **Coordinator ("front brain")** — a fast local model drives an in-turn loop: `consult` a specialist (code → `devstral`/`qwen2.5-coder`, research → `gpt-oss`, hard reasoning → `deepseek-r1`), `perceive` the screen, run a tool, `remember` a durable fact, `clarify`, or `answer`. Only models actually installed in Ollama are offered as experts (fail-closed inventory, `agents/model_inventory.py`).
+- **Task contracts** (`agents/task_contracts.py`) — a research turn cannot claim completion without fetched sources; a file-creation turn cannot claim completion without a **written and verified** artifact; a project-analysis turn must actually read the playbook files first. The answer gate is enforced in code, not prompted.
+- **Perception** — screenshot + a Set-of-Marks element list via Windows UI Automation (`PERCEPTION_ENABLED`), so desktop actions target known element centers. Works without a vision model; a multimodal model only adds a visual description.
+- **Language gateway** (`agents/gateway.py`) — vague requests get one clarifying question instead of a guess; hand-offs to specialists are refined into a clear English instruction (local models reason better in English) while the reply stays in your language.
+- **Long-term memory** (`memory.py`) — a small semantic store (embeddings via `nomic-embed-text`) recalled each turn and written via the coordinator's `remember` action.
+- **Frontend** — Next.js chat UI streaming every thinking/action/result event live, with per-session Läge/Modell/Agent toggles.
+
+### Model backends (local-first, API optional)
+
+The model-driven calls — classification, the tool-decision loop, expert consults, final synthesis — go through one provider layer (`agents/providers.py`) with two backends:
+
+- **`ollama`** (default): everything stays on your machine.
+- **`openai`**: those calls go to an OpenAI-compatible API (`OPENAI_MODEL`, default `gpt-4o-mini`). Perception/vision and memory embeddings **always stay local**.
+
+This is a deployment lever, not a mode switch buried in code: local for privacy and zero cost, the API path for harder multi-step tasks — with the trade-off measured (below) rather than asserted. **Privacy note:** on the `openai` backend, gathered evidence (file contents, screen text, web results) is sent to the API.
+
+---
+
+## Safety boundaries
+
+Layered, each enforced in code and covered by tests:
+
+| Layer | What it does | Where |
+|---|---|---|
+| Network fail-closed | Binds loopback by default; WebSocket requires an authenticated `hello` when a token is set; MCP requires a bearer token; constant-time comparisons | `config.py`, `api/ws.py`, `api/mcp.py`; `tests/test_ws_auth.py`, `tests/test_mcp_auth.py` |
+| Command risk classification | Each shell command is classified (delete / write / install / encoded / download-and-execute / nested shell …). Read-only runs directly; risky requires explicit confirmation | `tools/command_risk.py`; `tests/test_command_risk.py` |
+| Prompt-injection quarantine | Everything gathered (tool output, web, memory, screen text) is wrapped in `UNTRUSTED_EVIDENCE` blocks with a "data, not instructions" rule; break-out attempts are defanged | `agents/untrusted.py`; `tests/test_untrusted.py` |
+| Desktop action safety | Input tools are blocked without visual context, and when the observation is stale or the active window changed | `agents/safety.py`; `tests/test_freshness.py` |
+| Runaway guards | Per-command wall-clock timeout with process-**tree** kill; identical failing commands blocked on the 3rd attempt; per-job tool budgets for scheduled tasks | `tools/system.py`, `agents/coordinator.py`, `job_permissions.py` |
+| Grounding / honesty | Contracts gate answers on evidence; file outputs must be verified; tool-backed replies are guarded against raw-log or false-action-claim answers | `agents/task_contracts.py`, `agents/turn_policy.py` |
+
+The eval suite treats the safety layers as **pass/fail gates** — a single injection or confirmation-gate failure fails the whole suite regardless of the average score.
+
+---
+
+## Evaluation — measured, not claimed
+
+Two suites, both in `backend/tests/eval/`:
+
+1. **Deterministic replay suite** (`runner.py`, `scenarios.py`) — 28+ golden and adversarial scenarios (prompt injection in files/web/memory/screen, contract gating, capability profiles) that run in CI with no model and no network.
+2. **Live-model runner** (`live_runner.py`) — drives the **real agent** end to end against a live model and scores 10 tasks with deterministic checkers: solve rate per category, latency (median/p90), a failure taxonomy, per-task tokens/cost, and hard safety gates.
+
+```bash
+cd backend
+uv run python -m tests.eval.live_runner                    # local backend
+uv run python -m tests.eval.live_runner --backend openai   # OpenAI backend
+```
+
+Reports land in `backend/tests/eval/results/` (committed). Latest comparison, same 10 tasks:
+
+| Metric | Local `gemma4:12b` | OpenAI `gpt-4o-mini` |
+|---|---|---|
+| Solve rate | 7–8/10 | 8/10 |
+| Latency median / p90 | ~42s / ~222s | ~11s / ~31s |
+| Cost per run | $0 (local) | ~$0.03 |
+| Safety gates (injection, confirmation) | **3/3 held** | **3/3 held** |
+
+Two honest takeaways from running this:
+
+- **Safety behaviour is backend-independent** — the defenses live in the agent (contracts, risk classifier, evidence quarantine), not the model.
+- **The remaining failures are the tool layer, not the LLM.** Both backends miss the research-to-file task because web retrieval returned no readable sources, and a file-count task because of shell-command quality — a bigger model doesn't fix either. The eval exists precisely to find this kind of thing: it has so far driven fixes for a coordinator decision-spin, a compose-grounding collapse, a missing command timeout, and a repeated-command loop, each verified red→green. Full analysis: [`docs/eval-live-findings-2026-07-02.md`](docs/eval-live-findings-2026-07-02.md).
+
+---
+
+## Limitations (deliberate scope)
+
+- **Not** autonomous multi-application workflows with no user in the loop.
+- **Not** built for guaranteed reliability or unattended operation; small local models are visibly inconsistent on some task types (see the eval variance notes).
+- **Not** multi-user or internet-exposed hosting — the network model is single-user loopback/LAN (optionally behind e.g. Tailscale with tokens).
+- **No** account/credential entry on your behalf, financial transactions, or irreversible bulk operations without explicit confirmation.
+- Vision is optional; when no multimodal model is available, desktop input tools are **blocked** rather than run blind.
+- Web retrieval quality bounds research tasks — the eval shows this is the current weakest link, not the answering model.
+
+---
+
+## Design decisions
+
+- **Local-first, API-optional.** Privacy and zero marginal cost by default; a measured, selectable API path where capability/latency genuinely pays for it — the eval quantifies the trade instead of guessing.
+- **Verify, don't trust the model's word.** Task contracts gate answers on recorded evidence; file outputs require a verification command. The agent's honesty is a property of the harness, not the prompt.
+- **Fail closed everywhere.** Model inventory, network exposure, desktop input without observation, MCP auth — when discovery or auth fails, capabilities shrink instead of assuming.
+- **Explainable routing.** Every turn carries a `RoutingDecision` (route, engine, reason, required permissions) surfaced to the UI before anything expensive or risky runs.
+- **Measure before polishing.** The evaluation task set and success criteria were defined *before* demo work ([`docs/public-demo-scope.md`](docs/public-demo-scope.md)), and every fix the suite drove is documented with before/after runs.
 
 ## Project structure
 
 ```
 pilot/
 ├── backend/
-│   ├── main.py          # Entrypoint
-│   ├── config.py        # Env-based config
+│   ├── main.py                 # Entrypoint (FastAPI + MCP)
+│   ├── config.py               # Env-based config
 │   ├── agents/
-│   │   ├── loop.py      # Agent execution loop
-│   │   └── router.py    # LLM tool router
-│   ├── tools/
-│   │   ├── screen.py    # screenshot, get_screen_size
-│   │   ├── input.py     # click, type_text, scroll
-│   │   ├── system.py    # run_command, open_app
-│   │   └── codex.py     # run_codex (claude CLI)
-│   └── api/
-│       ├── ws.py        # WebSocket endpoint
-│       └── mcp.py       # MCP SSE server
-└── frontend/
-    ├── app/             # Next.js App Router
-    └── components/      # TaskInput, ActionLog, AbortButton
+│   │   ├── orchestrator.py     # classify_turn + compose_reply (final answer layer)
+│   │   ├── coordinator.py      # in-turn tool/consult loop (the "front brain")
+│   │   ├── providers.py        # model backends: ollama | openai
+│   │   ├── routing.py          # explainable RoutingDecision
+│   │   ├── task_contracts.py   # evidence-gated completion contracts
+│   │   ├── untrusted.py        # prompt-injection quarantine
+│   │   └── safety.py           # desktop-action guards
+│   ├── tools/                  # run_command, files, web, screen/input, registry
+│   ├── tests/eval/             # deterministic replay suite + live-model runner
+│   └── api/                    # ws.py (WebSocket), mcp.py (MCP server)
+└── frontend/                   # Next.js chat UI
 ```
+
+## MCP integration
+
+The backend exposes computer-control tools over MCP (`http://localhost:3001/mcp`, SSE): `pilot_screenshot`, `pilot_click`, `pilot_type`, `pilot_run_command`, `pilot_open_app`, file tools and more. Guard it with `PILOT_MCP_AUTH_TOKEN` before exposing beyond loopback.
