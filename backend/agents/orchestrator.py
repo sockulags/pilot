@@ -18,13 +18,11 @@ import json
 import os
 from typing import AsyncGenerator
 
-import httpx
-
+from agents import providers
 from agents.json_utils import extract_json_object
 from agents.turn_policy import deterministic_route, sanitize_final_reply
 from agents.untrusted import UNTRUSTED_RULE, wrap_untrusted
 from config import (
-    OLLAMA_BASE_URL,
     OLLAMA_MODEL,
     OLLAMA_MODELS,
     OLLAMA_ROUTER_MODEL,
@@ -177,18 +175,8 @@ async def classify_turn(
     ]
 
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                f"{OLLAMA_BASE_URL}/api/chat",
-                json={
-                    "model": OLLAMA_ROUTER_MODEL,
-                    "messages": messages,
-                    "stream": False,
-                    "options": {"temperature": 0.1},
-                },
-            )
-            resp.raise_for_status()
-            content = resp.json()["message"]["content"].strip()
+        result = await providers.chat_once(messages, OLLAMA_ROUTER_MODEL, temperature=0.1)
+        content = (result.get("content") or "").strip()
     except Exception as exc:
         logger.warning("classify_turn request failed: %s", exc)
         decision = dict(ROUTE_DEFAULT)
@@ -274,21 +262,14 @@ def _normalize_decision(decision: dict, user_message: str, model_mode: str = "au
 async def _stream_ollama_chat(
     messages: list[dict], model: str | None = None
 ) -> AsyncGenerator[str, None]:
-    """Stream content chunks from Ollama's /api/chat for the given messages."""
-    async with httpx.AsyncClient(timeout=180) as client:
-        async with client.stream(
-            "POST",
-            f"{OLLAMA_BASE_URL}/api/chat",
-            json=_chat_payload(messages, model, stream=True),
-        ) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line.strip():
-                    continue
-                chunk = extract_json_object(line, {})
-                piece = chunk.get("message", {}).get("content", "")
-                if piece:
-                    yield piece
+    """Stream content chunks for the given messages via the active backend.
+
+    Named for history (tests patch this symbol); it now delegates to the provider
+    so the final-answer stream follows PILOT_ANSWER_BACKEND (local or OpenAI). The
+    ``think=False`` / temperature match the previous Ollama payload.
+    """
+    async for piece in providers.chat_stream(messages, model, temperature=0.2, think=False):
+        yield piece
 
 
 def _chat_payload(messages: list[dict], model: str | None = None, stream: bool = True) -> dict:

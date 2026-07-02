@@ -59,6 +59,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 import httpx  # noqa: E402
 
+from agents import providers  # noqa: E402
 from agents.coordinator import run_coordinator  # noqa: E402
 from agents.model_inventory import ModelInventory, get_model_inventory  # noqa: E402
 from agents.orchestrator import classify_turn, compose_reply  # noqa: E402
@@ -69,7 +70,26 @@ from agents.turn_policy import (  # noqa: E402
     select_agent_for_intent,
     tool_task,
 )
-from config import OLLAMA_BASE_URL, OLLAMA_MODEL  # noqa: E402
+from config import OLLAMA_BASE_URL, OLLAMA_MODEL, OPENAI_MODEL  # noqa: E402
+
+
+# Approximate USD price per 1K tokens (input, output) for cost estimates on the
+# OpenAI path. Local Ollama is $0. Rough public list prices; override as needed.
+# Only used to annotate the report — not a billing source of truth.
+_PRICES_PER_1K = {
+    "gpt-4o-mini": (0.00015, 0.00060),
+    "gpt-4o": (0.0025, 0.010),
+    "gpt-4.1": (0.002, 0.008),
+    "gpt-4.1-mini": (0.0004, 0.0016),
+    "gpt-4.1-nano": (0.0001, 0.0004),
+}
+
+
+def _cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    price = _PRICES_PER_1K.get(model)
+    if not price:
+        return 0.0
+    return round(prompt_tokens / 1000 * price[0] + completion_tokens / 1000 * price[1], 6)
 
 
 # --------------------------------------------------------------------------- #
@@ -124,6 +144,8 @@ class LiveTurn:
     final_text: str = ""
     action_log: str = ""
     cwd: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
     error: str | None = None  # transport/model error, if the turn could not run
 
 
@@ -180,6 +202,9 @@ class LiveResult:
     safety_gate: bool
     primary: bool
     final_excerpt: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cost_usd: float = 0.0
 
 
 # --------------------------------------------------------------------------- #
@@ -253,6 +278,7 @@ async def run_live_turn(
 
     events: list[dict] = []
     turn = LiveTurn(cwd=cwd, coordinator_model="")
+    providers.reset_usage()  # accumulate token usage across every model call this turn
 
     try:
         if task.route_mode == "auto":
@@ -336,6 +362,9 @@ async def run_live_turn(
         except Exception as exc:  # noqa: BLE001
             turn.error = f"compose_reply failed: {type(exc).__name__}: {exc}"
 
+    usage = providers.get_usage()
+    turn.prompt_tokens = int(usage.get("prompt_tokens", 0))
+    turn.completion_tokens = int(usage.get("completion_tokens", 0))
     return turn
 
 
@@ -377,6 +406,12 @@ async def run_task(
     finally:
         elapsed = time.monotonic() - start
 
+    cost = _cost_usd(providers.answer_model(), turn.prompt_tokens, turn.completion_tokens)
+    tokens = {
+        "prompt_tokens": turn.prompt_tokens,
+        "completion_tokens": turn.completion_tokens,
+        "cost_usd": cost,
+    }
     if turn.error:
         label = TIMEOUT if "timeout" in turn.error.lower() else MODEL_ERROR
         result = LiveResult(
@@ -384,7 +419,7 @@ async def run_task(
             skipped=False, latency_s=round(elapsed, 2), failure_label=label,
             detail=turn.error, turn_status=turn.status, tools_called=turn.tools_called,
             safety_gate=task.safety_gate, primary=task.primary,
-            final_excerpt=turn.final_text[:280],
+            final_excerpt=turn.final_text[:280], **tokens,
         )
     else:
         check = task.check(turn, task)
@@ -395,7 +430,7 @@ async def run_task(
             failure_label=None if check.passed else (check.failure_label or WRONG_ANSWER),
             detail=check.detail, turn_status=turn.status,
             tools_called=turn.tools_called, safety_gate=task.safety_gate,
-            primary=task.primary, final_excerpt=turn.final_text[:280],
+            primary=task.primary, final_excerpt=turn.final_text[:280], **tokens,
         )
 
     if tmp:
@@ -443,11 +478,16 @@ def _redact(text: str) -> str:
     return out
 
 
-def aggregate(results: list[LiveResult], *, model: str, timestamp: str) -> dict:
+def aggregate(
+    results: list[LiveResult], *, model: str, timestamp: str, backend: str = "ollama"
+) -> dict:
     """Reduce per-task results into the report structure (metrics from §4)."""
     scored = [r for r in results if not r.skipped]
     passed = [r for r in scored if r.passed]
     latencies = [r.latency_s for r in scored]
+    total_prompt = sum(r.prompt_tokens for r in scored)
+    total_completion = sum(r.completion_tokens for r in scored)
+    total_cost = round(sum(r.cost_usd for r in scored), 6)
 
     by_category: dict[str, dict] = {}
     for r in results:
@@ -484,6 +524,7 @@ def aggregate(results: list[LiveResult], *, model: str, timestamp: str) -> dict:
     )
 
     return {
+        "backend": backend,
         "model": model,
         "timestamp": timestamp,
         "totals": {
@@ -498,6 +539,12 @@ def aggregate(results: list[LiveResult], *, model: str, timestamp: str) -> dict:
             "median": round(percentile(latencies, 50), 2),
             "p90": round(percentile(latencies, 90), 2),
             "max": round(max(latencies), 2) if latencies else 0.0,
+        },
+        "cost": {
+            "prompt_tokens": total_prompt,
+            "completion_tokens": total_completion,
+            "total_tokens": total_prompt + total_completion,
+            "usd": total_cost,
         },
         "by_category": by_category,
         "failure_taxonomy": taxonomy,
@@ -526,6 +573,9 @@ def aggregate(results: list[LiveResult], *, model: str, timestamp: str) -> dict:
                 "safety_gate": r.safety_gate,
                 "primary": r.primary,
                 "final_excerpt": _redact(r.final_excerpt),
+                "prompt_tokens": r.prompt_tokens,
+                "completion_tokens": r.completion_tokens,
+                "cost_usd": r.cost_usd,
             }
             for r in results
         ],
@@ -541,6 +591,7 @@ def render_markdown(report: dict) -> str:
     lines.append("")
     verdict = "✅ PASS" if report["suite_passed"] else "❌ FAIL"
     lines.append(f"**Suite:** {verdict}  ")
+    lines.append(f"**Backend:** `{report.get('backend', 'ollama')}`  ")
     lines.append(f"**Model:** `{report['model']}`  ")
     lines.append(f"**Run:** {report['timestamp']}")
     lines.append("")
@@ -551,6 +602,15 @@ def render_markdown(report: dict) -> str:
         f"{t['skipped']} skipped. "
         f"Latency median **{lat['median']}s**, p90 **{lat['p90']}s**."
     )
+    cost = report.get("cost")
+    if cost and cost.get("total_tokens"):
+        usd = cost.get("usd") or 0.0
+        cost_txt = f"~${usd:.4f}" if usd else "$0 (local)"
+        lines.append(
+            f"Tokens: **{cost['total_tokens']:,}** "
+            f"({cost['prompt_tokens']:,} in / {cost['completion_tokens']:,} out); "
+            f"cost {cost_txt}."
+        )
     lines.append("")
 
     lines.append("## By category")
@@ -622,12 +682,34 @@ async def _network_reachable() -> bool:
         return False
 
 
-async def run_suite(tasks: list[LiveTask]) -> tuple[dict | None, str]:
-    """Run the whole suite. Returns (report | None, human message).
+async def _health_gate(backend: str) -> tuple[ModelInventory | None, str | None]:
+    """Fail-closed readiness check for the chosen backend.
 
-    Returns ``(None, msg)`` when the health gate fails (Ollama down / model
-    missing) — the caller exits non-zero without fabricating results.
+    Returns (inventory, None) when ready, or (None, message) when not. The Ollama
+    inventory is still returned for the openai backend so agent selection has a
+    healthy-set to reason over (empty is fine — the openai path ignores it).
     """
+    if backend == providers.OPENAI:
+        if not providers.openai_configured():
+            return None, (
+                "OPENAI_API_KEY is not set; cannot run the openai backend. "
+                "Add it to backend/.env or the environment."
+            )
+        # Cheap auth probe (lists models, no token cost).
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(
+                    f"{providers.OPENAI_BASE_URL}/models",
+                    headers={"Authorization": f"Bearer {providers.OPENAI_API_KEY}"},
+                )
+            if resp.status_code >= 400:
+                return None, f"OpenAI auth failed (HTTP {resp.status_code}); check OPENAI_API_KEY."
+        except Exception as exc:  # noqa: BLE001
+            return None, f"OpenAI endpoint unreachable: {exc}"
+        # Discovery may still fail if Ollama is down; that's fine on this path.
+        inventory = await get_model_inventory()
+        return inventory, None
+
     inventory = await get_model_inventory()
     if not inventory.discovery_ok:
         return None, (
@@ -640,6 +722,25 @@ async def run_suite(tasks: list[LiveTask]) -> tuple[dict | None, str]:
             f"(healthy models: {sorted(inventory.healthy) or 'none'}). "
             f"Pull it with `ollama pull {OLLAMA_MODEL}` or set OLLAMA_MODEL."
         )
+    return inventory, None
+
+
+async def run_suite(
+    tasks: list[LiveTask], backend: str = "ollama"
+) -> tuple[dict | None, str]:
+    """Run the whole suite on the chosen backend. Returns (report | None, message).
+
+    Returns ``(None, msg)`` when the health gate fails (Ollama down / model
+    missing / OpenAI key invalid) — the caller exits non-zero without fabricating
+    results.
+    """
+    backend = providers.resolve_backend(backend)
+    providers.set_backend(backend)
+    model = providers.answer_model(backend)
+
+    inventory, error = await _health_gate(backend)
+    if error:
+        return None, error
 
     network_ok = await _network_reachable()
     results: list[LiveResult] = []
@@ -648,23 +749,34 @@ async def run_suite(tasks: list[LiveTask]) -> tuple[dict | None, str]:
         result = await run_task(task, inventory, network_ok)
         status = {"pass": "PASS", "fail": "FAIL", "skip": "SKIP"}[result.status]
         extra = f" [{result.failure_label}]" if result.failure_label else ""
-        print(f"        -> {status} in {result.latency_s}s{extra}", flush=True)
+        cost = f" ~${result.cost_usd:.4f}" if result.cost_usd else ""
+        print(f"        -> {status} in {result.latency_s}s{extra}{cost}", flush=True)
         results.append(result)
 
     # timestamp is captured by the caller (Date.now is fine outside the harness).
     from datetime import datetime, timezone
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-    report = aggregate(results, model=OLLAMA_MODEL, timestamp=timestamp)
+    report = aggregate(results, model=model, timestamp=timestamp, backend=backend)
     return report, "ok"
 
 
 def write_reports(report: dict, out_dir: Path) -> tuple[Path, Path]:
+    """Write latest.json/md (most recent run) plus backend-suffixed copies (for
+    cross-backend comparison), all with UTF-8."""
     out_dir.mkdir(parents=True, exist_ok=True)
+    backend = report.get("backend", "ollama")
+    payload = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+    md = render_markdown(report)
     json_path = out_dir / "latest.json"
     md_path = out_dir / "latest.md"
-    json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    md_path.write_text(render_markdown(report), encoding="utf-8")
+    for path, text in (
+        (json_path, payload),
+        (md_path, md),
+        (out_dir / f"latest-{backend}.json", payload),
+        (out_dir / f"latest-{backend}.md", md),
+    ):
+        path.write_text(text, encoding="utf-8")
     return json_path, md_path
 
 
@@ -679,6 +791,12 @@ def main(argv: list[str] | None = None) -> int:
         "--only",
         default="",
         help="comma-separated task-name substrings to run (default: all)",
+    )
+    parser.add_argument(
+        "--backend",
+        default=None,
+        choices=["ollama", "openai"],
+        help="model backend for this run (default: PILOT_ANSWER_BACKEND env, else ollama)",
     )
     args = parser.parse_args(argv)
 
@@ -700,7 +818,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"No tasks matched --only={args.only!r}", file=sys.stderr)
             return 2
 
-    report, message = asyncio.run(run_suite(tasks))
+    report, message = asyncio.run(run_suite(tasks, backend=providers.resolve_backend(args.backend)))
     if report is None:
         print(f"\nHEALTH GATE FAILED: {message}", file=sys.stderr)
         return 3

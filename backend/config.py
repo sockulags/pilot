@@ -24,6 +24,19 @@ PILOT_PROJECT_ROOTS = os.getenv("PILOT_PROJECT_ROOTS", "")
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma4:12b")
+
+# --- Answering backend (local-first; optional OpenAI-compatible path) --------
+# Pilot is local-first: by default every model-driven call (turn classification,
+# the tool-decision loop, expert consults, final synthesis) runs on Ollama. Set
+# PILOT_ANSWER_BACKEND=openai to route those calls to an OpenAI-compatible API
+# instead — perception/vision and memory embeddings stay local either way. This
+# is a deployment lever: local for privacy/cost, the API path for harder
+# multi-step tasks. The eval runner can override it per run (--backend). NOTE: on
+# the openai path, gathered evidence (file/screen/web content) leaves the machine.
+ANSWER_BACKEND = os.getenv("PILOT_ANSWER_BACKEND", "ollama").strip().lower()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "qwen3.5:9b")
 OLLAMA_FALLBACK_MODEL = os.getenv("OLLAMA_FALLBACK_MODEL", "gpt-oss:20b")
 
@@ -319,6 +332,12 @@ FRONTEND_DIR = os.getenv(
 )
 
 MAX_AGENT_STEPS = int(os.getenv("MAX_AGENT_STEPS", "50"))
+
+# Wall-clock bound for a single run_command execution. A pathological or hanging
+# command (observed in eval: a piped `dir | find` that took ~50s per spawn) must
+# not block a whole turn indefinitely; on timeout the process is killed and the
+# partial output returned with a timeout note. Generous enough for builds/tests.
+COMMAND_TIMEOUT_SECONDS = int(os.getenv("COMMAND_TIMEOUT_SECONDS", "60"))
 
 # Max steps the in-turn coordinator (agents/coordinator.py) takes before it must
 # answer — bounds how many expert consultations / tool calls one turn can chain.
