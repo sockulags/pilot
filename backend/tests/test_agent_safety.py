@@ -44,7 +44,7 @@ class JsonUtilTests(unittest.TestCase):
 
         parsed = loads_lenient(
             '{"tool": "run_command", "args": {"cmd": "dir"}, '
-            '"thinking": "cwd is C:\\Users\\lucas\\Code\\pilot\\backend"}'
+            '"thinking": "cwd is C:\\Users\\dev\\Code\\pilot\\backend"}'
         )
 
         self.assertEqual("run_command", parsed["tool"])
@@ -100,7 +100,7 @@ class RouterPromptTests(unittest.TestCase):
 
         command_output = (
             "Command: dir\n"
-            "Current working directory: C:\\Users\\lucas\\Code\\pilot\\backend\n"
+            "Current working directory: C:\\Users\\dev\\Code\\pilot\\backend\n"
             "Output:\n"
             + "\n".join(f"filler-{i}" for i in range(40))
             + "\nuv.lock\n"
@@ -288,8 +288,8 @@ class AgentLoopTests(unittest.TestCase):
             executed.append(args["cmd"])
             return (
                 "Command: dir\n"
-                "Current working directory: C:\\Users\\lucas\\Code\\pilot\\backend\n"
-                "Output:\n Directory of C:\\Users\\lucas\\Code\\pilot\\backend\n"
+                "Current working directory: C:\\Users\\dev\\Code\\pilot\\backend\n"
+                "Output:\n Directory of C:\\Users\\dev\\Code\\pilot\\backend\n"
                 "agents\napi\nuv.lock\n"
             )
 
@@ -300,7 +300,7 @@ class AgentLoopTests(unittest.TestCase):
 
         self.assertEqual(["dir"], executed)
         self.assertEqual("done", outcome.status)
-        self.assertIn("C:\\Users\\lucas\\Code\\pilot\\backend", outcome.detail)
+        self.assertIn("C:\\Users\\dev\\Code\\pilot\\backend", outcome.detail)
         self.assertIn("uv.lock", outcome.detail)
 
     async def _os_tool_finishes_without_final_screenshot(self):

@@ -51,7 +51,7 @@ Opens at `http://localhost:3000`.
 | `CODEX_SANDBOX_MODE` | `workspace-write` | Sandbox mode passed to headless `codex exec` |
 | `CODEX_APPROVAL_POLICY` | `never` | Approval policy passed to headless `codex exec --ask-for-approval` |
 | `COMFYUI_BASE_URL` | `http://127.0.0.1:8188` | Local ComfyUI API URL used by `generate_image` |
-| `COMFYUI_DIR` | `C:\Users\lucas\Code\ComfyUI` | ComfyUI installation folder |
+| `COMFYUI_DIR` | `~/ComfyUI` | ComfyUI installation folder |
 | `COMFYUI_CHECKPOINT` | *(first checkpoint found)* | Checkpoint filename to use for image generation |
 | `COMFYUI_OUTPUT_DIR` | `<COMFYUI_DIR>\output` | Folder where generated images are reported |
 | `MAX_AGENT_STEPS` | `20` | Max agent loop iterations |

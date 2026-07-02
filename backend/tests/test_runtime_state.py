@@ -133,12 +133,12 @@ class RuntimeStateTests(unittest.TestCase):
             "Generated image with ComfyUI\n"
             "Prompt: blue cube\n"
             "Files:\n"
-            "C:\\Users\\lucas\\Code\\ComfyUI\\output\\pilot_00002_.png",
+            "C:\\Users\\dev\\Code\\ComfyUI\\output\\pilot_00002_.png",
             ok=True,
         )
 
         self.assertEqual(
-            [{"path": "C:\\Users\\lucas\\Code\\ComfyUI\\output\\pilot_00002_.png", "verified": True}],
+            [{"path": "C:\\Users\\dev\\Code\\ComfyUI\\output\\pilot_00002_.png", "verified": True}],
             state.artifacts,
         )
 

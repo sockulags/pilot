@@ -184,7 +184,7 @@ OLLAMA_VISION_ENABLED = os.getenv("OLLAMA_VISION_ENABLED", "true").lower() == "t
 
 # --- ComfyUI image generation ----------------------------------------------
 COMFYUI_BASE_URL = os.getenv("COMFYUI_BASE_URL", "http://127.0.0.1:8188")
-COMFYUI_DIR = os.getenv("COMFYUI_DIR", r"C:\Users\lucas\Code\ComfyUI")
+COMFYUI_DIR = os.getenv("COMFYUI_DIR", os.path.expanduser(os.path.join("~", "ComfyUI")))
 COMFYUI_CHECKPOINT = os.getenv("COMFYUI_CHECKPOINT", "")
 COMFYUI_OUTPUT_DIR = os.getenv(
     "COMFYUI_OUTPUT_DIR",
