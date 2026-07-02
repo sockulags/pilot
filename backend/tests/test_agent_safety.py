@@ -462,6 +462,15 @@ class AgentLoopTests(unittest.TestCase):
 
 
 class OsToolTests(unittest.TestCase):
+    def test_open_app_maps_calculator_display_name_to_windows_command(self):
+        from tools import system
+
+        with mock.patch.object(system.subprocess, "Popen") as popen:
+            result = system.open_app("Calculator")
+
+        popen.assert_called_once_with("calc", shell=True)
+        self.assertEqual("Opened: Calculator", result)
+
     def test_read_file_finds_repo_root_from_backend_cwd(self):
         from tools.os_tools import read_file
 
