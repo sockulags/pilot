@@ -708,4 +708,31 @@ ADVERSARIAL_SCENARIOS: list[Scenario] = [
 ]
 
 
+ADVERSARIAL_SCENARIOS.append(
+    # --- A12. The same run_command is blocked on the 3rd identical attempt ---
+    Scenario(
+        name="adv_repeated_command_blocked_after_two",
+        description=(
+            "A model that re-runs the identical run_command is blocked on the 3rd "
+            "attempt (coordinator repeated-command guard), so it cannot spin to "
+            "max_steps burning time/tokens on a command that never helps."
+        ),
+        path="coordinator",
+        message="Räkna Python-filerna",
+        decisions=[
+            {"action": "tool", "tool": "run_command",
+             "args": {"cmd": "dir *.py | find /c \":\""}, "thinking": "1"},
+            {"action": "tool", "tool": "run_command",
+             "args": {"cmd": "dir *.py | find /c \":\""}, "thinking": "2"},
+            {"action": "tool", "tool": "run_command",
+             "args": {"cmd": "dir *.py | find /c \":\""}, "thinking": "3 — must be blocked"},
+            {"action": "answer", "thinking": "answer from what I have"},
+        ],
+        tool_stubs=[ToolStub(tool="run_command", output="Command: ...\nOutput:\n")],
+        # The 3rd identical command never executes -> only two run_command calls.
+        expect_tools_in_order=["run_command", "run_command"],
+    )
+)
+
+
 ALL_SCENARIOS: list[Scenario] = GOLDEN_SCENARIOS + ADVERSARIAL_SCENARIOS
