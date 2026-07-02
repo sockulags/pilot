@@ -5,7 +5,7 @@ Date: 2026-06-18
 ## Observed locally
 
 - GPU: `NVIDIA GeForce RTX 5060 Ti`, `16311 MiB` VRAM (`nvidia-smi`).
-- Runtime: `ollama.exe` is installed at `C:\Users\lucas\AppData\Local\Programs\Ollama\ollama.exe`.
+- Runtime: `ollama.exe` is installed at `C:\Users\<user>\AppData\Local\Programs\Ollama\ollama.exe`.
 - Current loaded models before validation: none (`ollama ps` was empty).
 - Repo defaults:
   - `OLLAMA_MODEL=gemma4:12b`

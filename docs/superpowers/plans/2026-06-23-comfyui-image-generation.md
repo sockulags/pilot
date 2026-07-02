@@ -76,7 +76,7 @@ class ComfyUIToolTests(unittest.TestCase):
         result = comfyui.generate_image(
             "red robot",
             base_url="http://127.0.0.1:8188",
-            comfyui_dir=r"C:\Users\lucas\Code\ComfyUI",
+            comfyui_dir=r"C:\Users\<user>\Code\ComfyUI",
             checkpoint="model.safetensors",
             client=client,
             poll_interval=0,
@@ -91,7 +91,7 @@ class ComfyUIToolTests(unittest.TestCase):
 Run:
 
 ```powershell
-cd C:\Users\lucas\Code\pilot\backend
+cd C:\Users\<user>\Code\pilot\backend
 uv run python -m unittest tests.test_comfyui_tool
 ```
 
@@ -104,7 +104,7 @@ In `backend/config.py`, after the vision config block, add:
 ```python
 # --- ComfyUI image generation ----------------------------------------------
 COMFYUI_BASE_URL = os.getenv("COMFYUI_BASE_URL", "http://127.0.0.1:8188")
-COMFYUI_DIR = os.getenv("COMFYUI_DIR", r"C:\Users\lucas\Code\ComfyUI")
+COMFYUI_DIR = os.getenv("COMFYUI_DIR", r"C:\Users\<user>\Code\ComfyUI")
 COMFYUI_CHECKPOINT = os.getenv("COMFYUI_CHECKPOINT", "")
 COMFYUI_OUTPUT_DIR = os.getenv(
     "COMFYUI_OUTPUT_DIR",
@@ -297,7 +297,7 @@ def extract_output_images(history: dict[str, Any]) -> list[dict[str, str]]:
 Run:
 
 ```powershell
-cd C:\Users\lucas\Code\pilot\backend
+cd C:\Users\<user>\Code\pilot\backend
 uv run python -m unittest tests.test_comfyui_tool
 ```
 
@@ -350,9 +350,9 @@ Append to `ComfyUIToolTests`:
             steps=12,
             seed=42,
             base_url="http://127.0.0.1:8188",
-            comfyui_dir=r"C:\Users\lucas\Code\ComfyUI",
+            comfyui_dir=r"C:\Users\<user>\Code\ComfyUI",
             checkpoint="model.safetensors",
-            output_dir=r"C:\Users\lucas\Code\ComfyUI\output",
+            output_dir=r"C:\Users\<user>\Code\ComfyUI\output",
             client=client,
             poll_interval=0,
         )
@@ -372,7 +372,7 @@ Append to `ComfyUIToolTests`:
 Run:
 
 ```powershell
-cd C:\Users\lucas\Code\pilot\backend
+cd C:\Users\<user>\Code\pilot\backend
 uv run python -m unittest tests.test_comfyui_tool.ComfyUIToolTests.test_generate_image_returns_output_path_from_history
 ```
 
@@ -387,7 +387,7 @@ If the test fails, update `extract_output_images` and output-path rendering in `
 Run:
 
 ```powershell
-cd C:\Users\lucas\Code\pilot\backend
+cd C:\Users\<user>\Code\pilot\backend
 uv run python -m unittest tests.test_comfyui_tool
 ```
 
@@ -426,7 +426,7 @@ Add to `test_tool_schemas_are_function_shaped`:
 Run:
 
 ```powershell
-cd C:\Users\lucas\Code\pilot\backend
+cd C:\Users\<user>\Code\pilot\backend
 uv run python -m unittest tests.test_registry.RegistryDerivationTests.test_coordinator_allowlist tests.test_registry.RegistryDerivationTests.test_capability_manifest_lists_real_tools_grouped tests.test_registry.RegistryDerivationTests.test_tool_schemas_are_function_shaped
 ```
 
@@ -468,7 +468,7 @@ Add this `ToolSpec` before the code-agent section:
 Run:
 
 ```powershell
-cd C:\Users\lucas\Code\pilot\backend
+cd C:\Users\<user>\Code\pilot\backend
 uv run python -m unittest tests.test_registry
 ```
 
@@ -513,7 +513,7 @@ Add the helper method in `AgentLoopTests`:
 Run:
 
 ```powershell
-cd C:\Users\lucas\Code\pilot\backend
+cd C:\Users\<user>\Code\pilot\backend
 uv run python -m unittest tests.test_agent_safety.AgentLoopTests.test_execute_tool_dispatches_generate_image
 ```
 
@@ -546,7 +546,7 @@ In `_execute_tool_text`, before the external MCP branch, add:
 Run:
 
 ```powershell
-cd C:\Users\lucas\Code\pilot\backend
+cd C:\Users\<user>\Code\pilot\backend
 uv run python -m unittest tests.test_agent_safety.AgentLoopTests.test_execute_tool_dispatches_generate_image
 ```
 
@@ -585,7 +585,7 @@ In `backend/tests/test_ws_policy.py`, replace `test_chat_prompt_states_image_gen
 Run:
 
 ```powershell
-cd C:\Users\lucas\Code\pilot\backend
+cd C:\Users\<user>\Code\pilot\backend
 uv run python -m unittest tests.test_ws_policy.WebSocketPolicyTests.test_chat_prompt_lists_image_generation_capability
 ```
 
@@ -613,7 +613,7 @@ Under Environment variables, add:
 
 ```markdown
 | `COMFYUI_BASE_URL` | `http://127.0.0.1:8188` | Local ComfyUI API URL used by `generate_image` |
-| `COMFYUI_DIR` | `C:\Users\lucas\Code\ComfyUI` | ComfyUI installation folder |
+| `COMFYUI_DIR` | `C:\Users\<user>\Code\ComfyUI` | ComfyUI installation folder |
 | `COMFYUI_CHECKPOINT` | *(first checkpoint found)* | Checkpoint filename to use for image generation |
 | `COMFYUI_OUTPUT_DIR` | `<COMFYUI_DIR>\output` | Folder where generated images are reported |
 ```
@@ -623,7 +623,7 @@ Under Environment variables, add:
 Run:
 
 ```powershell
-cd C:\Users\lucas\Code\pilot\backend
+cd C:\Users\<user>\Code\pilot\backend
 uv run python -m unittest tests.test_ws_policy
 ```
 
@@ -641,7 +641,7 @@ Expected: all tests pass.
 Run:
 
 ```powershell
-cd C:\Users\lucas\Code\pilot\backend
+cd C:\Users\<user>\Code\pilot\backend
 uv run python -m unittest tests.test_comfyui_tool tests.test_registry tests.test_agent_safety tests.test_ws_policy
 ```
 
@@ -662,7 +662,7 @@ Expected right now: likely `ComfyUI not running`.
 Run:
 
 ```powershell
-Get-ChildItem C:\Users\lucas\Code\ComfyUI\models\checkpoints -File | Where-Object { $_.Extension -in ".safetensors",".ckpt",".pt",".pth" } | Select-Object -First 5 Name
+Get-ChildItem C:\Users\<user>\Code\ComfyUI\models\checkpoints -File | Where-Object { $_.Extension -in ".safetensors",".ckpt",".pt",".pth" } | Select-Object -First 5 Name
 ```
 
 Expected right now: no real checkpoint files were found during planning. Manual image generation will need a checkpoint before smoke testing can pass.
