@@ -266,6 +266,52 @@ def _normalize_decision(parsed: dict) -> dict:
     return parsed
 
 
+# Keys under which small models stash the real tool name / arguments when they
+# emit a nested tool call (see _unwrap_nested_tool).
+_TOOL_NAME_KEYS = ("tool", "name", "title", "function")
+_TOOL_ARG_KEYS = ("args", "arguments", "parameters", "input")
+
+
+def _unwrap_nested_tool(decision: dict) -> dict:
+    """Recover a real tool call from the nested shapes small models emit.
+
+    Observed live (gemma4:12b under a forcing prompt): the real tool name lands
+    INSIDE ``args`` under tool/name/title while the outer ``tool`` is a literal
+    like "tool", and the real arguments are nested one level deeper::
+
+        {"action": "tool", "tool": "tool",
+         "args": {"tool": "run_command", "args": {"cmd": "echo hi"}}}
+
+    Left as-is the loop sees tool="tool" (not a registry tool), skips it every
+    step and spins to max_steps (eval v1: shell_echo). This rewrites such a
+    decision to a valid ``{action:"tool", tool:<name>, args:{...}}``.
+    """
+    if decision.get("action") != "tool":
+        return decision
+    tool = decision.get("tool")
+    valid = registry.coordinator_tool_names()
+    if isinstance(tool, str) and tool in valid:
+        return decision  # already valid — leave it alone
+    # Look one level in: the outer tool may be a dict, or the real call may sit
+    # in args. Prefer whichever candidate names a known registry tool.
+    candidates = [c for c in (tool, decision.get("args")) if isinstance(c, dict)]
+    for cand in candidates:
+        name = next(
+            (str(cand[k]) for k in _TOOL_NAME_KEYS if isinstance(cand.get(k), str)),
+            "",
+        )
+        if name in valid:
+            inner = next(
+                (cand[k] for k in _TOOL_ARG_KEYS if isinstance(cand.get(k), dict)),
+                None,
+            )
+            if inner is None:
+                # No nested args object: the arguments are the sibling keys.
+                inner = {k: v for k, v in cand.items() if k not in _TOOL_NAME_KEYS}
+            return {**decision, "tool": name, "args": inner}
+    return decision
+
+
 def _decision_from_message(msg: dict) -> dict:
     """Turn an Ollama chat message into a coordinator decision.
 
@@ -282,13 +328,29 @@ def _decision_from_message(msg: dict) -> dict:
         if isinstance(args, str):
             args = extract_json_object(args, {})
         if name:
-            return _map_call_to_decision(name, args or {}, content)
+            return _unwrap_nested_tool(_map_call_to_decision(name, args or {}, content))
     parsed = extract_json_object(content, {}) if "{" in content else {}
     if parsed:
-        normalized = _normalize_decision(parsed)
+        normalized = _unwrap_nested_tool(_normalize_decision(parsed))
         if normalized.get("action"):
             return normalized
-    return dict(ANSWER_DEFAULT)
+    # Prose with no tool call and no parseable action: the model narrated a plan
+    # ("Here's what I'll do: 1. ...") instead of acting. That is NOT a real answer
+    # — flag it so a caller mid-contract can force one structured re-decision
+    # rather than accept an empty answer and spin to max_steps (session: eval v1,
+    # gemma4 shell/project tasks). The flag is popped before the loop sees it.
+    return {"action": "answer", "thinking": content[:400], "_prose_fallback": True}
+
+
+# Appended to the decision system prompt on the corrective retry: no tools payload,
+# strict JSON-only, and an explicit "act, don't narrate" rule for chatty models.
+_FORCE_DECISION_SUFFIX = (
+    "\n\nRespond with EXACTLY ONE JSON object and nothing else. "
+    'To use a tool: {"action": "tool", "tool": "<tool_name>", "args": {...}}. '
+    'To finish: {"action": "answer"}. '
+    "If you still need information you do not already have, you MUST choose a tool "
+    "now — do not describe what you would do."
+)
 
 
 async def _decide_step(
@@ -297,6 +359,7 @@ async def _decide_step(
     context: str,
     experts: dict[str, dict] | None = None,
     use_tools: bool = False,
+    force_tool_on_prose: bool = False,
 ) -> dict:
     """Ask the front brain for its next step.
 
@@ -304,6 +367,14 @@ async def _decide_step(
     meta-actions); the response is mapped back to a decision dict. Non-tools
     models (and any endpoint that rejects the tools payload) use the plain JSON
     path. Either way a decision dict is returned.
+
+    ``force_tool_on_prose`` is set by the loop while an active contract is still
+    unsatisfied. In that state a prose "plan" (no tool call, no JSON action) is a
+    dead end — the contract will block the empty answer and the loop spins to
+    max_steps. When that happens we re-ask ONCE, without the tools payload and
+    with a strict JSON-only instruction, and adopt the retry only if it yields an
+    actionable (non-answer) decision. Legitimate answers and no-contract turns are
+    unaffected (they never set the flag), so the fast path keeps its single call.
     """
     messages = [
         {"role": "system", "content": system},
@@ -327,9 +398,39 @@ async def _decide_step(
         resp.raise_for_status()
         msg = resp.json().get("message", {}) or {}
 
-    if use_tools:
-        return _decision_from_message(msg)
-    return extract_json_object((msg.get("content") or "").strip(), ANSWER_DEFAULT)
+        if not use_tools:
+            return extract_json_object((msg.get("content") or "").strip(), ANSWER_DEFAULT)
+
+        decision = _decision_from_message(msg)
+        prose_fallback = decision.pop("_prose_fallback", False)
+        if not (prose_fallback and force_tool_on_prose):
+            return decision
+
+        # Corrective re-ask: force a single structured decision from a model that
+        # narrated a plan instead of calling a tool.
+        forced = await client.post(
+            f"{OLLAMA_BASE_URL}/api/chat",
+            json={
+                "model": coordinator_model,
+                "messages": [
+                    {"role": "system", "content": system + _FORCE_DECISION_SUFFIX},
+                    {"role": "user", "content": context},
+                ],
+                "stream": False,
+                "options": {"temperature": 0.1},
+            },
+        )
+        forced.raise_for_status()
+        forced_msg = forced.json().get("message", {}) or {}
+
+    retry = _decision_from_message(forced_msg)
+    retry.pop("_prose_fallback", None)
+    retry_action = str(retry.get("action", "")).strip().lower()
+    # Adopt the retry only when it actually makes progress; a second prose/answer
+    # falls back to the original answer decision (never worse than before).
+    if retry_action in VALID_ACTIONS and retry_action != "answer":
+        return retry
+    return decision
 
 
 async def _consult_expert(
@@ -473,8 +574,15 @@ async def run_coordinator(
         context = _build_decision_context(
             task, conversation, experts, notes, memories, skills, project_instructions
         )
+        # While a contract is still unsatisfied we need real tool evidence, so a
+        # prose "plan" from a chatty model must be turned into a structured tool
+        # decision rather than accepted as an empty answer (see _decide_step).
+        force_tool = bool(contract) and not can_compose_final_answer(contract, runtime_state)
         try:
-            decision = await _decide_step(coordinator_model, system, context, experts, use_tools)
+            decision = await _decide_step(
+                coordinator_model, system, context, experts, use_tools,
+                force_tool_on_prose=force_tool,
+            )
         except Exception as exc:
             emit(make_event("error", content=f"Coordinator error: {exc}"))
             runtime_state.record_error(f"Coordinator error: {exc}")
