@@ -524,10 +524,17 @@ class ConfigAndMcpTests(unittest.TestCase):
         self.assertIn("OLLAMA_BASE_URL", text)
 
     def test_backend_env_file_contains_validated_model_defaults(self):
-        text = (Path(__file__).parents[1] / ".env").read_text(encoding="utf-8")
+        # Validate the committed template (.env is gitignored and absent in CI).
+        example = (Path(__file__).parents[1] / ".env.example").read_text(encoding="utf-8")
+        self.assertIn("OLLAMA_MODEL=gemma4:12b", example)
+        self.assertIn("OLLAMA_VISION_MODEL=qwen3.5:9b", example)
 
-        self.assertIn("OLLAMA_MODEL=gemma4:12b", text)
-        self.assertIn("OLLAMA_VISION_MODEL=qwen3.5:9b", text)
+        # If a local .env exists, it must agree with the validated defaults.
+        env = Path(__file__).parents[1] / ".env"
+        if env.is_file():
+            text = env.read_text(encoding="utf-8")
+            self.assertIn("OLLAMA_MODEL=gemma4:12b", text)
+            self.assertIn("OLLAMA_VISION_MODEL=qwen3.5:9b", text)
 
     def test_mcp_manifest_includes_os_tools(self):
         from api.mcp import tools_manifest
