@@ -15,6 +15,7 @@ which small local models handle far more reliably.
 
 import logging
 import json
+import os
 from typing import AsyncGenerator
 
 import httpx
@@ -34,6 +35,21 @@ from tools import registry
 logger = logging.getLogger(__name__)
 
 VALID_ROUTES = {"chat", "computer", "code"}
+
+# Compose grounding budget. A large multi-file turn (e.g. the project-analysis
+# playbook reading six source files) can gather 25k+ chars of evidence; a small
+# local answering model then emits almost nothing when handed the whole block
+# (observed live: gemma4:12b replied with 3 characters on a 26k-char prompt).
+# Bound what the compose step sees so the answer layer gets a digestible prompt:
+# the structured evidence stays primary (its summaries shrink to
+# COMPOSE_ACTION_SUMMARY_CHARS), and the redundant backward-compat text log is
+# trimmed to whatever budget remains. Every structured field (sources,
+# files_read, requirements) survives — only free-text summaries shorten. Both are
+# env-overridable for tuning without a code change.
+COMPOSE_EVIDENCE_BUDGET = int(os.getenv("COMPOSE_EVIDENCE_BUDGET", "9000"))
+COMPOSE_ACTION_SUMMARY_CHARS = int(os.getenv("COMPOSE_ACTION_SUMMARY_CHARS", "500"))
+_TRUNC_MARK = "\n…[förkortat]"
+_LOG_ELIDED = "(förkortat; se strukturerat underlag ovan)"
 # Safe default: never act on the computer on a parse failure.
 ROUTE_DEFAULT = {"route": "chat", "thinking": "parse error — defaulting to chat"}
 PROJECT_GITHUB_TERMS = (
@@ -312,17 +328,23 @@ def _build_reply_messages(conversation: list[dict], outcome=None, memories: str 
     )
     if outcome is not None:
         structured = getattr(outcome, "runtime_state", None)
-        structured_text = (
-            json.dumps(structured.to_prompt_dict(), ensure_ascii=False)
-            if structured is not None
-            else "{}"
-        )
+        # Keep the grounding digestible for the answering model (see the budget
+        # constants above): the structured evidence is primary and is bounded by
+        # shrinking free-text summaries only — never by dropping sources/
+        # requirements — and the redundant text log takes the leftover budget.
+        structured_text = _bounded_structured(structured, COMPOSE_EVIDENCE_BUDGET)
+        action_log = outcome.action_log or "(inget registrerades)"
+        remaining = max(0, COMPOSE_EVIDENCE_BUDGET - len(structured_text))
+        if len(action_log) > remaining:
+            action_log = (
+                action_log[:remaining] + _TRUNC_MARK if remaining > 200 else _LOG_ELIDED
+            )
         evidence = wrap_untrusted(
             "Strukturerat underlag jag (assistenten) samlade denna tur:\n"
             f"{structured_text}\n\n"
             "Textlogg för bakåtkompatibilitet (expertsvar, skärmobservationer, "
             "verktygsresultat):\n"
-            f"{outcome.action_log or '(inget registrerades)'}",
+            f"{action_log}",
             source="activity log",
         )
         messages.append({
@@ -340,6 +362,28 @@ def _build_reply_messages(conversation: list[dict], outcome=None, memories: str 
             ),
         })
     return messages
+
+
+def _bounded_structured(runtime_state, budget: int) -> str:
+    """Serialize the structured evidence within ``budget`` chars WITHOUT dropping
+    any structured field.
+
+    Only the free-text per-action / per-command summaries shrink (escalating
+    500 → 200 → 80 → 0); ``sources`` (web_research URLs), ``files_read`` and
+    ``requirements``/contract status are always preserved, so citations and the
+    truthfulness gate survive even a huge multi-file turn. If even summary-less
+    evidence still exceeds the budget (e.g. very many sources), the valid full
+    JSON is returned rather than front-truncated into invalid JSON with the tail
+    fields silently dropped — over budget beats dropped grounding.
+    """
+    if runtime_state is None:
+        return "{}"
+    text = "{}"
+    for chars in (COMPOSE_ACTION_SUMMARY_CHARS, 200, 80, 0):
+        text = json.dumps(runtime_state.to_prompt_dict(summary_chars=chars), ensure_ascii=False)
+        if len(text) <= budget:
+            break
+    return text
 
 
 def _fallback_reply(outcome, exc: Exception) -> str:
