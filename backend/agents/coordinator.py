@@ -25,9 +25,8 @@ import re
 from pathlib import Path
 from typing import Callable
 
-import httpx
-
 from agents import loop as agent_loop
+from agents import providers
 from agents.gateway import refine_query
 from agents.json_utils import extract_json_object
 from agents.loop import LoopOutcome, make_event
@@ -47,7 +46,6 @@ from job_permissions import tool_allowed
 from agents.task_contracts import TaskContract, build_task_contract
 from config import (
     COORDINATOR_MAX_STEPS,
-    OLLAMA_BASE_URL,
     OLLAMA_MODEL,
     OLLAMA_MODELS,
 )
@@ -380,55 +378,36 @@ async def _decide_step(
         {"role": "system", "content": system},
         {"role": "user", "content": context},
     ]
-    payload: dict = {
-        "model": coordinator_model,
-        "messages": messages,
-        "stream": False,
-        "options": {"temperature": 0.1},
-    }
-    if use_tools:
-        payload["tools"] = registry.tool_schemas() + _meta_action_schemas(experts or {})
+    tools = (
+        registry.tool_schemas() + _meta_action_schemas(experts or {}) if use_tools else None
+    )
+    msg = await providers.chat_once(messages, coordinator_model, tools=tools, temperature=0.1)
 
-    async with httpx.AsyncClient(timeout=90) as client:
-        resp = await client.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload)
-        if use_tools and resp.status_code >= 400:
-            # Endpoint/model rejected the tools payload — retry as plain JSON.
-            payload.pop("tools", None)
-            resp = await client.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload)
-        resp.raise_for_status()
-        msg = resp.json().get("message", {}) or {}
+    if not use_tools:
+        return extract_json_object((msg.get("content") or "").strip(), ANSWER_DEFAULT)
 
-        if not use_tools:
-            return extract_json_object((msg.get("content") or "").strip(), ANSWER_DEFAULT)
+    decision = _decision_from_message(msg)
+    prose_fallback = decision.pop("_prose_fallback", False)
+    if not (prose_fallback and force_tool_on_prose):
+        return decision
 
-        decision = _decision_from_message(msg)
-        prose_fallback = decision.pop("_prose_fallback", False)
-        if not (prose_fallback and force_tool_on_prose):
-            return decision
-
-        # Corrective re-ask: force a single structured decision from a model that
-        # narrated a plan instead of calling a tool. If this second call fails
-        # transiently, fall back to the prose answer already in hand — a healthy
-        # first call must never be turned into a whole-turn error by a flaky retry
-        # (on master a prose plan simply degraded to a graceful max_steps).
-        try:
-            forced = await client.post(
-                f"{OLLAMA_BASE_URL}/api/chat",
-                json={
-                    "model": coordinator_model,
-                    "messages": [
-                        {"role": "system", "content": system + _FORCE_DECISION_SUFFIX},
-                        {"role": "user", "content": context},
-                    ],
-                    "stream": False,
-                    "options": {"temperature": 0.1},
-                },
-            )
-            forced.raise_for_status()
-            forced_msg = forced.json().get("message", {}) or {}
-        except Exception as exc:  # noqa: BLE001 — degrade, never escalate to a turn error
-            logger.warning("forced re-decision failed (%s); keeping prose answer", exc)
-            return decision
+    # Corrective re-ask: force a single structured decision from a model that
+    # narrated a plan instead of calling a tool. If this second call fails
+    # transiently, fall back to the prose answer already in hand — a healthy first
+    # call must never be turned into a whole-turn error by a flaky retry (on master
+    # a prose plan simply degraded to a graceful max_steps).
+    try:
+        forced_msg = await providers.chat_once(
+            [
+                {"role": "system", "content": system + _FORCE_DECISION_SUFFIX},
+                {"role": "user", "content": context},
+            ],
+            coordinator_model,
+            temperature=0.1,
+        )
+    except Exception as exc:  # noqa: BLE001 — degrade, never escalate to a turn error
+        logger.warning("forced re-decision failed (%s); keeping prose answer", exc)
+        return decision
 
     retry = _decision_from_message(forced_msg)
     retry.pop("_prose_fallback", None)
@@ -480,23 +459,12 @@ async def _consult_expert(
     ]
     parts: list[str] = []
     try:
-        async with httpx.AsyncClient(timeout=180) as client:
-            async with client.stream(
-                "POST",
-                f"{OLLAMA_BASE_URL}/api/chat",
-                json={"model": model, "messages": messages, "stream": True},
-            ) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if abort.is_set():
-                        break
-                    if not line.strip():
-                        continue
-                    chunk = extract_json_object(line, {})
-                    piece = chunk.get("message", {}).get("content", "")
-                    if piece:
-                        parts.append(piece)
-                        emit(make_event("expert_delta", model=model, content=piece))
+        async for piece in providers.chat_stream(messages, model, temperature=0.2, think=False):
+            if abort.is_set():
+                break
+            if piece:
+                parts.append(piece)
+                emit(make_event("expert_delta", model=model, content=piece))
     except Exception as exc:
         emit(make_event("error", content=f"Consult {model} failed: {exc}"))
         return f"(consulting {model} failed: {exc})"
@@ -536,7 +504,11 @@ async def run_coordinator(
     system = _system_prompt(intent_hint + _contract_prompt(contract))
     # Tools-capable models drive their decisions via native function-calling;
     # others (and a tools-rejecting endpoint) fall back to the JSON action path.
-    use_tools = bool(OLLAMA_MODELS.get(coordinator_model, {}).get("tools"))
+    # OpenAI chat models are all tool-calling capable; for Ollama it depends on
+    # the model's registry entry. Either way the decision loop drives native tools.
+    use_tools = providers.resolve_backend() == providers.OPENAI or bool(
+        OLLAMA_MODELS.get(coordinator_model, {}).get("tools")
+    )
     # Retrieve task-relevant skills once (the "how" layer); injected each step.
     skills = format_skills(await search_skills(task))
     # Project instruction files (AGENTS.md/CLAUDE.md) from the user's selected
@@ -552,6 +524,7 @@ async def run_coordinator(
     steps = 0
     tool_calls = 0  # executed tool count, for the optional per-job max_tool_calls cap
     file_output_done = False
+    command_counts: dict[tuple[str, str], int] = {}  # repeated-run_command guard
 
     if required_first_tool and not abort.is_set():
         tool = str(required_first_tool.get("tool") or "").strip()
@@ -726,8 +699,26 @@ async def run_coordinator(
             notes.append(note)
             runtime_state.record_error(note, tool, args)
             break
-        tool_calls += 1
         args = agent_loop.apply_project_cwd_to_args(tool, args, project_cwd)
+        # Repeated-command guard (parity with run_agent_loop): a model that keeps
+        # re-running the SAME failing command wastes steps, time and (on the API
+        # path) money — observed in eval, gpt-4o-mini ran an identical failing
+        # count command 6× to max_steps. Block the 3rd+ identical run and let the
+        # turn answer from what it already has.
+        if tool == "run_command":
+            command_key = agent_loop.normalize_command_key(args)
+            if command_counts.get(command_key, 0) >= 2:
+                note = (
+                    f"(repeated command blocked: {args.get('cmd', '')!r} already ran "
+                    "twice without completing the task; use the existing output or a "
+                    "different approach)"
+                )
+                emit(make_event("error", content=note))
+                notes.append(note)
+                runtime_state.record_error(note, tool, args)
+                continue
+            command_counts[command_key] = command_counts.get(command_key, 0) + 1
+        tool_calls += 1
         tool, args, repair_note = agent_loop.repair_web_tool_call(tool, args, task)
         if repair_note:
             emit(make_event("thinking", content=repair_note))

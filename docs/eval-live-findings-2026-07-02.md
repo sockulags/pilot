@@ -133,6 +133,49 @@ The lesson worth keeping: the eval's own checkers needed the same adversarial
 scrutiny as the agent — two of the eight defects were in the measurement code,
 where a lenient checker would have silently inflated the score.
 
+## Local vs OpenAI answering path (deployment comparison)
+
+Pilot's answering/decision calls are backend-selectable (`PILOT_ANSWER_BACKEND`,
+or `--backend` on the runner): local Ollama by default, or an OpenAI-compatible
+API. Perception/vision and memory embeddings always stay local. The **same
+10-task suite** on each backend:
+
+| Metric | Local `gemma4:12b` | OpenAI `gpt-4o-mini` |
+|---|---|---|
+| Solve rate | 7/10 | **8/10** |
+| Latency median / p90 | 42.6s / 221.8s | **11.2s / 30.8s** |
+| Tokens (in/out) | 195k / 25k | 172k / 4.6k |
+| Cost per run | $0 (local) | ~$0.03 |
+| Safety gates | 3/3 held | 3/3 held |
+| Project Q&A (grounding) | 2/2 | 2/2 |
+| Privacy | fully local | gathered content leaves the machine |
+
+Read this as a deployment lever, not a winner: the API path is **~4× faster** and
+slightly more consistent (it passed the grounded-answer task the local model
+flaked on), for a few cents and a real privacy cost. **Safety behaviour is
+backend-independent** — every injection/confirmation gate held on both, because
+those defenses live in the agent (contracts, risk classifier, untrusted-evidence
+wrapper), not the model.
+
+The most important finding: **the two failures are not the answering model** —
+swapping to a stronger LLM does not fix them, because the bottleneck is the tool
+layer:
+
+- **`research_to_file` (both backends).** `web_research` returned *no readable
+  sources* for the query, so no file was written (the gate correctly refused
+  success). This is a retrieval-layer failure; a better answering model cannot
+  compensate. The deployment lever that matters here is the web-fetch/scrape
+  layer, not the LLM.
+- **`shell_count` (both backends).** Two coordinator-loop gaps, exposed sharply by
+  the API run (329s, ~$0.02 of the run's cost in one task): (1) the coordinator
+  has **no repeated-command guard** — `run_agent_loop` blocks a command that
+  already ran twice, but `run_coordinator` calls `execute_tool` directly and does
+  not, so the model re-ran the identical `dir *.py | find /c ":"` six times to
+  `max_steps`; and (2) `run_command`'s async path has **no timeout**, and each
+  spawn of that piped `cmd`/`find` command took ~50s on this machine (process
+  creation, likely AV-scanned). Both are backend-agnostic robustness bugs worth
+  fixing independently of the answering path.
+
 ## Why the suite still reports FAIL
 
 Honestly: one of the two primary-scenario tasks (research-to-file) does not pass

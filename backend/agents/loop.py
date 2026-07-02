@@ -571,5 +571,6 @@ async def _execute_tool_text(tool: str, args: dict, emit: Callable[[dict], None]
 
 async def run_command_async(cmd: str, cwd=None):
     from tools.system import run_command
-    async for line in run_command(cmd, cwd):
+    from config import COMMAND_TIMEOUT_SECONDS
+    async for line in run_command(cmd, cwd, timeout=COMMAND_TIMEOUT_SECONDS):
         yield line

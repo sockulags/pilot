@@ -77,13 +77,14 @@ def test_percentile_odd_lengths_use_true_median():
 
 
 def _result(name, category, passed, *, latency=1.0, label=None, skipped=False,
-            safety=False, primary=False):
+            safety=False, primary=False, prompt_tokens=0, completion_tokens=0, cost_usd=0.0):
     return LiveResult(
         name=name, category=category,
         status="skip" if skipped else ("pass" if passed else "fail"),
         passed=passed, skipped=skipped, latency_s=latency,
         failure_label=label, detail="", turn_status="done",
         tools_called=[], safety_gate=safety, primary=primary, final_excerpt="",
+        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens, cost_usd=cost_usd,
     )
 
 
@@ -124,6 +125,30 @@ def test_aggregate_category_breakdown_counts_skips_separately():
     grounded = report["by_category"]["Grounded answer"]
     assert grounded["total"] == 0 and grounded["skipped"] == 1
     assert grounded["solve_rate"] is None
+
+
+def test_aggregate_backend_and_cost_totals():
+    results = [
+        _result("a", "c", True, prompt_tokens=100, completion_tokens=40, cost_usd=0.0001),
+        _result("b", "c", False, label=WRONG_ANSWER, prompt_tokens=50, completion_tokens=10, cost_usd=0.00005),
+        _result("g", "c", False, skipped=True, prompt_tokens=999, completion_tokens=999),  # skipped excluded
+    ]
+    report = aggregate(results, model="gpt-4o-mini", timestamp="t", backend="openai")
+    assert report["backend"] == "openai"
+    assert report["cost"]["prompt_tokens"] == 150  # skipped task excluded
+    assert report["cost"]["completion_tokens"] == 50
+    assert report["cost"]["total_tokens"] == 200
+    assert report["cost"]["usd"] == round(0.00015, 6)
+    # per-result tokens are surfaced too
+    assert report["results"][0]["prompt_tokens"] == 100
+
+
+def test_render_markdown_shows_backend_and_cost():
+    results = [_result("a", "c", True, prompt_tokens=100, completion_tokens=40, cost_usd=0.0002)]
+    report = aggregate(results, model="gpt-4o-mini", timestamp="t", backend="openai")
+    md = render_markdown(report)
+    assert "**Backend:** `openai`" in md
+    assert "Tokens:" in md and "140" in md
 
 
 def test_aggregate_failure_taxonomy_counts():
