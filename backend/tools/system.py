@@ -70,8 +70,20 @@ async def run_command(
     finally:
         if watchdog is not None:
             watchdog.cancel()
-        _terminate_tree(process)
-        await process.wait()
+        # Reap first. On normal completion the process has already exited (and on
+        # the timeout path the watchdog already tree-killed it), so wait() returns
+        # promptly and we must NOT spawn a taskkill against a PID Windows may have
+        # recycled. Only force a tree-kill if the process is genuinely still alive
+        # (e.g. the consumer closed the generator early, or a child outlived the
+        # shell) — detected by wait() not completing within a short grace.
+        try:
+            await asyncio.wait_for(process.wait(), timeout=2)
+        except asyncio.TimeoutError:
+            _terminate_tree(process)
+            try:
+                await process.wait()
+            except ProcessLookupError:
+                pass
 
 
 def run_command_sync(cmd: str, cwd: str | None = None, timeout: int = 30) -> str:
