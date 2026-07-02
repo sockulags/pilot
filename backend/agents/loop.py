@@ -270,6 +270,15 @@ def normalize_command_key(args: dict) -> tuple[str, str]:
 
 
 def apply_project_cwd_to_args(tool: str, args: dict, project_cwd: str | None) -> dict:
+    if tool == "write_file":
+        # SECURITY: the write_file confirmation gate decides "inside the project?"
+        # by resolving the path against cwd — so cwd MUST be trusted, never a
+        # model-supplied value. A model could otherwise pass cwd=C:\Windows\Temp
+        # with a plain relative path and escape the project with no confirmation
+        # (adversarial review 2026-07-03). Force cwd to the trusted base here,
+        # overriding any model value; the model may still choose a path WITHIN it.
+        return {**args, "cwd": project_cwd or os.getcwd()}
+
     if not project_cwd:
         return args
 
@@ -286,10 +295,6 @@ def apply_project_cwd_to_args(tool: str, args: dict, project_cwd: str | None) ->
         path = Path(str(args["path"]))
         if not path.is_absolute():
             return {**args, "path": str(Path(project_cwd) / path)}
-
-    if tool == "write_file" and not args.get("cwd"):
-        # The write lands in the active project folder, mirroring run_command.
-        return {**args, "cwd": project_cwd}
 
     return args
 
@@ -490,14 +495,18 @@ async def _execute_tool_text(tool: str, args: dict, emit: Callable[[dict], None]
         )
         emit(make_event("result", content=header))
         output_parts = []
-        async for line in run_command_async(cmd, cwd):
+        status: dict = {}
+        async for line in run_command_async(cmd, cwd, status=status):
             output_parts.append(line)
             emit(make_event("result", content=line))
         output = "".join(output_parts)
         result = f"{header}Output:\n{output}".strip()
-        # A failed/confused command teaches the model what to do instead of
-        # letting it repeat the same mistake (see tools/system.py _HINT_RULES).
-        hint = command_hint(output)
+        # A FAILED/confused command teaches the model what to do instead of
+        # repeating the mistake — but only on failure, so a successful command
+        # whose output merely contains a trigger phrase is never mis-hinted
+        # (adversarial review 2026-07-03). Non-zero exit or timeout == failure.
+        failed = bool(status.get("timed_out")) or (status.get("returncode") not in (0, None))
+        hint = command_hint(output) if failed else ""
         if hint:
             emit(make_event("result", content=hint))
             result = f"{result}\n{hint}"
@@ -606,8 +615,8 @@ async def _execute_tool_text(tool: str, args: dict, emit: Callable[[dict], None]
         return f"Unknown tool: {tool}"
 
 
-async def run_command_async(cmd: str, cwd=None):
+async def run_command_async(cmd: str, cwd=None, status: dict | None = None):
     from tools.system import run_command
     from config import COMMAND_TIMEOUT_SECONDS
-    async for line in run_command(cmd, cwd, timeout=COMMAND_TIMEOUT_SECONDS):
+    async for line in run_command(cmd, cwd, timeout=COMMAND_TIMEOUT_SECONDS, status=status):
         yield line

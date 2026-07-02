@@ -91,7 +91,8 @@ def _terminate_tree(process) -> None:
 
 
 async def run_command(
-    cmd: str, cwd: str | None = None, timeout: float | None = None
+    cmd: str, cwd: str | None = None, timeout: float | None = None,
+    status: dict | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream a shell command's output, bounded by ``timeout`` seconds.
 
@@ -104,6 +105,11 @@ async def run_command(
     On timeout the subprocess tree is killed and a timeout note is yielded, so a
     hanging or pathologically slow command can never block a turn indefinitely.
     ``timeout=None`` means unbounded (the historical behaviour).
+
+    ``status`` (if given) is filled with ``{"returncode", "timed_out"}`` so the
+    caller can tell success from failure (a corrective hint must only follow a
+    FAILED command, not a successful one whose output merely contains a trigger
+    phrase — adversarial review 2026-07-03).
     """
     if os.name == "nt":
         process = await asyncio.create_subprocess_exec(
@@ -159,17 +165,24 @@ async def run_command(
                 await process.wait()
             except ProcessLookupError:
                 pass
+        if status is not None:
+            status["returncode"] = process.returncode
+            status["timed_out"] = timed_out
 
 
 def run_command_sync(cmd: str, cwd: str | None = None, timeout: int = 30) -> str:
-    result = subprocess.run(
-        cmd,
-        shell=True,
-        capture_output=True,
-        text=True,
-        cwd=cwd,
-        timeout=timeout,
-    )
+    # Same shell as the async path (PowerShell on Windows) so the MCP surface
+    # (pilot_run_command) and the agent loop never execute the same command under
+    # two incompatible shells (adversarial review 2026-07-03).
+    if os.name == "nt":
+        argv = ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd]
+        result = subprocess.run(
+            argv, capture_output=True, text=True, cwd=cwd, timeout=timeout,
+        )
+    else:
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, cwd=cwd, timeout=timeout,
+        )
     output = result.stdout + result.stderr
     return output.strip()
 

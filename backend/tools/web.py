@@ -368,7 +368,10 @@ async def web_research_result(
         # instead of re-running the identical call (eval 2026-07-02: six identical
         # retries). This text is the model's only feedback signal.
         lines.append("No readable sources could be fetched.")
-        if candidates_total == 0 and search_errors:
+        retry_done = retry_query and retry_query in queries_used
+        if not queries_used and search_errors:
+            # Every search attempt raised (transport failure) — no query actually
+            # ran, so retrying later (not rephrasing) is the right advice.
             lines.append(
                 "Why: the search request itself failed ("
                 + "; ".join(search_errors[:2])
@@ -379,15 +382,23 @@ async def web_research_result(
                 "knowledge while saying the web could not be reached."
             )
         elif candidates_total == 0:
+            # A search DID run but found nothing — rephrasing is the fix.
             lines.append(
                 "Why: the search returned zero results — the query is likely too "
                 "narrow or phrased unusually."
             )
-            lines.append(
-                "Try: ONE retry with a shorter English query of 2-4 key words"
-                + (f", e.g. {retry_query!r}" if retry_query else "")
-                + ". Do not repeat the same query."
-            )
+            if retry_done:
+                lines.append(
+                    "Try: a DIFFERENT 2-4 key-word English query (a simplified retry "
+                    "was already attempted and also found nothing), or answer from "
+                    "existing knowledge."
+                )
+            else:
+                lines.append(
+                    "Try: ONE retry with a shorter English query of 2-4 key words"
+                    + (f", e.g. {retry_query!r}" if retry_query else "")
+                    + ". Do not repeat the same query."
+                )
         else:
             lines.append(
                 f"Why: {candidates_total} result(s) were found but every page fetch "

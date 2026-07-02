@@ -266,7 +266,7 @@ class AgentLoopTests(unittest.TestCase):
     async def _run_command_result_includes_cwd_for_history(self):
         from agents import loop
 
-        async def fake_run_command_async(cmd, cwd=None):
+        async def fake_run_command_async(cmd, cwd=None, status=None):
             yield "hello\n"
 
         with self._patched(loop, run_command_async=fake_run_command_async):
