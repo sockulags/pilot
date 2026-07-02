@@ -234,7 +234,7 @@ def _intent_hint(route: str, task_context) -> tuple[str, dict | None]:
         if task_context.creates_file:
             intent += (
                 " The user expects a local output file: gather the needed data, "
-                "write the requested file with an appropriate command, and report "
+                "write the requested file with the write_file tool, and report "
                 "the exact path."
             )
     elif route == "code":
@@ -261,7 +261,7 @@ def _intent_hint(route: str, task_context) -> tuple[str, dict | None]:
     if task_context.creates_file:
         intent += (
             " This task requires a local output file. Do not answer as complete "
-            "until you have written the file with run_command and verified that it exists."
+            "until you have written the file with the write_file tool (which verifies it)."
         )
     return intent, required_first_tool
 

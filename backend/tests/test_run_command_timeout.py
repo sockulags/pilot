@@ -21,18 +21,25 @@ async def _collect(cmd, timeout):
     return "".join(out)
 
 
+def _py(inner: str) -> str:
+    """A python one-liner quoted for the shell run_command actually uses
+    (PowerShell on Windows: & "exe" -c 'code'; plain quoting on POSIX)."""
+    if os.name == "nt":
+        # PowerShell: double-quote the code arg (single quotes inside survive).
+        return f'& "{sys.executable}" -c "{inner}"'
+    return f'"{sys.executable}" -c "{inner}"'
+
+
 def test_slow_command_is_terminated_at_timeout():
     # A 5s sleep with a 1s budget must return promptly with a timeout note.
-    sleeper = f'"{sys.executable}" -c "import time; time.sleep(5)"'
     start = time.monotonic()
-    out = asyncio.run(_collect(sleeper, timeout=1))
+    out = asyncio.run(_collect(_py("import time; time.sleep(5)"), timeout=1))
     elapsed = time.monotonic() - start
     assert "timed out" in out.lower()
     assert elapsed < 4.0, f"timeout not enforced (took {elapsed:.1f}s)"
 
 
 def test_fast_command_completes_normally_within_timeout():
-    printer = f'"{sys.executable}" -c "print(\'pilot-eval-ok\')"'
-    out = asyncio.run(_collect(printer, timeout=30))
+    out = asyncio.run(_collect(_py("print('pilot-eval-ok')"), timeout=30))
     assert "pilot-eval-ok" in out
     assert "timed out" not in out.lower()

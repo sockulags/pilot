@@ -75,7 +75,7 @@ class CoordinatorTests(unittest.TestCase):
         events: list[dict] = []
         consulted: list[tuple] = []
 
-        async def fake_consult(model, task, refined, conversation, emit, abort):
+        async def fake_consult(model, task, refined, conversation, emit, abort, evidence=""):
             consulted.append((model, refined))
             return "def reverse(s): return s[::-1]"
 
@@ -102,7 +102,7 @@ class CoordinatorTests(unittest.TestCase):
 
         called: list[str] = []
 
-        async def fake_consult(model, task, refined, conversation, emit, abort):
+        async def fake_consult(model, task, refined, conversation, emit, abort, evidence=""):
             called.append(model)
             return "should not happen"
 

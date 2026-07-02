@@ -214,7 +214,7 @@ async def _run_coordinator(scenario: Scenario) -> ScenarioResult:
     events: list[dict] = []
     called: list[str] = []
 
-    async def fake_consult(model, task, refined, conversation, emit, abort):
+    async def fake_consult(model, task, refined, conversation, emit, abort, evidence=""):
         return scenario.consult_reply or "(stub expert answer)"
 
     async def fake_save_memory(text, *args, **kwargs):

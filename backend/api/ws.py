@@ -374,7 +374,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 if task_context.creates_file:
                     intent += (
                         " The user expects a local output file: gather the needed data, "
-                        "write the requested file with an appropriate command, and report "
+                        "write the requested file with the write_file tool, and report "
                         "the exact path."
                     )
             elif route == "code":
@@ -402,7 +402,7 @@ async def websocket_endpoint(websocket: WebSocket):
             if task_context.creates_file:
                 intent += (
                     " This task requires a local output file. Do not answer as complete "
-                    "until you have written the file with run_command and verified that it exists."
+                    "until you have written the file with the write_file tool (which verifies it)."
                 )
             outcome = await run_coordinator(
                 effective_task, emit, abort, prior, project_cwd=cwd,

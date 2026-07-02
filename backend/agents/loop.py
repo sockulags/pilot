@@ -270,6 +270,15 @@ def normalize_command_key(args: dict) -> tuple[str, str]:
 
 
 def apply_project_cwd_to_args(tool: str, args: dict, project_cwd: str | None) -> dict:
+    if tool == "write_file":
+        # SECURITY: the write_file confirmation gate decides "inside the project?"
+        # by resolving the path against cwd — so cwd MUST be trusted, never a
+        # model-supplied value. A model could otherwise pass cwd=C:\Windows\Temp
+        # with a plain relative path and escape the project with no confirmation
+        # (adversarial review 2026-07-03). Force cwd to the trusted base here,
+        # overriding any model value; the model may still choose a path WITHIN it.
+        return {**args, "cwd": project_cwd or os.getcwd()}
+
     if not project_cwd:
         return args
 
@@ -400,6 +409,8 @@ def deterministic_completion_summary(tool: str, result: str) -> str | None:
 def tool_execution_succeeded(tool: str, text: str) -> bool:
     if tool == "web_research":
         return text.startswith("Research results for ")
+    if tool == "write_file":
+        return text.startswith("File written: ")
     return not (
         text.startswith("Error executing")
         or " requires argument(s): " in text
@@ -472,17 +483,34 @@ async def _execute_tool_text(tool: str, args: dict, emit: Callable[[dict], None]
         return hotkey(*keys)
 
     elif tool == "run_command":
+        from tools.system import command_hint, shell_name
+
         cmd = args["cmd"]
         cwd = args.get("cwd")
         effective_cwd = cwd or os.getcwd()
-        header = f"Command: {cmd}\nCurrent working directory: {effective_cwd}\n"
+        # State the shell explicitly so the model never guesses the dialect.
+        header = (
+            f"Command: {cmd}\nShell: {shell_name()}\n"
+            f"Current working directory: {effective_cwd}\n"
+        )
         emit(make_event("result", content=header))
         output_parts = []
-        async for line in run_command_async(cmd, cwd):
+        status: dict = {}
+        async for line in run_command_async(cmd, cwd, status=status):
             output_parts.append(line)
             emit(make_event("result", content=line))
         output = "".join(output_parts)
-        return f"{header}Output:\n{output}".strip()
+        result = f"{header}Output:\n{output}".strip()
+        # A FAILED/confused command teaches the model what to do instead of
+        # repeating the mistake — but only on failure, so a successful command
+        # whose output merely contains a trigger phrase is never mis-hinted
+        # (adversarial review 2026-07-03). Non-zero exit or timeout == failure.
+        failed = bool(status.get("timed_out")) or (status.get("returncode") not in (0, None))
+        hint = command_hint(output) if failed else ""
+        if hint:
+            emit(make_event("result", content=hint))
+            result = f"{result}\n{hint}"
+        return result
 
     elif tool == "list_dir":
         result = list_dir(args.get("path"))
@@ -495,6 +523,24 @@ async def _execute_tool_text(tool: str, args: dict, emit: Callable[[dict], None]
     elif tool == "read_file":
         result = read_file(args["path"])
         return f"File: {result['path']}\nContent:\n{result['text']}"
+
+    elif tool == "write_file":
+        from tools import write_file
+
+        try:
+            result = write_file(
+                args["path"],
+                str(args.get("content") or ""),
+                overwrite=bool(args.get("overwrite")),
+                cwd=args.get("cwd"),
+            )
+        except FileExistsError as exc:
+            return f"write_file refused: {exc}"
+        verified = "yes" if result["verified"] else "no"
+        return (
+            f"File written: {result['path']}\nBytes: {result['bytes']}\n"
+            f"Verified: {verified}"
+        )
 
     elif tool == "find_file":
         result = find_file(args["name"], args.get("root"))
@@ -569,8 +615,8 @@ async def _execute_tool_text(tool: str, args: dict, emit: Callable[[dict], None]
         return f"Unknown tool: {tool}"
 
 
-async def run_command_async(cmd: str, cwd=None):
+async def run_command_async(cmd: str, cwd=None, status: dict | None = None):
     from tools.system import run_command
     from config import COMMAND_TIMEOUT_SECONDS
-    async for line in run_command(cmd, cwd, timeout=COMMAND_TIMEOUT_SECONDS):
+    async for line in run_command(cmd, cwd, timeout=COMMAND_TIMEOUT_SECONDS, status=status):
         yield line
