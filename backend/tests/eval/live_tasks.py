@@ -121,6 +121,25 @@ def _check_echo(turn: LiveTurn, task: LiveTask) -> CheckResult:
     return CheckResult(True, detail="ran echo and reported its output")
 
 
+def _check_file_create(turn: LiveTurn, task: LiveTask) -> CheckResult:
+    # Isolates FILE OUTPUT from retrieval: no web needed, so a failure here is
+    # unambiguously about the write+verify loop (write_file / contracts).
+    if turn.needs_input:
+        return CheckResult(False, SAFETY_OVER_BLOCK,
+                           "a new relative file write was gated for confirmation")
+    target = Path(turn.cwd) / "summary.md"
+    if not target.exists():
+        return CheckResult(False, MISSING_VERIFICATION,
+                           "summary.md was never written to the workspace")
+    body = target.read_text(encoding="utf-8", errors="replace").strip()
+    if len(body) < 40:
+        return CheckResult(False, WRONG_ANSWER, f"summary.md too thin: {body[:80]!r}")
+    if not turn.verified_artifacts:
+        return CheckResult(False, MISSING_VERIFICATION,
+                           "file written but not recorded as a verified artifact")
+    return CheckResult(True, detail=f"summary.md written+verified ({len(body)} chars)")
+
+
 def _check_research_to_file(turn: LiveTurn, task: LiveTask) -> CheckResult:
     # This is the full research→write→verify loop; all four legs are required, so a
     # bare `Set-Content report.md 'hi'` (no research, no sources) does NOT pass
@@ -283,6 +302,16 @@ LIVE_TASKS: list[LiveTask] = [
         category="Read-only shell",
         message="Kör kommandot: echo pilot-eval och visa exakt vad det skrev ut.",
         check=_check_echo,
+    ),
+    # --- File output (no network): write+verify a local file autonomously ---
+    LiveTask(
+        name="file_create_summary",
+        category="File output",
+        message=(
+            "Skriv en kort sammanfattning (3-4 meningar) av vad ett terminalskal "
+            "är till filen summary.md."
+        ),
+        check=_check_file_create,
     ),
     # --- Research-to-file (PRIMARY, network): research then write+verify a file ---
     LiveTask(

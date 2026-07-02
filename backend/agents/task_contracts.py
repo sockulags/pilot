@@ -241,7 +241,7 @@ _CONTRACTS: dict[str, TaskContract] = {
         required_evidence=(
             EvidenceRequirement("verified_artifact", "verified local artifact"),
         ),
-        allowed_tools=frozenset({"run_command", "read_file", "list_dir", "search_files", "web_research"}),
+        allowed_tools=frozenset({"write_file", "run_command", "read_file", "list_dir", "search_files", "web_research"}),
         completion_criteria="A local file is written and its path/existence is verified.",
         failure_criteria="The artifact cannot be written or verified.",
         final_answer_requirements="Report the verified artifact path and any important caveats.",
