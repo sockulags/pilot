@@ -78,4 +78,45 @@ measured failure and re-measured after.
   actually trigger consults, which the current 11-task suite rarely does — a
   candidate for a future suite extension.
 
-Backend test suite: **473+ passing** (44 new this round).
+## Adversarial security review (the important part)
+
+The whole changeset went through a 4-dimension adversarial review with per-finding
+verification, focused on the two new capabilities that let the agent act more
+autonomously — `write_file` (writes without confirmation) and expert command
+proposals (executes a model-suggested command). It found **7 confirmed defects,
+including two HIGH-severity security holes I had not caught by hand:**
+
+1. **`write_file` sandbox escape (HIGH).** The confirmation gate decided
+   "inside the project?" by resolving the path against `cwd` — but the *model*
+   supplied `cwd`, and `apply_project_cwd_to_args` only filled it when absent. So
+   `{path:"pwned.txt", cwd:"C:\\Windows\\Temp"}` escaped the project with no
+   confirmation: silent arbitrary-location file creation. **Fixed:** the loop now
+   *forces* `write_file`'s cwd to the trusted project base (overriding any model
+   value), and the gate was rewritten as a uniform resolve-and-contain check —
+   confirm unless the target resolves inside the trusted base and is not an
+   overwrite. Verified: the exact escape payload now lands in the project, not
+   `C:\Windows\Temp`.
+2. **Expert-proposal prompt-injection → command execution (HIGH).** An expert
+   answer is generated from evidence that can contain attacker-controlled web/file
+   text, which could inject `PROPOSED_COMMAND: certutil -urlcache ...` — and the
+   coordinator ran it because the *denylist* risk classifier doesn't recognise
+   `certutil`/`python`/`schtasks`/`reg`/`net` as risky. **Fixed:** auto-executed
+   proposals are now constrained by a **positive allowlist** of read-only
+   inspection commands (Get-ChildItem/Get-Content/Select-String/Test-Path/git
+   read subcommands, pipelines of them, no chaining/redirection/eval). Anything
+   else is surfaced as a note, never run. Verified: every injection payload is
+   refused; legitimate read-only proposals still run.
+
+Plus five lower-severity fixes: a corrective command hint no longer attaches to a
+*successful* command (exit code is now checked), the MCP `run_command_sync` path
+now uses PowerShell too (shell consistency), `write_file` can no longer satisfy
+`require_file_output` on an unverified write, and two `web_research` guidance
+mislabels were corrected. New adversarial tests pin every one — including the
+escape payload and the injection payloads as regression tests.
+
+The lesson, again: the features that make the agent *more capable and autonomous*
+are exactly the ones that need adversarial review — a self-probe found the
+write_file path gate but missed the cwd escape and the injection sink entirely.
+
+Backend test suite: **479 passing** (this round added tool ergonomics, the team
+behaviours, write_file, and the security regression tests).

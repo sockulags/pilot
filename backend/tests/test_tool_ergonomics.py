@@ -77,20 +77,32 @@ def test_loop_result_header_states_shell(tmp_path):
     assert "pilot-eval" in result
 
 
-def test_loop_result_appends_hint_on_shell_confusion(tmp_path, monkeypatch):
+def test_loop_appends_hint_only_on_failed_command(tmp_path, monkeypatch):
     from agents import loop as agent_loop
 
-    async def fake_run(cmd, cwd=None):
-        yield "'.Count' was unexpected at this time\n"
-
-    monkeypatch.setattr(agent_loop, "run_command_async", fake_run)
+    def fake_run(exit_code):
+        async def _run(cmd, cwd=None, status=None):
+            if status is not None:
+                status["returncode"] = exit_code
+                status["timed_out"] = False
+            yield "'.Count' was unexpected at this time\n"
+        return _run
 
     async def go():
         return await agent_loop.execute_tool(
-            "run_command", {"cmd": "dir | find .Count", "cwd": str(tmp_path)}, lambda e: None
+            "run_command", {"cmd": "x", "cwd": str(tmp_path)}, lambda e: None
         )
-    result = asyncio.run(go())
-    assert "Hint:" in result and "PowerShell" in result
+
+    # Non-zero exit -> the corrective hint is attached.
+    monkeypatch.setattr(agent_loop, "run_command_async", fake_run(1))
+    failed = asyncio.run(go())
+    assert "Hint:" in failed and "PowerShell" in failed
+
+    # Exit 0 -> NO hint, even though the output contains a trigger phrase
+    # (adversarial review 2026-07-03: a successful command must not be mis-hinted).
+    monkeypatch.setattr(agent_loop, "run_command_async", fake_run(0))
+    ok = asyncio.run(go())
+    assert "Hint:" not in ok
 
 
 # --------------------------------------------------------------------------- #
@@ -140,6 +152,21 @@ def test_retry_with_simplified_query_recovers_sources():
 
 
 def test_zero_search_results_explains_and_suggests():
+    # A query with no useful simplification -> only one attempt -> "do not repeat".
+    async def fake_search(q, n):
+        return []
+    r = asyncio.run(web_research_result(
+        "python", min_sources=2, search_results=fake_search, fetch=_fake_fetch({}),
+    ))
+    assert not r.ok
+    assert "Sources fetched: 0" in r.error
+    assert "Why:" in r.error and "Try:" in r.error
+    assert "Do not repeat the same query" in r.error
+
+
+def test_zero_results_after_retry_advises_different_query():
+    # Both primary and simplified retry found nothing -> advise a DIFFERENT query,
+    # not the one already tried (adversarial review 2026-07-03).
     async def fake_search(q, n):
         return []
     r = asyncio.run(web_research_result(
@@ -147,9 +174,8 @@ def test_zero_search_results_explains_and_suggests():
         search_results=fake_search, fetch=_fake_fetch({}),
     ))
     assert not r.ok
-    assert "Sources fetched: 0" in r.error
-    assert "Why:" in r.error and "Try:" in r.error
-    assert "Do not repeat the same query" in r.error
+    assert "already attempted" in r.error
+    assert "a DIFFERENT" in r.error
 
 
 def test_all_fetches_failed_explains_blocking():

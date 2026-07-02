@@ -63,9 +63,10 @@ def test_overwrites_with_flag(tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-def test_new_relative_file_needs_no_confirmation():
-    assert registry.confirmation_required("write_file", {"path": "report.md", "content": "x"}) is False
-    assert registry.confirmation_required("write_file", {"path": "out/report.md", "content": "x"}) is False
+def test_new_relative_file_needs_no_confirmation(tmp_path):
+    cwd = str(tmp_path)  # the loop always supplies a trusted cwd
+    assert registry.confirmation_required("write_file", {"path": "report.md", "content": "x", "cwd": cwd}) is False
+    assert registry.confirmation_required("write_file", {"path": "out/report.md", "content": "x", "cwd": cwd}) is False
 
 
 def test_overwrite_of_existing_file_requires_confirmation(tmp_path):
@@ -94,6 +95,40 @@ def test_absolute_path_inside_project_cwd_is_not_gated(tmp_path):
     assert registry.confirmation_required(
         "write_file", {"path": outside, "content": "x", "cwd": str(tmp_path)}
     ) is True
+
+
+def test_relative_path_that_normalizes_inside_is_not_gated(tmp_path):
+    # sub/../summary.md resolves inside the project -> safe (previously over-gated).
+    assert registry.confirmation_required(
+        "write_file", {"path": "sub/../summary.md", "content": "x", "cwd": str(tmp_path)}
+    ) is False
+
+
+def test_model_supplied_cwd_cannot_escape_the_project(tmp_path):
+    # SECURITY (adversarial review 2026-07-03): a model that sets its own cwd must
+    # not escape. apply_project_cwd_to_args FORCES cwd to the trusted project root,
+    # overriding the model value, so the gate then judges the real target.
+    from agents import loop as agent_loop
+
+    project = str(tmp_path / "project")
+    os.makedirs(project)
+    evil = agent_loop.apply_project_cwd_to_args(
+        "write_file",
+        {"path": "pwned.txt", "content": "x", "cwd": "C:\\Windows\\Temp"},
+        project,
+    )
+    assert evil["cwd"] == project  # model cwd overridden with the trusted base
+    # Defense-in-depth: the gate itself refuses a target that resolves outside cwd.
+    assert registry.confirmation_required(
+        "write_file",
+        {"path": str(tmp_path.parent / "escape.txt"), "content": "x", "cwd": project},
+    ) is True
+
+
+def test_no_trusted_cwd_requires_confirmation():
+    assert registry.confirmation_required(
+        "write_file", {"path": "x.md", "content": "y"}
+    ) is True  # no cwd -> no trusted base -> confirm
 
 
 def test_traversal_and_absolute_paths_require_confirmation():

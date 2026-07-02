@@ -150,7 +150,7 @@ class RoutingAndCwdTests(unittest.TestCase):
         async def fake_route_next_action(*args, **kwargs):
             return decisions.pop(0)
 
-        async def fake_run_command_async(cmd, cwd=None):
+        async def fake_run_command_async(cmd, cwd=None, status=None):
             seen_cwd.append(cwd)
             yield "no issues\n"
 

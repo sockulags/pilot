@@ -446,6 +446,64 @@ def _extract_proposed_command(answer: str) -> tuple[str, str | None]:
     return "\n".join(kept).strip(), proposal
 
 
+# Auto-executing an expert-proposed command is a PROMPT-INJECTION SINK: the
+# expert answer is generated from evidence that can contain attacker-controlled
+# web/file text, so the command must be constrained by a POSITIVE ALLOWLIST of
+# read-only inspection commands — never the denylist risk classifier, which
+# misses side-effecting binaries like certutil/python/schtasks (adversarial
+# review 2026-07-03). A proposal outside this set is surfaced as a note, not run;
+# the coordinator can still choose to run it itself through the fully-gated
+# decision loop (where confirmation applies).
+_PROPOSAL_READONLY_TOKENS = frozenset({
+    "get-childitem", "gci", "dir", "ls", "get-content", "gc", "cat", "type",
+    "get-item", "get-itemproperty", "select-string", "sls", "test-path",
+    "measure-object", "get-location", "pwd", "resolve-path", "get-command",
+    "get-date", "where-object", "where", "sort-object", "sort", "select-object",
+    "select", "format-table", "ft", "format-list", "fl", "out-string",
+    "get-help", "get-member", "gm",
+})
+_GIT_READONLY_SUBCMDS = frozenset({
+    "status", "log", "diff", "show", "branch", "remote", "rev-parse",
+    "ls-files", "describe", "config", "tag",
+})
+# Any of these makes a "read-only" command unsafe (chaining, redirection, dynamic
+# eval, subshell) — reject the whole proposal if present.
+_PROPOSAL_FORBIDDEN = re.compile(r"[;&`]|\$\(|>|<|\biex\b|invoke-expression", re.IGNORECASE)
+
+
+def _first_command_token(segment: str) -> str:
+    # Leading cmdlet/verb, ignoring a wrapping "(" and any trailing property
+    # access/args (e.g. "(Get-ChildItem *.py).Count" -> "get-childitem").
+    s = segment.strip().lstrip("(").strip().strip("'\"")
+    m = re.match(r"[A-Za-z][A-Za-z0-9-]*", s)
+    return m.group(0).lower() if m else ""
+
+
+def _git_subcommand(segment: str) -> str:
+    parts = segment.strip().lstrip("(").split()
+    return parts[1].lower() if len(parts) > 1 else ""
+
+
+def _proposal_is_read_only(cmd: str) -> bool:
+    """Whether an expert-proposed command is a provably read-only inspection.
+
+    Positive allowlist: every pipeline segment's first token must be a known
+    read-only cmdlet (or ``git <read-subcommand>``), and no chaining/redirection/
+    eval metacharacters may appear. Anything else is not auto-executed.
+    """
+    text = (cmd or "").strip()
+    if not text or _PROPOSAL_FORBIDDEN.search(text):
+        return False
+    for segment in text.split("|"):
+        token = _first_command_token(segment)
+        if token == "git":
+            if _git_subcommand(segment) not in _GIT_READONLY_SUBCMDS:
+                return False
+        elif token not in _PROPOSAL_READONLY_TOKENS:
+            return False
+    return True
+
+
 def _proposal_block_reason(
     cmd: str,
     contract: TaskContract | None,
@@ -463,6 +521,10 @@ def _proposal_block_reason(
     front brain can still choose to issue the command itself as a normal tool
     action, which then halts for confirmation like any other risky command.
     """
+    # Injection defence FIRST: only provably read-only commands auto-run, because
+    # the proposal can be steered by attacker-controlled evidence.
+    if not _proposal_is_read_only(cmd):
+        return "only read-only inspection commands may be auto-run from a proposal"
     if capabilities is not None and not tool_allowed("run_command", capabilities):
         return f"run_command is not permitted by the {capabilities!r} job profile"
     if contract and "run_command" not in contract.allowed_tools:
@@ -522,11 +584,13 @@ async def _consult_expert(
                 "You are a specialist assistant consulted to help answer the user's "
                 "request. Answer it directly, precisely and concisely. Match the user's "
                 "language. Ground your answer in the provided evidence when present. "
-                "If actually RUNNING one PowerShell command on the user's machine "
-                "would materially improve the answer (e.g. to inspect real state), "
-                "you may end your reply with exactly one line:\n"
+                "If running one READ-ONLY PowerShell command would materially "
+                "improve the answer (e.g. Get-ChildItem, Get-Content, Select-String, "
+                "Test-Path, git status/log/diff to inspect real state), you may end "
+                "your reply with exactly one line:\n"
                 f"{PROPOSED_COMMAND_MARKER} <the command>\n"
-                "Prefer read-only commands; the coordinator will vet and run it."
+                "It MUST be read-only — the coordinator only auto-runs read-only "
+                "inspection commands; anything else is ignored."
             ),
         },
         {"role": "user", "content": f"{context}{request}"},
@@ -868,7 +932,7 @@ async def run_coordinator(
         )
         if tool == "run_command" and _command_writes_file(str(args.get("cmd") or args.get("command") or "")):
             file_output_done = True
-        if tool == "write_file" and evidence["ok"]:
+        if tool == "write_file" and evidence["ok"] and evidence["artifact_verified"]:
             file_output_done = True
         if tool in agent_loop.POST_ACTION_OBSERVE_TOOLS:
             last_observation = await agent_loop.perceive(task, history, emit)

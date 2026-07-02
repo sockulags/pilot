@@ -18,7 +18,6 @@ Adding a tool = adding one ``ToolSpec`` here; all surfaces pick it up.
 from __future__ import annotations
 
 import os
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -483,46 +482,36 @@ def get(name: str) -> ToolSpec | None:
 
 
 def _write_file_requires_confirmation(args: dict) -> bool:
-    """Per-args gate for write_file.
+    """Per-args gate for write_file. Confirm UNLESS the write is provably safe.
 
-    Creating a NEW file at a plain relative path (which the loop resolves into
-    the active project folder) is the intended, safe use and runs freely — this
-    is what makes autonomous file output possible at all (previously EVERY shell
+    Safe = the resolved target is INSIDE the trusted base ``cwd`` AND it is not
+    replacing an existing file. Creating a new file inside the project runs freely
+    (this is what makes autonomous file output possible — previously every shell
     write was confirmation-gated while file-output turns required one, a
-    contradiction the 2026-07-02 eval exposed). Everything with wider blast
-    radius stays gated: an explicit overwrite, path traversal, or an absolute
-    target outside the project the loop would otherwise scope it to.
+    contradiction the 2026-07-02 eval exposed). Everything else — no trusted base,
+    a target that resolves outside it (traversal, absolute, drive-relative,
+    symlink), or an overwrite of an existing file — needs user sign-off.
+
+    SECURITY: ``cwd`` is the trusted base and must be set by the caller, not the
+    model — the loop's apply_project_cwd_to_args forces it (adversarial review
+    2026-07-03). This resolve-and-contain check is the second line of defence.
     """
     path = str(args.get("path") or "")
-    if not path.strip():
+    cwd = str(args.get("cwd") or "")
+    if not path.strip() or not cwd.strip():
         return True
-    if bool(args.get("overwrite")):
-        # The flag only matters when something would actually be replaced —
-        # small models set overwrite=true preemptively on brand-new files
-        # (observed live: gemma4), and gating a no-op flag just blocks them.
-        target = (
-            path
-            if os.path.isabs(path)
-            else os.path.join(str(args.get("cwd") or os.getcwd()), path)
-        )
-        if os.path.exists(target):
-            return True
-    normalized = path.replace("\\", "/")
-    if ".." in normalized.split("/"):
+    try:
+        target = os.path.realpath(path if os.path.isabs(path) else os.path.join(cwd, path))
+        base = os.path.realpath(cwd)
+        inside = os.path.commonpath([target, base]) == base
+    except ValueError:  # e.g. different drives on Windows -> cannot be inside
         return True
-    if os.path.isabs(path) or re.match(r"^[A-Za-z]:", path):
-        # An absolute target is fine when it stays INSIDE the active project
-        # folder (models often echo the workspace path verbatim — that is the
-        # intended location, not an escape). Anywhere else needs user sign-off.
-        cwd = str(args.get("cwd") or "")
-        if not cwd:
-            return True
-        try:
-            target = os.path.realpath(path)
-            base = os.path.realpath(cwd)
-            return os.path.commonpath([target, base]) != base
-        except ValueError:  # e.g. different drives on Windows
-            return True
+    if not inside:
+        return True
+    # Inside the trusted base: a preemptive overwrite=true on a brand-new file is
+    # a no-op (small models set it habitually); only gate a real replacement.
+    if bool(args.get("overwrite")) and os.path.exists(target):
+        return True
     return False
 
 
