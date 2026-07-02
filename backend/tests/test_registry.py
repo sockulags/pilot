@@ -23,6 +23,8 @@ class RegistryDerivationTests(unittest.TestCase):
                 # New tools (Fas C)
                 "search_files", "github_issues", "github_prs", "github_repo",
                 "web_research", "web_search", "fetch_url",
+                # First-class file output (2026-07-02 eval finding)
+                "write_file",
             },
             registry.coordinator_tool_names(),
         )

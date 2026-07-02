@@ -52,6 +52,41 @@ def read_file(path: str) -> dict[str, str]:
     return {"path": str(target), "text": target.read_text(encoding="utf-8", errors="replace")}
 
 
+def write_file(path: str, content: str, overwrite: bool = False, cwd: str | None = None) -> dict[str, Any]:
+    """Write ``content`` to a text file and verify the write.
+
+    First-class file output for the agent: the eval (2026-07-02) showed that
+    requiring file output while confirmation-gating EVERY shell write command
+    (Set-Content/Out-File/>) made research-to-file impossible to complete
+    autonomously — the system demanded what its safety layer forbade. write_file
+    resolves that: creating a NEW file is a normal, verifiable act; overwriting
+    requires the explicit ``overwrite`` flag (which the registry confirmation-
+    gates), and path traversal/absolute targets are gated at the registry level.
+
+    Refuses to replace an existing file unless ``overwrite`` is set — the refusal
+    message tells the model exactly what its options are. Returns the resolved
+    path, byte count and a verified flag (existence re-checked after writing).
+    """
+    raw = Path(path)
+    if not raw.is_absolute():
+        raw = Path(cwd) / raw if cwd else Path.cwd() / raw
+    target = raw.resolve()
+    if target.exists() and not overwrite:
+        raise FileExistsError(
+            f"{target} already exists. Pass overwrite=true to replace it, or "
+            "choose a different filename."
+        )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    data = str(content or "")
+    target.write_text(data, encoding="utf-8")
+    verified = target.is_file() and target.stat().st_size >= len(data.encode("utf-8")) - 8
+    return {
+        "path": str(target),
+        "bytes": target.stat().st_size,
+        "verified": bool(verified),
+    }
+
+
 def find_file(name: str, root: str | None = None) -> dict[str, Any]:
     search_root = resolve_path(root or str(PROJECT_ROOT))
     if not search_root.is_dir():

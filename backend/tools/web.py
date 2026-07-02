@@ -200,7 +200,15 @@ def parse_search_results_html(body: str, max_results: int = 5) -> list[WebSearch
 
 
 async def search_web_results(query: str, max_results: int = 5) -> list[WebSearchResult]:
-    """Search the web and return structured results, not presentation text."""
+    """Search the web and return structured results, not presentation text.
+
+    Tries DuckDuckGo's HTML endpoint first; when that yields nothing (challenge
+    page, transient block) it falls back to the lite endpoint, which serves a
+    much simpler page and is rarely blocked. Retrieval was the eval's weakest
+    measured link (2026-07-02: research-to-file failed on BOTH backends because
+    zero sources came back), so the search layer must not depend on one endpoint.
+    """
+    primary_error: Exception | None = None
     try:
         async with httpx.AsyncClient(
             timeout=20, follow_redirects=True, headers={"User-Agent": _UA}
@@ -209,11 +217,64 @@ async def search_web_results(query: str, max_results: int = 5) -> list[WebSearch
                 "https://html.duckduckgo.com/html/", data={"q": query}
             )
             resp.raise_for_status()
-            body = resp.text
-    except Exception as exc:
-        raise RuntimeError(f"web_search failed: {type(exc).__name__}: {exc}") from exc
+            results = parse_search_results_html(resp.text, max_results)
+            if results:
+                return results
+    except Exception as exc:  # noqa: BLE001 — fall through to the lite endpoint
+        primary_error = exc
 
-    return parse_search_results_html(body, max_results)
+    try:
+        return await _search_lite(query, max_results)
+    except Exception as exc:
+        first = f"{type(primary_error).__name__}: {primary_error}; " if primary_error else ""
+        raise RuntimeError(
+            f"web_search failed on both endpoints ({first}lite: {type(exc).__name__}: {exc})"
+        ) from exc
+
+
+_LITE_RESULT_RE = re.compile(
+    r'<a[^>]+rel="nofollow"[^>]+href="(?P<href>[^"]+)"[^>]*>(?P<title>.*?)</a>',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+async def _search_lite(query: str, max_results: int = 5) -> list[WebSearchResult]:
+    """Fallback search via DuckDuckGo's lite endpoint (simple HTML, rarely blocked)."""
+    async with httpx.AsyncClient(
+        timeout=20, follow_redirects=True, headers={"User-Agent": _UA}
+    ) as client:
+        resp = await client.post("https://lite.duckduckgo.com/lite/", data={"q": query})
+        resp.raise_for_status()
+        body = resp.text
+    results: list[WebSearchResult] = []
+    for m in _LITE_RESULT_RE.finditer(body):
+        url = _clean_ddg_href(m.group("href"))
+        if is_blocked_result_url(url) or not url.startswith(("http://", "https://")):
+            continue
+        results.append(WebSearchResult(_strip_tags(m.group("title")), url))
+        if len(results) >= max_results:
+            break
+    return results
+
+
+# Over-constraining filler words dropped when a search needs a second, simpler
+# attempt. Deterministic — no model call inside a tool.
+_QUERY_FILLER = {
+    "aktuell", "aktuella", "aktuellt", "senaste", "current", "latest", "recent",
+    "bäst", "bästa", "best", "bra", "rekommenderad", "recommended",
+    "idag", "today", "nu", "now", "2025", "2026",
+}
+
+
+def simplified_query(query: str) -> str:
+    """A simpler variant of a failing query: drop filler/qualifier words and
+    quotes, cap the length. Returns "" when no meaningful simplification exists."""
+    words = [w for w in re.split(r"\s+", (query or "").replace('"', " ").strip()) if w]
+    kept = [w for w in words if w.lower().strip(".,!?") not in _QUERY_FILLER]
+    if not kept:
+        kept = words
+    simplified = " ".join(kept[:6]).strip()
+    return simplified if simplified and simplified.lower() != (query or "").lower() else ""
 
 
 def format_web_search_results(query: str, results: list[WebSearchResult]) -> str:
@@ -248,37 +309,105 @@ async def web_research_result(
     """Search, filter and fetch sources as a structured tool result."""
     final_query = (query or "").strip() or infer_web_query(task)
     if not final_query:
-        error = "web_research requires a search query and could not infer one from the task."
+        error = (
+            "web_research requires a search query and could not infer one from the "
+            "task. Call it again with an explicit query, e.g. the key subject words "
+            "of the user's request."
+        )
         return ToolResult(False, "web_research", error=error, data={"query": final_query})
 
     fetcher = fetch or fetch_url
-    try:
-        candidates = _parse_search_output(await search(final_query, max_results)) if search else await search_results(final_query, max_results)
-    except RuntimeError as exc:
-        return ToolResult(False, "web_research", error=str(exc), data={"query": final_query})
+
+    async def _candidates(q: str) -> list[WebSearchResult]:
+        if search:
+            return _parse_search_output(await search(q, max_results))
+        return await search_results(q, max_results)
+
+    # The primary query, plus ONE deterministic simplified retry when it comes up
+    # short — retrieval was the eval's weakest link, and a single over-constrained
+    # query ("aktuell bästa ... 2026") returning nothing should not end the task.
+    attempts = [final_query]
+    retry_query = simplified_query(final_query)
+    if retry_query:
+        attempts.append(retry_query)
 
     fetched: list[tuple[WebSearchResult, str]] = []
     failures: list[str] = []
+    search_errors: list[str] = []
+    seen_urls: set[str] = set()
+    candidates_total = 0
+    queries_used: list[str] = []
 
-    for result in candidates:
+    for attempt_query in attempts:
         if len(fetched) >= min_sources:
             break
-        page = await fetcher(result.url, 5000)
-        if page.startswith("fetch_url failed:"):
-            failures.append(f"{result.url} -> {page}")
+        try:
+            candidates = await _candidates(attempt_query)
+        except RuntimeError as exc:
+            search_errors.append(str(exc))
             continue
-        fetched.append((result, page))
+        queries_used.append(attempt_query)
+        candidates_total += len(candidates)
+        for result in candidates:
+            if len(fetched) >= min_sources:
+                break
+            if result.url in seen_urls:
+                continue
+            seen_urls.add(result.url)
+            page = await fetcher(result.url, 5000)
+            if page.startswith("fetch_url failed:"):
+                failures.append(f"{result.url} -> {page}")
+                continue
+            fetched.append((result, page))
 
     lines = [f"Research results for {final_query!r}:", f"Sources fetched: {len(fetched)}"]
+    if len(queries_used) > 1:
+        lines.append(f"(also retried with simplified query {queries_used[1]!r})")
     if not fetched:
+        # Explain WHY nothing came back and what to do next, so the model adapts
+        # instead of re-running the identical call (eval 2026-07-02: six identical
+        # retries). This text is the model's only feedback signal.
         lines.append("No readable sources could be fetched.")
+        if candidates_total == 0 and search_errors:
+            lines.append(
+                "Why: the search request itself failed ("
+                + "; ".join(search_errors[:2])
+                + ")."
+            )
+            lines.append(
+                "Try: wait and call web_research once more, or answer from existing "
+                "knowledge while saying the web could not be reached."
+            )
+        elif candidates_total == 0:
+            lines.append(
+                "Why: the search returned zero results — the query is likely too "
+                "narrow or phrased unusually."
+            )
+            lines.append(
+                "Try: ONE retry with a shorter English query of 2-4 key words"
+                + (f", e.g. {retry_query!r}" if retry_query else "")
+                + ". Do not repeat the same query."
+            )
+        else:
+            lines.append(
+                f"Why: {candidates_total} result(s) were found but every page fetch "
+                "failed — the sites likely block automated access."
+            )
+            lines.append(
+                "Try: fetch_url on a specific well-known site for this topic, or "
+                "answer from existing knowledge and say sources were unreachable. "
+                "Do not repeat the same web_research call."
+            )
     sources: list[dict[str, str]] = []
     for i, (result, page) in enumerate(fetched, 1):
         excerpt = re.sub(r"\s+", " ", page).strip()
         sources.append({"title": result.title, "url": result.url})
         lines.append(f"{i}. {result.title}\n   {result.url}\n   {excerpt[:900]}")
-    if len(fetched) < min_sources:
-        lines.append(f"Only {len(fetched)} readable source(s) were available from the search results.")
+    if fetched and len(fetched) < min_sources:
+        lines.append(
+            f"Only {len(fetched)} readable source(s) were available from the search "
+            "results. Use what is here rather than retrying the same query."
+        )
     if failures:
         lines.append("Fetch failures:\n" + "\n".join(failures[:5]))
     text = "\n".join(lines)
@@ -288,7 +417,12 @@ async def web_research_result(
         kind="web_research",
         text=text if ok else "",
         error=None if ok else text,
-        data={"query": final_query, "sources_fetched": len(fetched), "failures": failures},
+        data={
+            "query": final_query,
+            "queries_used": queries_used,
+            "sources_fetched": len(fetched),
+            "failures": failures,
+        },
         sources=sources,
     )
 

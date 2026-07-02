@@ -17,6 +17,8 @@ Adding a tool = adding one ``ToolSpec`` here; all surfaces pick it up.
 
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -80,6 +82,26 @@ REGISTRY: tuple[ToolSpec, ...] = (
         mcp_facing=True,
     ),
     ToolSpec(
+        name="write_file",
+        summary="Write a text file (create it; overwrite only when asked)",
+        description="write_file(path, content, overwrite?): create a text file with "
+        "the given content and verify it exists",
+        when_to_use="When the task's result should be saved as a local file "
+        "(reports, summaries, generated text). Creating a NEW file needs no "
+        "confirmation; replacing an existing one requires overwrite=true. Prefer "
+        "this over shell redirection or Set-Content.",
+        params={
+            "path": {"type": "string", "description": "Target file path (relative = project folder)"},
+            "content": {"type": "string", "description": "Full text content to write"},
+            "overwrite": {"type": "boolean", "description": "Replace an existing file (default false)"},
+        },
+        required=("path", "content"),
+        category="files",
+        risk_level="medium",
+        side_effects=True,
+        streaming=False,
+    ),
+    ToolSpec(
         name="find_file",
         summary="Find files by name",
         description="find_file(name, root?): search a folder tree for files matching name",
@@ -97,12 +119,14 @@ REGISTRY: tuple[ToolSpec, ...] = (
     # --- Shell ---------------------------------------------------------------
     ToolSpec(
         name="run_command",
-        summary="Run a shell command and read its output",
-        description="run_command(cmd, cwd?): run a shell command, stream its output",
-        when_to_use="For quick one-off commands and CLI tools (e.g. gh, git, dir). "
-        "This is a Windows machine — use Windows/PowerShell commands, not 'pwd'.",
+        summary="Run a PowerShell command and read its output",
+        description="run_command(cmd, cwd?): run a command in PowerShell, stream its output",
+        when_to_use="For quick one-off commands and CLI tools (e.g. gh, git). "
+        "The command runs in POWERSHELL — use PowerShell syntax, not cmd.exe or "
+        "bash: count files with (Get-ChildItem *.py).Count, read files with "
+        "Get-Content, search text with Select-String. Not 'pwd', not 'dir | find'.",
         params={
-            "cmd": {"type": "string", "description": "The command line to run"},
+            "cmd": {"type": "string", "description": "The PowerShell command line to run"},
             "cwd": {"type": "string", "description": "Working directory (optional)"},
         },
         required=("cmd",),
@@ -458,6 +482,50 @@ def get(name: str) -> ToolSpec | None:
     return next((s for s in _EXTERNAL if s.name == name), None)
 
 
+def _write_file_requires_confirmation(args: dict) -> bool:
+    """Per-args gate for write_file.
+
+    Creating a NEW file at a plain relative path (which the loop resolves into
+    the active project folder) is the intended, safe use and runs freely — this
+    is what makes autonomous file output possible at all (previously EVERY shell
+    write was confirmation-gated while file-output turns required one, a
+    contradiction the 2026-07-02 eval exposed). Everything with wider blast
+    radius stays gated: an explicit overwrite, path traversal, or an absolute
+    target outside the project the loop would otherwise scope it to.
+    """
+    path = str(args.get("path") or "")
+    if not path.strip():
+        return True
+    if bool(args.get("overwrite")):
+        # The flag only matters when something would actually be replaced —
+        # small models set overwrite=true preemptively on brand-new files
+        # (observed live: gemma4), and gating a no-op flag just blocks them.
+        target = (
+            path
+            if os.path.isabs(path)
+            else os.path.join(str(args.get("cwd") or os.getcwd()), path)
+        )
+        if os.path.exists(target):
+            return True
+    normalized = path.replace("\\", "/")
+    if ".." in normalized.split("/"):
+        return True
+    if os.path.isabs(path) or re.match(r"^[A-Za-z]:", path):
+        # An absolute target is fine when it stays INSIDE the active project
+        # folder (models often echo the workspace path verbatim — that is the
+        # intended location, not an escape). Anywhere else needs user sign-off.
+        cwd = str(args.get("cwd") or "")
+        if not cwd:
+            return True
+        try:
+            target = os.path.realpath(path)
+            base = os.path.realpath(cwd)
+            return os.path.commonpath([target, base]) != base
+        except ValueError:  # e.g. different drives on Windows
+            return True
+    return False
+
+
 def confirmation_required(tool: str, args: dict | None = None) -> bool:
     spec = get(tool)
     if not spec:
@@ -467,6 +535,8 @@ def confirmation_required(tool: str, args: dict | None = None) -> bool:
         return _command_requires_confirmation(str(args.get("cmd") or args.get("command") or ""))
     if tool == "read_file":
         return _path_requires_confirmation(str(args.get("path") or ""))
+    if tool == "write_file":
+        return _write_file_requires_confirmation(args)
     return spec.risk_level == "high"
 
 
