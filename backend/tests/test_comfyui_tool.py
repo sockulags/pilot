@@ -35,7 +35,7 @@ class ComfyUIToolTests(unittest.TestCase):
         result = comfyui.generate_image(
             "red robot",
             base_url="http://127.0.0.1:8188",
-            comfyui_dir=r"C:\Users\lucas\Code\ComfyUI",
+            comfyui_dir=r"C:\Users\dev\Code\ComfyUI",
             checkpoint="model.safetensors",
             client=client,
             poll_interval=0,
@@ -78,9 +78,9 @@ class ComfyUIToolTests(unittest.TestCase):
             steps=12,
             seed=42,
             base_url="http://127.0.0.1:8188",
-            comfyui_dir=r"C:\Users\lucas\Code\ComfyUI",
+            comfyui_dir=r"C:\Users\dev\Code\ComfyUI",
             checkpoint="model.safetensors",
-            output_dir=r"C:\Users\lucas\Code\ComfyUI\output",
+            output_dir=r"C:\Users\dev\Code\ComfyUI\output",
             client=client,
             poll_interval=0,
         )

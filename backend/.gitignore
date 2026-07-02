@@ -8,3 +8,10 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local environment / secrets (use .env.example as the template)
+.env
+
+# Runtime data and logs (session stores, diagnostics, dev logs)
+data/
+*.log

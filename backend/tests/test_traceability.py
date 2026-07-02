@@ -128,12 +128,12 @@ class RoutingAndCwdTests(unittest.TestCase):
     def test_project_cwd_is_applied_to_file_tool_defaults(self):
         from agents.loop import apply_project_cwd_to_args
 
-        cwd = r"C:\Users\lucas\Code\CV_Builder"
+        cwd = r"C:\Users\dev\Code\CV_Builder"
 
         self.assertEqual({"path": cwd}, apply_project_cwd_to_args("list_dir", {}, cwd))
         self.assertEqual({"root": cwd, "name": "README.md"}, apply_project_cwd_to_args("find_file", {"name": "README.md"}, cwd))
         self.assertEqual(
-            {"path": r"C:\Users\lucas\Code\CV_Builder\README.md"},
+            {"path": r"C:\Users\dev\Code\CV_Builder\README.md"},
             apply_project_cwd_to_args("read_file", {"path": "README.md"}, cwd),
         )
 
@@ -164,14 +164,14 @@ class RoutingAndCwdTests(unittest.TestCase):
                 "Kolla Github med gh",
                 events.append,
                 asyncio.Event(),
-                project_cwd=r"C:\Users\lucas\Code\CV_Builder",
+                project_cwd=r"C:\Users\dev\Code\CV_Builder",
             )
         finally:
             loop.route_next_action, loop.run_command_async, loop.PERCEPTION_ENABLED = originals
 
         action = next(event for event in events if event["type"] == "action")
-        self.assertEqual(r"C:\Users\lucas\Code\CV_Builder", action["args"]["cwd"])
-        self.assertEqual([r"C:\Users\lucas\Code\CV_Builder"], seen_cwd)
+        self.assertEqual(r"C:\Users\dev\Code\CV_Builder", action["args"]["cwd"])
+        self.assertEqual([r"C:\Users\dev\Code\CV_Builder"], seen_cwd)
 
 
 class WebSocketCodeTurnTests(unittest.TestCase):
@@ -262,7 +262,7 @@ class CodexCliResolverTests(unittest.TestCase):
     def test_resolve_prefers_bundled_codex_over_windowsapps_path(self):
         import tools.codex_cli as codex_cli
 
-        bundled = r"C:\Users\lucas\AppData\Local\OpenAI\Codex\bin\hash\codex.exe"
+        bundled = r"C:\Users\dev\AppData\Local\OpenAI\Codex\bin\hash\codex.exe"
         windowsapps = r"C:\Program Files\WindowsApps\OpenAI.Codex_hash\app\resources\codex.EXE"
 
         with mock.patch.object(codex_cli, "CODEX_CLI", "codex"), \
