@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 import json
 import asyncio
+import secrets
 from config import PILOT_MCP_AUTH_TOKEN
 from tools import (
     screenshot, click, type_text, open_app,
@@ -28,7 +29,8 @@ def _auth_ok(request: Request) -> bool:
     """True when no token is configured, or the request presents a matching one."""
     if not PILOT_MCP_AUTH_TOKEN:
         return True
-    return _request_token(request) == PILOT_MCP_AUTH_TOKEN
+    presented = _request_token(request) or ""
+    return secrets.compare_digest(presented, PILOT_MCP_AUTH_TOKEN)
 
 
 # Generated from the single tool registry (tools/registry.py) so this server's
