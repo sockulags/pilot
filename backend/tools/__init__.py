@@ -4,7 +4,7 @@ from .elements import click_element
 from .system import run_command, run_command_sync, open_app
 from .codex import run_codex
 from .codex_cli import run_codex_cli
-from .os_tools import active_window_title, list_dir, read_file, find_file, list_windows, focus_window
+from .os_tools import active_window_title, list_dir, read_file, write_file, find_file, list_windows, focus_window
 from .search import search_files
 from .github import github_issues, github_prs, github_repo
 from .web import web_search, fetch_url, web_research, web_research_result
@@ -26,6 +26,7 @@ __all__ = [
     "run_codex_cli",
     "list_dir",
     "read_file",
+    "write_file",
     "find_file",
     "list_windows",
     "focus_window",

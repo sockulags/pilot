@@ -1,7 +1,68 @@
 import subprocess
 import os
 import asyncio
+import re
 from typing import AsyncGenerator
+
+
+def shell_name() -> str:
+    """The shell run_command executes in — stated in tool output so a small
+    model never has to guess which command dialect applies."""
+    return "PowerShell" if os.name == "nt" else "sh"
+
+
+# Common shell-confusion failure signatures -> one actionable hint each. The
+# point is that the TOOL teaches the model the environment (eval 2026-07-02:
+# models emitted cmd syntax into PowerShell, got an opaque error, then re-ran
+# the same command instead of adapting).
+_HINT_RULES: tuple[tuple[str, str], ...] = (
+    (
+        r"was unexpected at this time",
+        "this shell is PowerShell, not cmd.exe — cmd-style piping like "
+        "'dir | find /c' does not work. To count files: (Get-ChildItem *.py).Count",
+    ),
+    (
+        r"is not recognized as (an internal or external command|the name of a cmdlet)",
+        "the command was not found in PowerShell. Use PowerShell equivalents: "
+        "ls/dir -> Get-ChildItem, cat/type -> Get-Content, find/grep -> Select-String, "
+        "wc -l -> Measure-Object -Line",
+    ),
+    (
+        r"CommandNotFoundException",
+        "the command was not found in PowerShell. Use PowerShell equivalents: "
+        "ls/dir -> Get-ChildItem, cat/type -> Get-Content, find/grep -> Select-String",
+    ),
+    (
+        r"Missing expression after unary operator|ParserError",
+        "PowerShell could not parse the command — check quoting; single-quote "
+        "literals ('like this') and avoid cmd.exe-only syntax (/c, %VAR%)",
+    ),
+    (
+        r"cannot find path .* because it does not exist",
+        "the path does not exist in the working directory shown above — list it "
+        "first with Get-ChildItem to see what is actually there",
+    ),
+    (
+        # Observed live: 'find' resolved to Git's Unix find on PATH and walked the
+        # whole drive for ~50s. Neither cmd's find.exe nor Unix find is wanted here.
+        r"/usr/bin/find|find: .*Permission denied",
+        "'find' resolves to Unix find (from Git) and scans the whole drive — to "
+        "count files use (Get-ChildItem *.py).Count, to search text use Select-String",
+    ),
+)
+
+
+def command_hint(output: str) -> str:
+    """Return one actionable hint for a failed/confused command, or ''.
+
+    Deterministic and cheap: matched against the command output so the next
+    decision step learns what went wrong and what to try instead of repeating
+    the same failing command.
+    """
+    for pattern, hint in _HINT_RULES:
+        if re.search(pattern, output or "", re.IGNORECASE):
+            return f"Hint: {hint}."
+    return ""
 
 
 def _terminate_tree(process) -> None:
@@ -34,16 +95,30 @@ async def run_command(
 ) -> AsyncGenerator[str, None]:
     """Stream a shell command's output, bounded by ``timeout`` seconds.
 
-    On timeout the subprocess is killed and a timeout note is yielded, so a
+    On Windows the command runs EXPLICITLY in PowerShell (create_subprocess_shell
+    would hand it to cmd.exe): the tool descriptions, safety examples and the
+    models' own habits are all PowerShell-flavoured, and an ambiguous shell is
+    exactly what made models emit cmd/PowerShell hybrids that failed opaquely
+    (eval 2026-07-02). POSIX keeps the default shell.
+
+    On timeout the subprocess tree is killed and a timeout note is yielded, so a
     hanging or pathologically slow command can never block a turn indefinitely.
     ``timeout=None`` means unbounded (the historical behaviour).
     """
-    process = await asyncio.create_subprocess_shell(
-        cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        cwd=cwd,
-    )
+    if os.name == "nt":
+        process = await asyncio.create_subprocess_exec(
+            "powershell", "-NoProfile", "-NonInteractive", "-Command", cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=cwd,
+        )
+    else:
+        process = await asyncio.create_subprocess_shell(
+            cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=cwd,
+        )
     # Enforce the deadline with a watchdog that KILLS the process, rather than
     # cancelling the read: on Windows a pending Proactor pipe read cannot be
     # cancelled, so wait_for(readline) would block until natural EOF. Killing the

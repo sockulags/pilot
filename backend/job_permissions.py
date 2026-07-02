@@ -89,15 +89,20 @@ def _capability_for_tool(tool: str) -> str:
     if tool == "run_command":
         return "shell"
     spec = registry.get(tool)
+    # Side effects trump category: a side-effecting tool in a read-ish category
+    # (write_file lives under "files") still requires the explicit "shell"
+    # opt-in — a read-only scheduled job may never write.
+    if spec is not None and spec.side_effects:
+        return "shell"
     category = spec.category if spec else None
     if category in _WEB_CATEGORIES:
         return "web"
     if category in _READ_CATEGORIES:
         return "read"
     # Read-only by registry classification: no side effects -> "read".
-    if spec is not None and not spec.side_effects:
+    if spec is not None:
         return "read"
-    # Unknown/side-effecting tool: require the explicit "shell" opt-in.
+    # Unknown tool: require the explicit "shell" opt-in.
     return "shell"
 
 

@@ -79,6 +79,12 @@ class RuntimeState:
             artifact_path = _artifact_path_from_command(cmd)
             if artifact_path:
                 self._record_artifact(artifact_path, artifact_verified)
+        elif tool == "write_file":
+            # The tool verifies its own write; a successful result IS a verified
+            # artifact (same standing as run_command write + Test-Path).
+            path = _written_file_path(text) or str(args.get("path") or "").strip()
+            if ok and path:
+                self._record_artifact(path, artifact_verified)
         elif tool == "web_research":
             self.sources.append(_web_research_source_record(args, text))
         elif tool == "fetch_url":
@@ -224,6 +230,14 @@ def _path_from_tool_text(text: str) -> str:
     first_line = text.splitlines()[0] if text else ""
     if first_line.startswith("File: "):
         return first_line.removeprefix("File: ").strip()
+    return ""
+
+
+def _written_file_path(text: str) -> str:
+    """The resolved path from a write_file result ("File written: <path>")."""
+    first_line = text.splitlines()[0] if text else ""
+    if first_line.startswith("File written: "):
+        return first_line.removeprefix("File written: ").strip()
     return ""
 
 

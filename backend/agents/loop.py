@@ -287,6 +287,10 @@ def apply_project_cwd_to_args(tool: str, args: dict, project_cwd: str | None) ->
         if not path.is_absolute():
             return {**args, "path": str(Path(project_cwd) / path)}
 
+    if tool == "write_file" and not args.get("cwd"):
+        # The write lands in the active project folder, mirroring run_command.
+        return {**args, "cwd": project_cwd}
+
     return args
 
 
@@ -400,6 +404,8 @@ def deterministic_completion_summary(tool: str, result: str) -> str | None:
 def tool_execution_succeeded(tool: str, text: str) -> bool:
     if tool == "web_research":
         return text.startswith("Research results for ")
+    if tool == "write_file":
+        return text.startswith("File written: ")
     return not (
         text.startswith("Error executing")
         or " requires argument(s): " in text
@@ -472,17 +478,30 @@ async def _execute_tool_text(tool: str, args: dict, emit: Callable[[dict], None]
         return hotkey(*keys)
 
     elif tool == "run_command":
+        from tools.system import command_hint, shell_name
+
         cmd = args["cmd"]
         cwd = args.get("cwd")
         effective_cwd = cwd or os.getcwd()
-        header = f"Command: {cmd}\nCurrent working directory: {effective_cwd}\n"
+        # State the shell explicitly so the model never guesses the dialect.
+        header = (
+            f"Command: {cmd}\nShell: {shell_name()}\n"
+            f"Current working directory: {effective_cwd}\n"
+        )
         emit(make_event("result", content=header))
         output_parts = []
         async for line in run_command_async(cmd, cwd):
             output_parts.append(line)
             emit(make_event("result", content=line))
         output = "".join(output_parts)
-        return f"{header}Output:\n{output}".strip()
+        result = f"{header}Output:\n{output}".strip()
+        # A failed/confused command teaches the model what to do instead of
+        # letting it repeat the same mistake (see tools/system.py _HINT_RULES).
+        hint = command_hint(output)
+        if hint:
+            emit(make_event("result", content=hint))
+            result = f"{result}\n{hint}"
+        return result
 
     elif tool == "list_dir":
         result = list_dir(args.get("path"))
@@ -495,6 +514,24 @@ async def _execute_tool_text(tool: str, args: dict, emit: Callable[[dict], None]
     elif tool == "read_file":
         result = read_file(args["path"])
         return f"File: {result['path']}\nContent:\n{result['text']}"
+
+    elif tool == "write_file":
+        from tools import write_file
+
+        try:
+            result = write_file(
+                args["path"],
+                str(args.get("content") or ""),
+                overwrite=bool(args.get("overwrite")),
+                cwd=args.get("cwd"),
+            )
+        except FileExistsError as exc:
+            return f"write_file refused: {exc}"
+        verified = "yes" if result["verified"] else "no"
+        return (
+            f"File written: {result['path']}\nBytes: {result['bytes']}\n"
+            f"Verified: {verified}"
+        )
 
     elif tool == "find_file":
         result = find_file(args["name"], args.get("root"))
