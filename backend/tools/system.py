@@ -29,6 +29,19 @@ def run_command_sync(cmd: str, cwd: str | None = None, timeout: int = 30) -> str
     return output.strip()
 
 
+WINDOWS_APP_ALIASES = {
+    "calculator": "calc",
+    "calc": "calc",
+    "kalkylator": "calc",
+}
+
+
 def open_app(name: str) -> str:
-    os.startfile(name)
+    launch_name = name.strip()
+    if os.name == "nt":
+        alias = WINDOWS_APP_ALIASES.get(launch_name.lower())
+        if alias:
+            subprocess.Popen(alias, shell=True)
+            return f"Opened: {name}"
+    os.startfile(launch_name)
     return f"Opened: {name}"
