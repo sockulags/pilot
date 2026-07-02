@@ -407,21 +407,28 @@ async def _decide_step(
             return decision
 
         # Corrective re-ask: force a single structured decision from a model that
-        # narrated a plan instead of calling a tool.
-        forced = await client.post(
-            f"{OLLAMA_BASE_URL}/api/chat",
-            json={
-                "model": coordinator_model,
-                "messages": [
-                    {"role": "system", "content": system + _FORCE_DECISION_SUFFIX},
-                    {"role": "user", "content": context},
-                ],
-                "stream": False,
-                "options": {"temperature": 0.1},
-            },
-        )
-        forced.raise_for_status()
-        forced_msg = forced.json().get("message", {}) or {}
+        # narrated a plan instead of calling a tool. If this second call fails
+        # transiently, fall back to the prose answer already in hand — a healthy
+        # first call must never be turned into a whole-turn error by a flaky retry
+        # (on master a prose plan simply degraded to a graceful max_steps).
+        try:
+            forced = await client.post(
+                f"{OLLAMA_BASE_URL}/api/chat",
+                json={
+                    "model": coordinator_model,
+                    "messages": [
+                        {"role": "system", "content": system + _FORCE_DECISION_SUFFIX},
+                        {"role": "user", "content": context},
+                    ],
+                    "stream": False,
+                    "options": {"temperature": 0.1},
+                },
+            )
+            forced.raise_for_status()
+            forced_msg = forced.json().get("message", {}) or {}
+        except Exception as exc:  # noqa: BLE001 — degrade, never escalate to a turn error
+            logger.warning("forced re-decision failed (%s); keeping prose answer", exc)
+            return decision
 
     retry = _decision_from_message(forced_msg)
     retry.pop("_prose_fallback", None)

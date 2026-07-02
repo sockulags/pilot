@@ -18,6 +18,14 @@ no delegation to the external Codex/Claude CLIs). Each task carries a
 deterministic checker, so the pass/fail signal never depends on a model grading
 itself.
 
+Deliberate divergence from ``api/ws.py``: for a file-output turn, ws.py has a
+safety net — when the model fails to write/verify the file it writes a fallback
+report and records a verified artifact so the *user* still succeeds. This runner
+does NOT reproduce that fallback: it measures the model's UNAIDED
+research→write→verify ability, so a file task fails here exactly when the model
+itself fails (production would still cover the user). That is intentional — the
+eval is a capability measurement, not a product-success measurement.
+
 Run it (one command, from the ``backend`` directory)::
 
     uv run python -m tests.eval.live_runner
@@ -36,7 +44,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -399,14 +409,38 @@ async def run_task(
 
 
 def percentile(values: list[float], pct: float) -> float:
-    """Nearest-rank percentile (pct in [0, 100]); 0.0 for an empty list."""
+    """Nearest-rank percentile (pct in [0, 100]); 0.0 for an empty list.
+
+    Uses ceil, not round(): Python's round() is round-half-to-even, so
+    round(0.50*9)=round(4.5)=4 would understate the median of 9 values (the true
+    median is the 5th). ceil(pct/100 * n) is the standard nearest-rank rank.
+    """
     if not values:
         return 0.0
     ordered = sorted(values)
     if len(ordered) == 1:
         return ordered[0]
-    rank = max(1, min(len(ordered), round(pct / 100 * len(ordered))))
+    rank = max(1, min(len(ordered), math.ceil(pct / 100 * len(ordered))))
     return ordered[rank - 1]
+
+
+def _redact(text: str) -> str:
+    """Strip the user's home path / username from any text written to the repo.
+
+    Model answers and tool output can echo the real workspace path
+    (e.g. ``C:\\Users\\<name>\\...``); the committed report is public, so redact
+    the home directory and the bare username to ``<HOME>`` / ``<user>``.
+    """
+    if not text:
+        return text
+    home = os.path.expanduser("~")
+    out = text
+    for variant in (home, home.replace("\\", "\\\\"), home.replace("\\", "/")):
+        out = out.replace(variant, "<HOME>")
+    user = os.path.basename(home)
+    if user and user.lower() not in ("", "user"):
+        out = re.sub(re.escape(user), "<user>", out, flags=re.IGNORECASE)
+    return out
 
 
 def aggregate(results: list[LiveResult], *, model: str, timestamp: str) -> dict:
@@ -486,12 +520,12 @@ def aggregate(results: list[LiveResult], *, model: str, timestamp: str) -> dict:
                 "status": r.status,
                 "latency_s": r.latency_s,
                 "failure_label": r.failure_label,
-                "detail": r.detail,
+                "detail": _redact(r.detail),
                 "turn_status": r.turn_status,
                 "tools_called": r.tools_called,
                 "safety_gate": r.safety_gate,
                 "primary": r.primary,
-                "final_excerpt": r.final_excerpt,
+                "final_excerpt": _redact(r.final_excerpt),
             }
             for r in results
         ],

@@ -168,6 +168,28 @@ def test_retry_that_still_proses_falls_back_to_answer(monkeypatch):
     assert len(client.calls) == 2
 
 
+class _RaisingResp:
+    status_code = 500
+
+    def raise_for_status(self):
+        raise RuntimeError("HTTP 500")
+
+    def json(self):
+        return {}
+
+
+def test_forced_retry_failure_falls_back_to_prose_answer(monkeypatch):
+    # First call succeeds with a prose plan; the forced re-ask transiently fails.
+    # The turn must NOT error — it degrades to the answer already in hand.
+    client = _FakeClient([_msg(content=PROSE), _RaisingResp()])
+    monkeypatch.setattr(coordinator.httpx, "AsyncClient", lambda *a, **k: client)
+    decision = asyncio.run(coordinator._decide_step(
+        "gemma4:12b", "sys", "ctx", experts={}, use_tools=True, force_tool_on_prose=True
+    ))
+    assert decision["action"] == "answer"  # never worse than before
+    assert len(client.calls) == 2
+
+
 def test_native_tool_call_skips_retry_even_when_forced(monkeypatch):
     client = _patch_client(monkeypatch, [
         _msg(tool_calls=[{"function": {"name": "list_dir", "arguments": {"path": "."}}}]),
