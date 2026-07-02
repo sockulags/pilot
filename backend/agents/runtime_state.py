@@ -159,13 +159,33 @@ class RuntimeState:
             "phase": "verified" if satisfied else "gathering",
         }
 
-    def to_prompt_dict(self) -> dict[str, Any]:
+    def to_prompt_dict(self, summary_chars: int | None = None) -> dict[str, Any]:
+        """Structured evidence for prompting.
+
+        ``summary_chars`` optionally re-trims the per-action / per-command summary
+        text to keep a large multi-file turn digestible for the answering model
+        (see orchestrator._build_reply_messages). It only shortens free-text
+        summaries; every structured field (sources, files_read, requirements,
+        contract status) is preserved so grounding is never dropped. None keeps
+        the full summaries (used for persisted turn meta).
+        """
+        actions = self.actions
+        commands = self.commands
+        if summary_chars is not None:
+            actions = [
+                {**a, "summary": str(a.get("summary", ""))[:summary_chars]}
+                for a in self.actions
+            ]
+            commands = [
+                {**c, "summary": str(c.get("summary", ""))[:summary_chars]}
+                for c in self.commands
+            ]
         return {
-            "actions": self.actions,
+            "actions": actions,
             "artifacts": self.artifacts,
             "sources": self.sources,
             "files_read": self.files_read,
-            "commands": self.commands,
+            "commands": commands,
             "errors": self.errors,
             "requirements": self.requirements,
             **self._contract_status(),

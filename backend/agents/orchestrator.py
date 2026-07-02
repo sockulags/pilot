@@ -15,6 +15,7 @@ which small local models handle far more reliably.
 
 import logging
 import json
+import os
 from typing import AsyncGenerator
 
 import httpx
@@ -34,6 +35,21 @@ from tools import registry
 logger = logging.getLogger(__name__)
 
 VALID_ROUTES = {"chat", "computer", "code"}
+
+# Compose grounding budget. A large multi-file turn (e.g. the project-analysis
+# playbook reading six source files) can gather 25k+ chars of evidence; a small
+# local answering model then emits almost nothing when handed the whole block
+# (observed live: gemma4:12b replied with 3 characters on a 26k-char prompt).
+# Bound what the compose step sees so the answer layer gets a digestible prompt:
+# the structured evidence stays primary (its summaries shrink to
+# COMPOSE_ACTION_SUMMARY_CHARS), and the redundant backward-compat text log is
+# trimmed to whatever budget remains. Every structured field (sources,
+# files_read, requirements) survives — only free-text summaries shorten. Both are
+# env-overridable for tuning without a code change.
+COMPOSE_EVIDENCE_BUDGET = int(os.getenv("COMPOSE_EVIDENCE_BUDGET", "9000"))
+COMPOSE_ACTION_SUMMARY_CHARS = int(os.getenv("COMPOSE_ACTION_SUMMARY_CHARS", "500"))
+_TRUNC_MARK = "\n…[förkortat]"
+_LOG_ELIDED = "(förkortat; se strukturerat underlag ovan)"
 # Safe default: never act on the computer on a parse failure.
 ROUTE_DEFAULT = {"route": "chat", "thinking": "parse error — defaulting to chat"}
 PROJECT_GITHUB_TERMS = (
@@ -313,16 +329,26 @@ def _build_reply_messages(conversation: list[dict], outcome=None, memories: str 
     if outcome is not None:
         structured = getattr(outcome, "runtime_state", None)
         structured_text = (
-            json.dumps(structured.to_prompt_dict(), ensure_ascii=False)
+            json.dumps(
+                structured.to_prompt_dict(summary_chars=COMPOSE_ACTION_SUMMARY_CHARS),
+                ensure_ascii=False,
+            )
             if structured is not None
             else "{}"
+        )
+        # Keep the grounding digestible for the answering model (see the budget
+        # constants above): structured evidence is primary, the text log fills the
+        # remainder.
+        structured_text, action_log = _bound_evidence(
+            structured_text, outcome.action_log or "(inget registrerades)",
+            COMPOSE_EVIDENCE_BUDGET,
         )
         evidence = wrap_untrusted(
             "Strukturerat underlag jag (assistenten) samlade denna tur:\n"
             f"{structured_text}\n\n"
             "Textlogg för bakåtkompatibilitet (expertsvar, skärmobservationer, "
             "verktygsresultat):\n"
-            f"{outcome.action_log or '(inget registrerades)'}",
+            f"{action_log}",
             source="activity log",
         )
         messages.append({
@@ -340,6 +366,22 @@ def _build_reply_messages(conversation: list[dict], outcome=None, memories: str 
             ),
         })
     return messages
+
+
+def _bound_evidence(structured_text: str, action_log: str, budget: int) -> tuple[str, str]:
+    """Cap the compose grounding to ``budget`` chars, structured evidence first.
+
+    The structured evidence is the primary, deduplicated grounding, so it keeps
+    the budget; the free-text ``action_log`` (redundant with it) takes whatever
+    remains and is elided when little is left. Prevents a huge multi-file turn
+    from swamping a small answering model into a near-empty reply.
+    """
+    if len(structured_text) >= budget:
+        return structured_text[:budget] + _TRUNC_MARK, _LOG_ELIDED
+    remaining = budget - len(structured_text)
+    if len(action_log) > remaining:
+        action_log = action_log[:remaining] + _TRUNC_MARK if remaining > 200 else _LOG_ELIDED
+    return structured_text, action_log
 
 
 def _fallback_reply(outcome, exc: Exception) -> str:
