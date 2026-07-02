@@ -91,11 +91,15 @@ def _root_files(cwd: str) -> list[InstructionFile]:
 def _nested_files(cwd: str) -> list[InstructionFile]:
     """All AGENTS.md/CLAUDE.md below the root (excluding root-level ones)."""
     found: list[InstructionFile] = []
+    # Walk the realpath'd base so dirpath/path share the SAME representation as
+    # ``base``; otherwise a short-form cwd (e.g. Windows 8.3 "RUNNER~1" temp dirs
+    # on CI) walked directly yields paths that os.path.relpath cannot relate to
+    # the realpath'd base, producing "..\..\.." garbage rel_paths.
     base = os.path.realpath(cwd)
-    for dirpath, dirnames, filenames in os.walk(cwd):
+    for dirpath, dirnames, filenames in os.walk(base):
         # Prune noisy/irrelevant trees in-place.
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")]
-        rel_dir = os.path.relpath(dirpath, cwd)
+        rel_dir = os.path.relpath(dirpath, base)
         if rel_dir == ".":
             continue  # root files handled separately
         depth = rel_dir.count(os.sep) + 1
