@@ -146,6 +146,7 @@ class LiveTurn:
     cwd: str = ""
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    escalated: bool = False  # a coder specialist was escalated to this turn
     error: str | None = None  # transport/model error, if the turn could not run
 
 
@@ -185,6 +186,10 @@ class LiveTask:
     requires_network: bool = False
     safety_gate: bool = False
     primary: bool = False  # part of the scope's primary scenario (must pass)
+    # Verification-escalation (code_task) support:
+    contract_intent: str | None = None  # force a contract intent (e.g. "code_task")
+    code_task_spec: dict | None = None  # {solution_path, verify_command, spec}
+    escalation: bool = True  # escalate to a coder specialist on a verified failure
 
 
 @dataclass
@@ -205,6 +210,7 @@ class LiveResult:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cost_usd: float = 0.0
+    escalated: bool = False
 
 
 # --------------------------------------------------------------------------- #
@@ -267,9 +273,14 @@ def _intent_hint(route: str, task_context) -> tuple[str, dict | None]:
 
 
 async def run_live_turn(
-    task: LiveTask, cwd: str, inventory: ModelInventory
+    task: LiveTask, cwd: str, inventory: ModelInventory,
+    escalation: bool | None = None,
 ) -> LiveTurn:
-    """Execute one real turn end to end and return its observable outcome."""
+    """Execute one real turn end to end and return its observable outcome.
+
+    ``escalation`` overrides the task's own setting (used by the runner's
+    with/without-escalation comparison); None keeps the task default.
+    """
     prior: list[dict] = []
     conversation = [{"role": "user", "content": task.message}]
     task_context = build_task_context(prior, task.message)
@@ -311,6 +322,7 @@ async def run_live_turn(
             return turn
 
         intent, required_first_tool = _intent_hint(route, task_context)
+        contract_intent = task.contract_intent or resolve_task_contract_intent(task_context)
         outcome = await run_coordinator(
             effective_task,
             events.append,
@@ -323,8 +335,10 @@ async def run_live_turn(
             session_id="live-eval",
             required_first_tool=required_first_tool,
             require_file_output=task_context.creates_file,
-            task_contract_intent=resolve_task_contract_intent(task_context),
+            task_contract_intent=contract_intent,
             inventory=inventory,
+            code_task_spec=task.code_task_spec,
+            escalation_enabled=escalation if escalation is not None else task.escalation,
         )
     except Exception as exc:  # noqa: BLE001 — a transport/model error is a task failure, not a crash
         turn.error = f"{type(exc).__name__}: {exc}"
@@ -335,6 +349,7 @@ async def run_live_turn(
     turn.tools_called = [
         e.get("tool", "") for e in events if e.get("type") == "action" and e.get("tool")
     ]
+    turn.escalated = any(e.get("type") == "escalation" for e in events)
     turn.needs_input = outcome.status == "needs_input"
 
     rs = outcome.runtime_state
@@ -379,7 +394,8 @@ def _repo_root() -> Path:
 
 
 async def run_task(
-    task: LiveTask, inventory: ModelInventory, network_ok: bool
+    task: LiveTask, inventory: ModelInventory, network_ok: bool,
+    escalation: bool | None = None,
 ) -> LiveResult:
     """Set up the workspace, run the turn, time it, and apply the checker."""
     if task.requires_network and not network_ok:
@@ -402,7 +418,7 @@ async def run_task(
 
     start = time.monotonic()
     try:
-        turn = await run_live_turn(task, cwd, inventory)
+        turn = await run_live_turn(task, cwd, inventory, escalation=escalation)
     finally:
         elapsed = time.monotonic() - start
 
@@ -411,6 +427,7 @@ async def run_task(
         "prompt_tokens": turn.prompt_tokens,
         "completion_tokens": turn.completion_tokens,
         "cost_usd": cost,
+        "escalated": turn.escalated,
     }
     if turn.error:
         label = TIMEOUT if "timeout" in turn.error.lower() else MODEL_ERROR
@@ -576,6 +593,7 @@ def aggregate(
                 "prompt_tokens": r.prompt_tokens,
                 "completion_tokens": r.completion_tokens,
                 "cost_usd": r.cost_usd,
+                "escalated": r.escalated,
             }
             for r in results
         ],
@@ -726,13 +744,14 @@ async def _health_gate(backend: str) -> tuple[ModelInventory | None, str | None]
 
 
 async def run_suite(
-    tasks: list[LiveTask], backend: str = "ollama"
+    tasks: list[LiveTask], backend: str = "ollama", escalation: bool | None = None
 ) -> tuple[dict | None, str]:
     """Run the whole suite on the chosen backend. Returns (report | None, message).
 
     Returns ``(None, msg)`` when the health gate fails (Ollama down / model
     missing / OpenAI key invalid) — the caller exits non-zero without fabricating
-    results.
+    results. ``escalation`` (None|True|False) overrides every task's escalation
+    setting, for the with/without-escalation comparison.
     """
     backend = providers.resolve_backend(backend)
     providers.set_backend(backend)
@@ -746,7 +765,7 @@ async def run_suite(
     results: list[LiveResult] = []
     for i, task in enumerate(tasks, 1):
         print(f"[{i}/{len(tasks)}] {task.name} ({task.category})...", flush=True)
-        result = await run_task(task, inventory, network_ok)
+        result = await run_task(task, inventory, network_ok, escalation=escalation)
         status = {"pass": "PASS", "fail": "FAIL", "skip": "SKIP"}[result.status]
         extra = f" [{result.failure_label}]" if result.failure_label else ""
         cost = f" ~${result.cost_usd:.4f}" if result.cost_usd else ""
@@ -798,7 +817,15 @@ def main(argv: list[str] | None = None) -> int:
         choices=["ollama", "openai"],
         help="model backend for this run (default: PILOT_ANSWER_BACKEND env, else ollama)",
     )
+    parser.add_argument(
+        "--escalate",
+        default="auto",
+        choices=["auto", "on", "off"],
+        help="verification-escalation to a coder specialist on code tasks: auto (task "
+        "default), on (force), off (disable — for the with/without comparison)",
+    )
     args = parser.parse_args(argv)
+    escalation = {"auto": None, "on": True, "off": False}[args.escalate]
 
     # The report uses ✅/❌ icons; a Windows console defaults to cp1252 and would
     # raise on them. Force UTF-8 (replace on any residual) so printing never crashes.
@@ -818,7 +845,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"No tasks matched --only={args.only!r}", file=sys.stderr)
             return 2
 
-    report, message = asyncio.run(run_suite(tasks, backend=providers.resolve_backend(args.backend)))
+    report, message = asyncio.run(run_suite(
+        tasks, backend=providers.resolve_backend(args.backend), escalation=escalation
+    ))
     if report is None:
         print(f"\nHEALTH GATE FAILED: {message}", file=sys.stderr)
         return 3
