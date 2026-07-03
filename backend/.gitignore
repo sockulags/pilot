@@ -15,3 +15,7 @@ wheels/
 # Runtime data and logs (session stores, diagnostics, dev logs)
 data/
 *.log
+
+# Coverage artifacts
+.coverage
+htmlcov/
