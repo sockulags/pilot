@@ -4,6 +4,8 @@
 
 Pilot runs on your machine, on local [Ollama](https://ollama.com) models by default. You talk to it in natural language (Swedish or English); it classifies the turn, gathers what it needs (reads project files, runs read-only shell commands, does web research), performs the action, and answers **only from evidence it actually gathered**. When a task produces a file, Pilot writes it and verifies it exists before claiming success.
 
+![A grounded task end-to-end: Pilot reasons about the next step, runs a PowerShell command, and answers from the verified command output — on a local gemma4:12b model](docs/screenshots/grounded-task.png)
+
 **Trust model / intended user:** a technically comfortable person running Pilot on their own machine, who wants an assistant that can actually touch their files, shell and screen — not a cloud chatbot — and accepts "it runs on my machine with my permissions." Pilot is a working personal agent and a public code sample, **not** a hosted multi-user product, and this README never claims production-grade reliability: see [Evaluation](#evaluation--measured-not-claimed) for what is actually measured.
 
 ---
