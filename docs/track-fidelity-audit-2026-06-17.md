@@ -1,8 +1,8 @@
-# Track 1 - Fidelity Audit vs `mockups/v3/02-inline.html`
+# Track 1 - Fidelity Audit vs `docs/design/02-inline.html`
 
 Date: 2026-06-17
 
-Scope: current frontend implementation in `frontend/app/page.tsx` plus the components and styles it composes, compared against `mockups/v3/02-inline.html`.
+Scope: current frontend implementation in `frontend/app/page.tsx` plus the components and styles it composes, compared against `docs/design/02-inline.html`.
 
 ## Top remaining mismatches
 
