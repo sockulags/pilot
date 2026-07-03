@@ -35,6 +35,14 @@ def test_tests_passed_parsing():
     assert not _tests_passed("ImportError: no module named solution")
 
 
+def test_tests_passed_recognizes_unittest_output():
+    # A passing unittest run must not be misread as a failure (review 2026-07-03).
+    assert _tests_passed("Ran 3 tests in 0.001s\n\nOK")
+    assert _tests_passed("test_x ... ok\ntest_y ... ok\nRan 2 tests in 0.0s\nOK")
+    assert not _tests_passed("Ran 3 tests in 0.0s\n\nFAILED (failures=1)")
+    assert not _tests_passed("Ran 2 tests in 0.0s\n\nFAILED (errors=1)")
+
+
 def test_coder_specialist_preference():
     assert coordinator._coder_specialist(
         {"qwen2.5-coder:14b": {"hint": "code"}, "devstral:latest": {"hint": "repo"}}
@@ -145,6 +153,35 @@ def test_no_coder_available_falls_back_to_self_retry():
     assert outcome.status == "done"
     assert authors == ["gemma4:12b", "gemma4:12b"]  # retried itself
     assert not escalated  # no escalation event without a coder
+
+
+def test_abort_mid_author_writes_nothing():
+    # A user abort during authoring must NOT write solution.py or run the verify
+    # command (no side effects after a requested stop — review 2026-07-03).
+    events: list[dict] = []
+    rs = RuntimeState()
+    notes: list[str] = []
+    contract = build_task_contract("code_task")
+    abort = asyncio.Event()
+    executed: list[str] = []
+
+    async def fake_author(model, spec, prior, failing, emit, abort_ev):
+        abort.set()  # the user stops while this attempt is being authored
+        return ""    # _author_code returns "" once aborted
+
+    async def fake_execute(tool, args, emit):
+        executed.append(tool)
+        return f"{tool} ran"
+
+    spec = {"solution_path": "solution.py", "verify_command": "pytest", "spec": "x"}
+    with mock.patch.object(coordinator, "_author_code", new=fake_author), \
+         mock.patch.object(coordinator.agent_loop, "execute_tool", new=fake_execute):
+        outcome = asyncio.run(coordinator._run_code_task_playbook(
+            spec, "x", "gemma4:12b", {}, "/proj",
+            events.append, rs, notes, contract, False, abort,
+        ))
+    assert executed == [], "no write/verify may run after abort"
+    assert outcome.status in ("max_steps", "aborted")
 
 
 def test_empty_code_skips_attempt_without_crashing():

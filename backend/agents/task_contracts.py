@@ -162,13 +162,24 @@ def _has_requirement(name: str, evidence: tuple[dict, ...]) -> bool:
 
 
 def tests_passed_text(text: str) -> bool:
-    """Whether a (pytest-style) test-run output indicates all tests passed."""
+    """Whether a test-run output indicates all tests passed.
+
+    Recognizes both pytest ("N passed", no failures/errors) and unittest
+    ("Ran N tests ... OK") so an operator-supplied verify_command using either
+    runner is read correctly — a passing run must never be mislabeled a failure
+    (adversarial review 2026-07-03).
+    """
     low = (text or "").lower()
-    if not re.search(r"\b\d+\s+passed\b", low):
-        return False
     if re.search(r"\b\d+\s+(failed|error|errors)\b", low):
         return False
-    return "no tests ran" not in low and "no tests collected" not in low
+    # pytest: "3 passed in 0.05s"
+    if re.search(r"\b\d+\s+passed\b", low):
+        return "no tests ran" not in low and "no tests collected" not in low
+    # unittest: "Ran 3 tests in 0.00s" followed by a bare "OK" line (failure would
+    # print "FAILED (...)", already excluded above).
+    if re.search(r"\bran\s+\d+\s+tests?\b", low) and re.search(r"(?m)^ok\b", low):
+        return True
+    return False
 
 
 def _sources_fetched_count(text: str) -> int:

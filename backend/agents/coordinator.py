@@ -1138,6 +1138,8 @@ async def _author_code(
     except Exception as exc:  # noqa: BLE001 — a failed author attempt is not a crash
         emit(make_event("error", content=f"code author {model} failed: {exc}"))
         return ""
+    if abort.is_set():
+        return ""  # an aborted stream yields partial garbage — do not act on it
     return _extract_code_block("".join(parts))
 
 
@@ -1175,6 +1177,8 @@ async def _run_code_task_playbook(
             notes.append(f"Verification failed on attempt {attempt - 1}; retrying with {author}.")
 
         code = await _author_code(author, problem, prior_code, failing_output, emit, abort)
+        if abort.is_set():
+            break  # user stopped mid-authoring — do NOT write or run the verify
         if not code:
             notes.append(f"({author} produced no usable code on attempt {attempt})")
             continue
