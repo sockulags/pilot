@@ -1,18 +1,17 @@
 # Getting started
 
-Pilot is a chat GUI (Next.js PWA) backed by a local FastAPI server. You chat from
-desktop or phone; each message is routed by a local Ollama "orchestrator" to one of
-three actions: **chat** (answer itself), **computer** (control the desktop), or
-**code** (run Claude Code / Codex in a project folder). Primary target is Windows.
+This is the installation and first-run guide. For what Pilot is and how it works —
+the coordinator loop, task contracts, safety layers, model backends — see the
+[README](README.md).
 
 ## 1. Prerequisites
 
-- **[Ollama](https://ollama.com)** running locally with a model, e.g. `ollama pull gemma4`
-  (or set `OLLAMA_MODEL`).
+- **[Ollama](https://ollama.com)** running locally with the default model:
+  `ollama pull gemma4:12b` (or set `OLLAMA_MODEL` to another tools-capable model).
 - **[uv](https://docs.astral.sh/uv/)** (Python 3.12+).
 - **[pnpm](https://pnpm.io)** + Node 18+.
-- *(Optional, only for the `code` route)* the **Claude Code** and/or **Codex** desktop
-  apps installed — their CLIs are auto-discovered (see [§4](#4-the-code-route)).
+- *(Optional)* the **Claude Code** and/or **Codex** desktop apps for the code agents —
+  their CLIs are auto-discovered (see [§3](#3-code-agents-optional)).
 
 ## 2. Run it
 
@@ -49,18 +48,11 @@ WebSocket on one port. From your phone on LAN: **http://&lt;your-pc-lan-ip&gt;:8
 
 Stop either with `Ctrl+C`.
 
-## 3. Using the chat
+Type a message to try it out — how a turn is classified and executed is described in
+the README's [Architecture](README.md#architecture) section. Conversations persist
+(survive reconnects/reloads); "Ny konversation" clears it.
 
-Type a message; the orchestrator decides what to do (a small "Chatt / Dator / Kod"
-badge shows the route per turn):
-
-- **Chatt** — the local model answers.
-- **Dator** — it screenshots, reads on-screen UI elements, clicks/types, or runs a command.
-- **Kod** — it runs a coding agent in your selected project folder.
-
-Conversations persist (survive reconnects/reloads). "Ny konversation" clears it.
-
-## 4. The `code` route
+## 3. Code agents (optional)
 
 In the bar above the input, pick a **Projekt** (add a folder by its path) and an
 **Agent**:
@@ -73,24 +65,33 @@ In the bar above the input, pick a **Projekt** (add a folder by its path) and an
 The agent runs inside the project folder, may edit files (sandboxed to the project), and
 continues its own session across turns.
 
-## 5. Configuration (`backend/.env`)
+## 4. Configuration (`backend/.env`)
+
+Copy `backend/.env.example` to `backend/.env` and adjust. All values are optional;
+defaults live in `backend/config.py`. The most common ones:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OLLAMA_MODEL` | `gemma4:12b` | Primary LLM (orchestrator + router) |
+| `OLLAMA_MODEL` | `gemma4:12b` | Default coordinator/answer model |
 | `OLLAMA_VISION_MODEL` | `qwen3.5:9b` | Vision model (optional) |
 | `OLLAMA_VISION_ENABLED` | `true` | Enable image vision (needs a multimodal model) |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama endpoint |
+| `PILOT_ANSWER_BACKEND` | `ollama` | `ollama` (fully local) or `openai` — see the README's [Model backends](README.md#model-backends-local-first-api-optional) |
 | `BACKEND_PORT` / `MCP_PORT` | `8000` / `3001` | Server ports |
+| `COORDINATOR_MAX_STEPS` | `6` | Max consults/tool calls one turn may chain |
 | `MAX_AGENT_STEPS` | `50` | Max desktop-agent loop iterations |
+| `COMMAND_TIMEOUT_SECONDS` | `60` | Wall-clock bound for one `run_command` |
 | `PERCEPTION_ENABLED` | `true` | OS-grounded UI perception (Set-of-Marks) |
 | `CLAUDE_PERMISSION_MODE` | `acceptEdits` | Headless Claude Code permission mode |
 | `CODEX_SANDBOX_MODE` | `workspace-write` | Headless Codex sandbox |
 | `CLAUDE_CLI` / `CODEX_CLI` | auto | Override CLI paths (else auto-discovered) |
-| `PILOT_AUTH_TOKEN` | *(empty)* | Optional shared secret — see [§6](#6-optional-access-from-anywhere) |
+| `PILOT_AUTH_TOKEN` | *(empty)* | Optional shared secret — see [§5](#5-optional-access-from-anywhere) |
 | `FRONTEND_DIR` | `../frontend/out` | Built UI served in single-origin mode |
 
-## 6. (Optional) Access from anywhere
+The full list (network/auth, memory, ComfyUI, code agents) is in `backend/.env.example`
+and `backend/config.py`.
+
+## 5. (Optional) Access from anywhere
 
 **You don't need this for local/LAN use** — everything above works on your home network.
 This only adds reaching Pilot from *outside* your home, securely, via
