@@ -164,3 +164,7 @@ pilot/
 ## MCP integration
 
 The backend exposes computer-control tools over MCP (`http://localhost:3001/mcp`, SSE): `pilot_screenshot`, `pilot_click`, `pilot_type`, `pilot_run_command`, `pilot_open_app`, file tools and more. Guard it with `PILOT_MCP_AUTH_TOKEN` before exposing beyond loopback.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
