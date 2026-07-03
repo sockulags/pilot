@@ -1,7 +1,7 @@
 [project]
 name = "pilot"
 version = "0.1.0"
-description = "Local AI agent that controls the computer via Ollama"
+description = "Local-first, tool-using AI agent for Windows that verifies its own work — local Ollama or OpenAI backend, reproducible eval suite, layered safety model"
 license = { text = "MIT" }
 requires-python = ">=3.12"
 dependencies = [
