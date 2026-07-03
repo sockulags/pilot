@@ -43,7 +43,7 @@ from agents.runtime_phases import (
 from agents.runtime_state import RuntimeState
 from agents.safety import unsafe_tool_block_reason
 from job_permissions import tool_allowed
-from agents.task_contracts import TaskContract, build_task_contract
+from agents.task_contracts import TaskContract, build_task_contract, tests_passed_text
 from config import (
     COORDINATOR_MAX_STEPS,
     OLLAMA_MODEL,
@@ -625,6 +625,8 @@ async def run_coordinator(
     inventory: ModelInventory | None = None,
     capabilities: str | None = None,
     max_tool_calls: int | None = None,
+    code_task_spec: dict | None = None,
+    escalation_enabled: bool = True,
 ) -> LoopOutcome:
     """Run the in-turn coordinator loop. See module docstring.
 
@@ -686,6 +688,12 @@ async def run_coordinator(
 
     if contract and contract.intent == "local_model_audit_report" and not abort.is_set():
         return await _run_local_model_audit_playbook(project_cwd, emit, runtime_state, notes, contract)
+
+    if contract and contract.intent == "code_task" and code_task_spec and not abort.is_set():
+        return await _run_code_task_playbook(
+            code_task_spec, task, coordinator_model, experts, project_cwd,
+            emit, runtime_state, notes, contract, escalation_enabled, abort,
+        )
 
     while steps < COORDINATOR_MAX_STEPS and not abort.is_set():
         steps += 1
@@ -1064,6 +1072,128 @@ async def _execute_planned_step(
         notes,
         contract,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Verification-driven escalation (the "team" mechanism)
+# --------------------------------------------------------------------------- #
+
+_MAX_CODE_ATTEMPTS = 3
+# Coder specialists to escalate to, best first (must be installed to be offered).
+_CODER_PREFERENCE = ("qwen2.5-coder:14b", "devstral:latest", "qwen2.5-coder", "devstral")
+
+
+def _coder_specialist(experts: dict[str, dict]) -> str | None:
+    """Pick the best available coder specialist to escalate a failing code task to."""
+    for preferred in _CODER_PREFERENCE:
+        if preferred in experts:
+            return preferred
+    for mid, meta in experts.items():
+        hint = str(meta.get("hint", "")).lower()
+        if "kod" in hint or "code" in hint:
+            return mid
+    return None
+
+
+def _extract_code_block(text: str) -> str:
+    """Extract the solution source from a model answer (fenced block preferred)."""
+    if not text:
+        return ""
+    match = re.search(r"```(?:python|py)?\s*\n(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    # No fence: accept the raw text only if it actually looks like Python.
+    if re.search(r"\b(def|class|import|return)\b", text):
+        return text.strip()
+    return ""
+
+
+async def _author_code(
+    model: str, spec: str, prior_code: str, failing_output: str,
+    emit: Callable[[dict], None], abort: asyncio.Event,
+) -> str:
+    """Ask ``model`` for one complete solution file; return the extracted code."""
+    system = (
+        "You are a precise Python engineer. Write ONE complete, self-contained, "
+        "importable solution file for the task. Output ONLY a single ```python code "
+        "block and no prose."
+    )
+    user = f"Task:\n{spec}\n"
+    if prior_code:
+        user += (
+            "\nThe previous attempt FAILED its tests. Previous code:\n"
+            f"```python\n{prior_code}\n```\n"
+            "Test output — diagnose and fix the actual cause:\n"
+            f"{failing_output[:1500]}\n\nReturn a corrected COMPLETE file."
+        )
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    parts: list[str] = []
+    try:
+        async for piece in providers.chat_stream(messages, model, temperature=0.1):
+            if abort.is_set():
+                break
+            if piece:
+                parts.append(piece)
+                emit(make_event("expert_delta", model=model, content=piece))
+    except Exception as exc:  # noqa: BLE001 — a failed author attempt is not a crash
+        emit(make_event("error", content=f"code author {model} failed: {exc}"))
+        return ""
+    return _extract_code_block("".join(parts))
+
+
+async def _run_code_task_playbook(
+    spec: dict, task: str, lead_model: str, experts: dict[str, dict],
+    project_cwd: str | None, emit: Callable[[dict], None],
+    runtime_state: RuntimeState, notes: list[str], contract: TaskContract | None,
+    escalation_enabled: bool, abort: asyncio.Event,
+) -> LoopOutcome:
+    """Author → verify → (on a VERIFIED failure) escalate to a coder specialist.
+
+    The escalation trigger is the objective test result, not the model's opinion
+    of its own competence — that is the whole point (who decides a specialist is
+    needed? the verification does). With escalation off, all attempts stay on the
+    lead model, so a with/without run isolates the specialist's actual value.
+    Every write/verify goes through the same gated tool path as any other action.
+    """
+    solution_path = str(spec.get("solution_path") or "solution.py")
+    verify_command = str(spec.get("verify_command") or "python -m pytest -q")
+    problem = str(spec.get("spec") or task)
+    coder = _coder_specialist(experts) if escalation_enabled else None
+
+    prior_code, failing_output, author, escalated = "", "", lead_model, False
+    for attempt in range(1, _MAX_CODE_ATTEMPTS + 1):
+        if abort.is_set():
+            break
+        if attempt > 1 and coder and not escalated:
+            author, escalated = coder, True
+            emit(make_event(
+                "escalation", model=coder,
+                content=f"verifieringen misslyckades — eskalerar till specialisten {coder}",
+            ))
+            notes.append(f"Verification failed on attempt {attempt - 1}; escalating to specialist {coder}.")
+        elif attempt > 1:
+            notes.append(f"Verification failed on attempt {attempt - 1}; retrying with {author}.")
+
+        code = await _author_code(author, problem, prior_code, failing_output, emit, abort)
+        if not code:
+            notes.append(f"({author} produced no usable code on attempt {attempt})")
+            continue
+
+        await _execute_and_record_tool(
+            "write_file", {"path": solution_path, "content": code, "overwrite": True},
+            project_cwd, emit, runtime_state, notes, contract,
+        )
+        _args, output = await _execute_and_record_tool(
+            "run_command", {"cmd": verify_command}, project_cwd, emit, runtime_state, notes, contract,
+        )
+        if tests_passed_text(output):
+            who = f"specialist {author}" if escalated else f"lead {author}"
+            notes.append(f"Tests passed on attempt {attempt} ({who}).")
+            return LoopOutcome("done", _render_notes(notes), runtime_state=runtime_state)
+        prior_code, failing_output = code, output
+
+    notes.append("Tests still failing after the attempt budget.")
+    return LoopOutcome("max_steps", _render_notes(notes), runtime_state=runtime_state)
 
 
 async def _execute_and_record_tool(

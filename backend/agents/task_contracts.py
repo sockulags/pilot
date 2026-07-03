@@ -148,7 +148,27 @@ def _has_requirement(name: str, evidence: tuple[dict, ...]) -> bool:
             )
             for item in evidence
         )
+    if name == "verified_tests":
+        # A run_command whose output shows the solution's tests actually passed —
+        # the objective, evidence-based signal that drives escalation (a failure
+        # here is what triggers the specialist hand-off, not the model's opinion).
+        return any(
+            item.get("ok")
+            and item.get("tool") == "run_command"
+            and tests_passed_text(str(item.get("text", "")))
+            for item in evidence
+        )
     return False
+
+
+def tests_passed_text(text: str) -> bool:
+    """Whether a (pytest-style) test-run output indicates all tests passed."""
+    low = (text or "").lower()
+    if not re.search(r"\b\d+\s+passed\b", low):
+        return False
+    if re.search(r"\b\d+\s+(failed|error|errors)\b", low):
+        return False
+    return "no tests ran" not in low and "no tests collected" not in low
 
 
 def _sources_fetched_count(text: str) -> int:
@@ -245,6 +265,21 @@ _CONTRACTS: dict[str, TaskContract] = {
         completion_criteria="A local file is written and its path/existence is verified.",
         failure_criteria="The artifact cannot be written or verified.",
         final_answer_requirements="Report the verified artifact path and any important caveats.",
+    ),
+    "code_task": TaskContract(
+        intent="code_task",
+        required_evidence=(
+            EvidenceRequirement("verified_tests", "the solution's tests pass"),
+        ),
+        allowed_tools=frozenset(
+            {"write_file", "run_command", "read_file", "list_dir", "search_files"}
+        ),
+        completion_criteria="The solution file is written and its tests pass.",
+        failure_criteria="The tests cannot be made to pass within the attempt budget.",
+        final_answer_requirements=(
+            "State whether the tests pass and briefly describe the solution; if they "
+            "still fail, say so plainly."
+        ),
     ),
     "project_analysis": TaskContract(
         intent="project_analysis",
