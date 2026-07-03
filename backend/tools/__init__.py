@@ -24,6 +24,7 @@ __all__ = [
     "open_app",
     "run_codex",
     "run_codex_cli",
+    "active_window_title",
     "list_dir",
     "read_file",
     "write_file",

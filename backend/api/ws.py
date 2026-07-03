@@ -30,7 +30,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from agents.coordinator import run_coordinator
 from agents.gateway import refine_query
 from agents.model_inventory import get_model_inventory
-from agents.orchestrator import classify_turn, compose_reply, should_offload_code
+from agents.orchestrator import classify_turn, compose_reply
 from agents.routing import build_routing_decision
 from agents.turn_policy import (
     build_task_context,

@@ -2,8 +2,8 @@ import asyncio
 import os
 from pathlib import Path
 from dataclasses import dataclass
-from typing import AsyncGenerator, Callable
-from agents.router import route_next_action, analyze_screenshot, vision_done_summary
+from typing import Callable
+from agents.router import route_next_action, analyze_screenshot
 from agents.perception import perceive_screen
 from agents.safety import unsafe_tool_block_reason
 from agents.runtime_state import RuntimeState
@@ -11,7 +11,7 @@ from agents.turn_policy import build_task_context, web_query
 from tools import (
     screenshot, get_screen_size,
     click, click_element, type_text, scroll, move_mouse, key_press, hotkey,
-    run_command_sync, open_app, run_codex,
+    open_app, run_codex,
     active_window_title, list_dir, read_file, find_file, list_windows, focus_window,
     search_files, github_issues, github_prs, github_repo, web_search, fetch_url, web_research_result,
 )

@@ -1,5 +1,7 @@
 # Pilot
 
+[![CI](https://github.com/sockulags/pilot/actions/workflows/ci.yml/badge.svg)](https://github.com/sockulags/pilot/actions/workflows/ci.yml)
+
 **A local-first, tool-using AI agent that carries out — and then verifies — grounded desktop-and-web tasks on a Windows machine.**
 
 Pilot runs on your machine, on local [Ollama](https://ollama.com) models by default. You talk to it in natural language (Swedish or English); it classifies the turn, gathers what it needs (reads project files, runs read-only shell commands, does web research), performs the action, and answers **only from evidence it actually gathered**. When a task produces a file, Pilot writes it and verifies it exists before claiming success.

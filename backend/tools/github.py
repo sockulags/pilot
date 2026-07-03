@@ -61,7 +61,7 @@ def github_issues(repo: str, state: str = "open", limit: int = 30) -> str:
         return f"No {state} issues in {repo}."
     lines = [f"{state.capitalize()} issues in {repo} ({len(issues)}):"]
     for it in issues:
-        labels = ", ".join(l.get("name", "") for l in it.get("labels", []))
+        labels = ", ".join(label.get("name", "") for label in it.get("labels", []))
         head = f"#{it['number']} {it['title']}"
         if labels:
             head += f"  [{labels}]"

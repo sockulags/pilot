@@ -1,5 +1,4 @@
 import pyautogui
-import time
 
 
 def _freshness_block(tool: str) -> str | None:

@@ -53,7 +53,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import Callable
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
@@ -70,7 +70,7 @@ from agents.turn_policy import (  # noqa: E402
     select_agent_for_intent,
     tool_task,
 )
-from config import OLLAMA_BASE_URL, OLLAMA_MODEL, OPENAI_MODEL  # noqa: E402
+from config import OLLAMA_BASE_URL, OLLAMA_MODEL  # noqa: E402
 
 
 # Approximate USD price per 1K tokens (input, output) for cost estimates on the

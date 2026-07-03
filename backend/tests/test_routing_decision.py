@@ -129,7 +129,6 @@ class RoutingEventEmittedBeforeActionTests(unittest.TestCase):
 
     def test_ws_emits_routing_decision_before_first_action(self):
         import tempfile
-        import time
         from pathlib import Path
         from unittest import mock
 

@@ -161,7 +161,6 @@ class VerificationCommandTests(unittest.TestCase):
             self.assertIn("no files changed", result["reason"])
 
     def test_run_path_with_trivial_passing_command(self):
-        from code_verification import run_verification
 
         # npm/pnpm/pytest aren't guaranteed installed; exercise the run path by
         # monkeypatching the detected command to a trivial always-passing one.
