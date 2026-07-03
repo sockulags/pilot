@@ -34,7 +34,7 @@ Configuration is env-based (`backend/.env`, template in `backend/.env.example`).
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama URL |
 | `PILOT_ANSWER_BACKEND` | `ollama` | `ollama` (fully local) or `openai` — see [Model backends](#model-backends-local-first-api-optional) |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | — / `gpt-4o-mini` | Only used when the backend is `openai` |
-| `BACKEND_HOST` / `MCP_HOST` | `127.0.0.1` | Loopback by default; expose deliberately only behind a private network **and** with tokens set |
+| `BACKEND_HOST` / `MCP_HOST` | `127.0.0.1` | Loopback by default; expose deliberately only behind a private network **and** with tokens set — a non-loopback host with an empty token is downgraded to `127.0.0.1` with a warning |
 | `PILOT_AUTH_TOKEN` / `PILOT_MCP_AUTH_TOKEN` | _(empty)_ | Shared secrets for the WebSocket `hello` and the MCP endpoints |
 | `COMMAND_TIMEOUT_SECONDS` | `60` | Wall-clock bound for one `run_command`; the process tree is killed on timeout |
 | `COORDINATOR_MAX_STEPS` | `6` | Max consults/tool calls one turn may chain |

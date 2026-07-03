@@ -1,3 +1,4 @@
+import ipaddress
 import logging
 import os
 from env_loader import load_env_file
@@ -310,8 +311,60 @@ PILOT_MCP_AUTH_TOKEN = os.getenv("PILOT_MCP_AUTH_TOKEN", "") or PILOT_AUTH_TOKEN
 # from the LAN out of the box — the MCP server in particular drives the desktop
 # with no per-call OS prompts. Set these to 0.0.0.0 only when you intentionally
 # expose the backend (e.g. behind Tailscale) AND have configured an auth token.
-BACKEND_HOST = os.getenv("BACKEND_HOST", "127.0.0.1")
-MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
+#
+# The token requirement is enforced (fail closed): a non-loopback host with no
+# corresponding token configured is downgraded to 127.0.0.1 with a warning (see
+# resolve_bind_host), mirroring how CODEX_SANDBOX_MODE downgrades rather than
+# crashes. An unauthenticated non-loopback bind never happens by accident.
+_LOOPBACK_FALLBACK = "127.0.0.1"
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True for hosts that only accept local connections (127.0.0.0/8, ::1,
+    "localhost"). Anything else — 0.0.0.0, LAN IPs, hostnames — counts as
+    exposed and requires a token."""
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def resolve_bind_host(name: str, configured: str, token: str, token_var: str) -> str:
+    """Resolve the effective bind host for a server, enforcing token-on-expose.
+
+    A non-loopback host (0.0.0.0, a LAN IP, a hostname) is only honored when
+    the corresponding auth token is set; otherwise it is downgraded to loopback
+    with a warning explaining exactly what is required. Loopback hosts pass
+    through unchanged (no token needed, as today).
+    """
+    host = (configured or "").strip()
+    if not host:
+        return _LOOPBACK_FALLBACK
+    if _is_loopback_host(host) or token.strip():
+        return host
+    logger.warning(
+        "%s host %r is not loopback but %s is empty; refusing to expose an "
+        "unauthenticated server and binding to %s instead. To expose it, set "
+        "%s to a shared secret (and keep the bind behind a private network).",
+        name,
+        host,
+        token_var,
+        _LOOPBACK_FALLBACK,
+        token_var,
+    )
+    return _LOOPBACK_FALLBACK
+
+
+BACKEND_HOST = resolve_bind_host(
+    "Backend", os.getenv("BACKEND_HOST", _LOOPBACK_FALLBACK),
+    PILOT_AUTH_TOKEN, "PILOT_AUTH_TOKEN",
+)
+MCP_HOST = resolve_bind_host(
+    "MCP", os.getenv("MCP_HOST", _LOOPBACK_FALLBACK),
+    PILOT_MCP_AUTH_TOKEN, "PILOT_MCP_AUTH_TOKEN",
+)
 
 # Allowed CORS origins for the main app (comma-separated). Defaults to the local
 # frontend dev origins; widen this only deliberately. Wildcard "*" is honored if
