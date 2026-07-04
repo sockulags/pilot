@@ -51,6 +51,7 @@ import shutil
 import sys
 import tempfile
 import time
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -141,6 +142,8 @@ class LiveTurn:
     contract_satisfied: bool | None = None
     verified_artifacts: list[str] = field(default_factory=list)  # verified file paths
     needs_input: bool = False  # a confirmation/clarify halted the turn
+    pending_confirmation: dict | None = None  # {tool, args} gated for confirmation, if any
+    user_message: str = ""  # the user text that drove this turn (multi-turn threading)
     final_text: str = ""
     action_log: str = ""
     cwd: str = ""
@@ -192,6 +195,74 @@ class LiveTask:
     escalation: bool = True  # escalate to a coder specialist on a verified failure
 
 
+# --------------------------------------------------------------------------- #
+# Multi-turn tasks (memory round-trip, confirmation-then-approve)
+# --------------------------------------------------------------------------- #
+
+# How a follow-up turn threads state from the turns before it:
+#   "none"      — a plain follow-up in the SAME conversation (prior turns carried
+#                 forward as history).
+#   "memories"  — start a FRESH conversation, but feed in the long-term memories
+#                 the earlier turns REALLY saved (the true recall round-trip).
+#   "approve"   — same conversation, and pre-approve the exact command the prior
+#                 turn gated for confirmation, so it now runs.
+THREAD_NONE = "none"
+THREAD_MEMORIES = "memories"
+THREAD_APPROVE = "approve"
+
+
+@dataclass
+class TurnSpec:
+    """One user turn inside a multi-turn task.
+
+    ``message`` is the user's text for this turn; ``thread`` says how state from
+    the earlier turns is carried in (see the THREAD_* constants).
+    """
+
+    message: str
+    thread: str = THREAD_NONE
+
+
+# A multi-turn checker sees EVERY observed turn (in order) plus the task, and
+# returns one CheckResult for the whole interaction.
+MultiChecker = Callable[["list[LiveTurn]", "MultiTurnTask"], CheckResult]
+
+
+@dataclass
+class MultiTurnTask:
+    """A live task made of a SEQUENCE of turns with a single deterministic checker.
+
+    It reuses ``LiveTask``'s per-turn machinery (routing, coordinator, checkers)
+    but drives more than one turn and threads real state between them — so the two
+    headline behaviours (memory recall across a fresh conversation, and
+    confirmation→approval) are measured end to end. Fields mirror ``LiveTask``
+    where they apply; ``turns`` replaces the single ``message``/``check`` pair.
+    """
+
+    name: str
+    category: str
+    turns: list[TurnSpec]
+    check: MultiChecker
+    route_mode: str = "auto"
+    model_mode: str = "auto"
+    workspace: str = "fresh"  # "fresh" | "repo"
+    setup: Setup | None = None
+    memories: str = ""  # seed memories for turn 1 (recall turns thread the real store)
+    requires_network: bool = False
+    safety_gate: bool = False
+    primary: bool = False
+    # Present so a MultiTurnTask can share run_live_turn with LiveTask unchanged.
+    contract_intent: str | None = None
+    code_task_spec: dict | None = None
+    escalation: bool = True
+
+    # A no-op stand-in so a MultiTurnTask can flow through the same result/report
+    # plumbing that reads ``task.message`` for logging.
+    @property
+    def message(self) -> str:
+        return " ⇢ ".join(t.message for t in self.turns)
+
+
 @dataclass
 class LiveResult:
     name: str
@@ -216,6 +287,35 @@ class LiveResult:
 # --------------------------------------------------------------------------- #
 # Real turn execution (mirrors api/ws.py's non-offload path)
 # --------------------------------------------------------------------------- #
+
+
+@contextmanager
+def _command_approved(cmd: str):
+    """Pre-approve one exact shell command so the confirmation gate lets it run.
+
+    Models the product's "Approve" button: after the user confirms a specific
+    gated command, that command — and only that command — runs without halting
+    again. Implemented as a scoped wrap of the coordinator's confirmation gate so
+    no production code changes; the coordinator loop, tool execution and every
+    OTHER gate stay real, so this honestly measures the approve→run behaviour.
+    """
+    from agents import coordinator
+
+    original = coordinator._confirmation_required
+    approved = (cmd or "").strip()
+
+    def _gate(tool: str, args: dict):
+        if tool == "run_command":
+            proposed = str((args or {}).get("cmd") or (args or {}).get("command") or "").strip()
+            if approved and proposed == approved:
+                return None  # this exact command was explicitly approved by the user
+        return original(tool, args)
+
+    coordinator._confirmation_required = _gate
+    try:
+        yield
+    finally:
+        coordinator._confirmation_required = original
 
 
 def _intent_hint(route: str, task_context) -> tuple[str, dict | None]:
@@ -275,16 +375,29 @@ def _intent_hint(route: str, task_context) -> tuple[str, dict | None]:
 async def run_live_turn(
     task: LiveTask, cwd: str, inventory: ModelInventory,
     escalation: bool | None = None,
+    *,
+    message: str | None = None,
+    prior: list[dict] | None = None,
+    memories: str | None = None,
+    approve_command: str | None = None,
 ) -> LiveTurn:
     """Execute one real turn end to end and return its observable outcome.
 
     ``escalation`` overrides the task's own setting (used by the runner's
     with/without-escalation comparison); None keeps the task default.
+
+    The keyword overrides drive a MULTI-TURN task's follow-up turns: ``message``
+    replaces ``task.message`` for this turn, ``prior`` seeds the conversation with
+    earlier turns, ``memories`` replaces ``task.memories`` (so turn 2 can be fed
+    the memories that turn 1 REALLY saved), and ``approve_command`` pre-approves
+    one gated shell command (the user clicking "Approve") so it runs this turn.
     """
-    prior: list[dict] = []
-    conversation = [{"role": "user", "content": task.message}]
-    task_context = build_task_context(prior, task.message)
-    effective_task = tool_task(task.message, task_context)
+    prior = list(prior or [])
+    message = task.message if message is None else message
+    memories = task.memories if memories is None else memories
+    conversation = prior + [{"role": "user", "content": message}]
+    task_context = build_task_context(prior, message)
+    effective_task = tool_task(message, task_context)
     project = os.path.basename(cwd.rstrip("\\/")) if cwd else None
 
     events: list[dict] = []
@@ -294,7 +407,7 @@ async def run_live_turn(
     try:
         if task.route_mode == "auto":
             decision = await classify_turn(
-                prior, task.message, project=project, model_mode=task.model_mode
+                prior, message, project=project, model_mode=task.model_mode
             )
         else:
             decision = {"route": task.route_mode, "thinking": f"forced route {task.route_mode}"}
@@ -311,7 +424,7 @@ async def run_live_turn(
             route_mode=task.route_mode,
             classified_route=route,
             agent="claude",
-            text=task.message,
+            text=message,
             project=project,
             cwd=cwd,
         )
@@ -323,23 +436,28 @@ async def run_live_turn(
 
         intent, required_first_tool = _intent_hint(route, task_context)
         contract_intent = task.contract_intent or resolve_task_contract_intent(task_context)
-        outcome = await run_coordinator(
-            effective_task,
-            events.append,
-            asyncio.Event(),
-            prior,
-            project_cwd=cwd,
-            coordinator_model=coordinator_model,
-            intent_hint=intent,
-            memories=task.memories,
-            session_id="live-eval",
-            required_first_tool=required_first_tool,
-            require_file_output=task_context.creates_file,
-            task_contract_intent=contract_intent,
-            inventory=inventory,
-            code_task_spec=task.code_task_spec,
-            escalation_enabled=escalation if escalation is not None else task.escalation,
-        )
+        # A follow-up "approve" turn pre-approves the exact gated command so it
+        # runs (see _command_approved); a first turn has approve_command=None and
+        # keeps every gate real.
+        gate = _command_approved(approve_command) if approve_command else nullcontext()
+        with gate:
+            outcome = await run_coordinator(
+                effective_task,
+                events.append,
+                asyncio.Event(),
+                prior,
+                project_cwd=cwd,
+                coordinator_model=coordinator_model,
+                intent_hint=intent,
+                memories=memories,
+                session_id="live-eval",
+                required_first_tool=required_first_tool,
+                require_file_output=task_context.creates_file,
+                task_contract_intent=contract_intent,
+                inventory=inventory,
+                code_task_spec=task.code_task_spec,
+                escalation_enabled=escalation if escalation is not None else task.escalation,
+            )
     except Exception as exc:  # noqa: BLE001 — a transport/model error is a task failure, not a crash
         turn.error = f"{type(exc).__name__}: {exc}"
         return turn
@@ -361,6 +479,13 @@ async def run_live_turn(
             for a in getattr(rs, "artifacts", [])
             if a.get("verified") and str(a.get("path") or "").strip()
         ]
+        # Surface the tool+args that were gated (for a follow-up "approve" turn).
+        for action in reversed(getattr(rs, "actions", [])):
+            if action.get("decision") == "confirmation_required":
+                turn.pending_confirmation = {
+                    "tool": action.get("tool"), "args": dict(action.get("args") or {})
+                }
+                break
 
     if turn.needs_input:
         turn.final_text = outcome.detail or ""
@@ -369,7 +494,7 @@ async def run_live_turn(
             grounding = outcome if (outcome.action_log or task_context.needs_tools) else None
             parts: list[str] = []
             async for chunk in compose_reply(
-                conversation, grounding, OLLAMA_MODEL, task.memories
+                conversation, grounding, OLLAMA_MODEL, memories
             ):
                 if chunk:
                     parts.append(chunk)
@@ -448,6 +573,140 @@ async def run_task(
             detail=check.detail, turn_status=turn.status,
             tools_called=turn.tools_called, safety_gate=task.safety_gate,
             primary=task.primary, final_excerpt=turn.final_text[:280], **tokens,
+        )
+
+    if tmp:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return result
+
+
+def _turn_overrides(spec: TurnSpec, prior_turns: list[LiveTurn]) -> dict:
+    """Compute the ``run_live_turn`` keyword overrides for one turn of a sequence.
+
+    Pure (no model, no I/O) so the multi-turn threading is unit-testable:
+
+      * THREAD_NONE      — carry the earlier turns forward as conversation history.
+      * THREAD_MEMORIES  — a FRESH conversation (no history); the caller supplies
+                           the recalled memories separately (this only clears the
+                           history, so recall is a real store round-trip).
+      * THREAD_APPROVE   — same conversation, and pre-approve the exact command the
+                           immediately-preceding turn gated for confirmation.
+    """
+    overrides: dict = {"message": spec.message}
+    # Thread the earlier turns forward as (user, assistant) history pairs.
+    history: list[dict] = []
+    for t in prior_turns:
+        if t.user_message:
+            history.append({"role": "user", "content": t.user_message})
+        if t.final_text:
+            history.append({"role": "assistant", "content": t.final_text})
+
+    if spec.thread == THREAD_MEMORIES:
+        overrides["prior"] = []  # fresh conversation — recall must come from the store
+    elif spec.thread == THREAD_APPROVE:
+        overrides["prior"] = history
+        pending = prior_turns[-1].pending_confirmation if prior_turns else None
+        if pending and pending.get("tool") == "run_command":
+            cmd = str((pending.get("args") or {}).get("cmd")
+                      or (pending.get("args") or {}).get("command") or "").strip()
+            if cmd:
+                overrides["approve_command"] = cmd
+    else:  # THREAD_NONE
+        overrides["prior"] = history
+    return overrides
+
+
+async def run_multi_turn_task(
+    task: MultiTurnTask, inventory: ModelInventory, network_ok: bool,
+    escalation: bool | None = None,
+) -> LiveResult:
+    """Drive a MultiTurnTask turn by turn, threading real state, then check.
+
+    Each turn runs through the same ``run_live_turn`` as a single-turn task; the
+    difference is purely the threaded state (conversation history, recalled
+    memories, an approved command) computed by ``_turn_overrides`` and — for
+    memory recall — the real ``search_memories`` store round-trip. All turns share
+    ONE workspace so a file/command from a later turn lands where the checker looks.
+    """
+    if task.requires_network and not network_ok:
+        return LiveResult(
+            name=task.name, category=task.category, status="skip", passed=False,
+            skipped=True, latency_s=0.0, failure_label=None,
+            detail="network unavailable; task skipped", turn_status="",
+            tools_called=[], safety_gate=task.safety_gate, primary=task.primary,
+            final_excerpt="",
+        )
+
+    from memory import format_for_prompt, search_memories
+
+    tmp: str | None = None
+    if task.workspace == "repo":
+        cwd = str(_repo_root())
+    else:
+        tmp = tempfile.mkdtemp(prefix=f"pilot_eval_{task.name}_")
+        cwd = tmp
+        if task.setup:
+            task.setup(Path(cwd))
+
+    # The coordinator scopes a project_cwd "remember" to project=<workspace name>,
+    # so recall must pass the SAME project or a project-scoped save won't be found.
+    project = os.path.basename(cwd.rstrip("\\/")) if cwd else None
+
+    observed: list[LiveTurn] = []
+    prompt_tokens = completion_tokens = 0
+    start = time.monotonic()
+    error: str | None = None
+    try:
+        for spec in task.turns:
+            overrides = _turn_overrides(spec, observed)
+            if spec.thread == THREAD_MEMORIES:
+                # The honest recall round-trip: read back what earlier turns REALLY
+                # saved, scoped to this eval session/project, and feed it into the
+                # fresh turn (matching how the coordinator scoped the save).
+                recalled = await search_memories(
+                    spec.message, session_id="live-eval", project=project
+                )
+                overrides["memories"] = format_for_prompt(recalled)
+            turn = await run_live_turn(
+                task, cwd, inventory, escalation=escalation, **overrides
+            )
+            turn.user_message = overrides["message"]
+            observed.append(turn)
+            prompt_tokens += turn.prompt_tokens
+            completion_tokens += turn.completion_tokens
+            if turn.error:
+                error = turn.error
+                break
+    finally:
+        elapsed = time.monotonic() - start
+
+    cost = _cost_usd(providers.answer_model(), prompt_tokens, completion_tokens)
+    tokens = {
+        "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+        "cost_usd": cost, "escalated": any(t.escalated for t in observed),
+    }
+    last = observed[-1] if observed else LiveTurn(cwd=cwd)
+    if error:
+        label = TIMEOUT if "timeout" in error.lower() else MODEL_ERROR
+        result = LiveResult(
+            name=task.name, category=task.category, status="fail", passed=False,
+            skipped=False, latency_s=round(elapsed, 2), failure_label=label,
+            detail=error, turn_status=last.status,
+            tools_called=[t for turn in observed for t in turn.tools_called],
+            safety_gate=task.safety_gate, primary=task.primary,
+            final_excerpt=last.final_text[:280], **tokens,
+        )
+    else:
+        check = task.check(observed, task)
+        result = LiveResult(
+            name=task.name, category=task.category,
+            status="pass" if check.passed else "fail",
+            passed=check.passed, skipped=False, latency_s=round(elapsed, 2),
+            failure_label=None if check.passed else (check.failure_label or WRONG_ANSWER),
+            detail=check.detail, turn_status=last.status,
+            tools_called=[t for turn in observed for t in turn.tools_called],
+            safety_gate=task.safety_gate, primary=task.primary,
+            final_excerpt=last.final_text[:280], **tokens,
         )
 
     if tmp:
@@ -876,8 +1135,8 @@ async def _health_gate(backend: str) -> tuple[ModelInventory | None, str | None]
 
 
 async def run_suite(
-    tasks: list[LiveTask], backend: str = "ollama", escalation: bool | None = None,
-    trials: int = 1,
+    tasks: list[LiveTask | MultiTurnTask], backend: str = "ollama",
+    escalation: bool | None = None, trials: int = 1,
 ) -> tuple[dict | None, str]:
     """Run the whole suite on the chosen backend. Returns (report | None, message).
 
@@ -902,7 +1161,12 @@ async def run_suite(
         for i, task in enumerate(tasks, 1):
             label = f"[trial {trial}/{trials}] " if trials > 1 else ""
             print(f"{label}[{i}/{len(tasks)}] {task.name} ({task.category})...", flush=True)
-            result = await run_task(task, inventory, network_ok, escalation=escalation)
+            if isinstance(task, MultiTurnTask):
+                result = await run_multi_turn_task(
+                    task, inventory, network_ok, escalation=escalation
+                )
+            else:
+                result = await run_task(task, inventory, network_ok, escalation=escalation)
             status = {"pass": "PASS", "fail": "FAIL", "skip": "SKIP"}[result.status]
             extra = f" [{result.failure_label}]" if result.failure_label else ""
             cost = f" ~${result.cost_usd:.4f}" if result.cost_usd else ""
@@ -996,12 +1260,13 @@ def main(argv: list[str] | None = None) -> int:
         except (AttributeError, ValueError):
             pass
 
-    from tests.eval.live_tasks import LIVE_TASKS
+    from tests.eval.live_tasks import LIVE_TASKS, MULTI_TURN_TASKS
 
-    tasks = LIVE_TASKS
+    all_tasks = [*LIVE_TASKS, *MULTI_TURN_TASKS]
+    tasks = all_tasks
     if args.only:
         wanted = [s.strip() for s in args.only.split(",") if s.strip()]
-        tasks = [t for t in LIVE_TASKS if any(w in t.name for w in wanted)]
+        tasks = [t for t in all_tasks if any(w in t.name for w in wanted)]
         if not tasks:
             print(f"No tasks matched --only={args.only!r}", file=sys.stderr)
             return 2
