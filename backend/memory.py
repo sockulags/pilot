@@ -28,9 +28,22 @@ abused as a side-channel for authority:
                        injected as authority; ``format_for_prompt`` renders them
                        (if at all) as inert, clearly-labelled untrusted text.
 
-Shape on disk: {"items": [{... fields above ..., "embedding": [float, ...]}]}.
-The file lives under backend/data/ which is gitignored. ``_load`` defaults every
-new field so old-format stores keep working.
+Shape on disk: the store is split across two files so a recall (which only
+refreshes ``last_used_at`` on a handful of hits) never rewrites the bulky
+~768-float embeddings:
+
+  * ``MEMORY_FILE``            — {"items": [{... fields above, NO embedding ...}]}
+                                 (small; rewritten on every mutation, incl. recall)
+  * ``MEMORY_FILE + ".emb.json"`` — {"<id>": [float, ...]}, the sidecar embedding
+                                 index (large; rewritten only when the set of
+                                 embeddings actually changes: save / delete /
+                                 prune, never on recall).
+
+``_load`` merges the sidecar embeddings back onto each item so callers still see
+``item["embedding"]``. Old-format stores that carry embeddings inline (and have
+no sidecar) are read transparently and migrated to the sidecar on the next
+mutation. ``_load`` also defaults every new field so old-format stores keep
+working.
 """
 
 from __future__ import annotations
@@ -165,12 +178,58 @@ def _is_expired(item: dict, now: float | None = None) -> bool:
     return (now or time.time()) >= expires_at
 
 
+def _embeddings_file() -> str:
+    """Path of the sidecar embedding index next to the main memory store."""
+    return MEMORY_FILE + ".emb.json"
+
+
+def _write_json_atomic(path: str, obj) -> None:
+    """Serialize obj to path via a temp file + atomic replace (best effort)."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def _load_embeddings() -> dict:
+    """Read the sidecar embedding index ({id: vector}). {} if absent/unreadable."""
+    try:
+        with open(_embeddings_file(), "r", encoding="utf-8") as f:
+            emb = json.load(f)
+        if isinstance(emb, dict):
+            return emb
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        logger.warning("could not load memory embeddings: %s", exc)
+    return {}
+
+
 def _load() -> dict:
+    """Load the store, merging sidecar embeddings back onto each item.
+
+    Embeddings live in a side file so recalls do not rewrite them; here we splice
+    them back so callers keep seeing ``item["embedding"]``. Old-format stores that
+    still carry embeddings inline (no sidecar) are read as-is and migrated to the
+    sidecar on the next ``_save``.
+    """
     try:
         with open(MEMORY_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data.get("items"), list):
-            data["items"] = [_normalize(i) for i in data["items"]]
+            embeddings = _load_embeddings()
+            items = []
+            for i in data["items"]:
+                i = _normalize(i)
+                # Sidecar wins; fall back to any inline embedding (old format).
+                emb = embeddings.get(i["id"])
+                if emb is not None:
+                    i["embedding"] = emb
+                elif "embedding" not in i:
+                    i["embedding"] = []
+                items.append(i)
+            data["items"] = items
             return data
     except FileNotFoundError:
         pass
@@ -179,13 +238,28 @@ def _load() -> dict:
     return {"items": []}
 
 
-def _save(data: dict) -> None:
-    os.makedirs(os.path.dirname(MEMORY_FILE), exist_ok=True)
+def _save(data: dict, *, embeddings_changed: bool = True) -> None:
+    """Persist the store; write the sidecar only when embeddings changed.
+
+    The main store is written without embeddings (small), so a recall that only
+    touches ``last_used_at`` costs a tiny write. Pass ``embeddings_changed=False``
+    when no item's embedding was added/removed to skip serializing the sidecar
+    entirely.
+    """
     try:
-        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(MEMORY_FILE), suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
-        os.replace(tmp, MEMORY_FILE)
+        # Strip embeddings out of the persisted items; keep them in-memory intact.
+        items_out = [
+            {k: v for k, v in item.items() if k != "embedding"}
+            for item in data["items"]
+        ]
+        if embeddings_changed:
+            embeddings = {
+                item["id"]: item["embedding"]
+                for item in data["items"]
+                if item.get("embedding")
+            }
+            _write_json_atomic(_embeddings_file(), embeddings)
+        _write_json_atomic(MEMORY_FILE, {**data, "items": items_out})
     except Exception as exc:
         logger.warning("could not save memory store: %s", exc)
 
@@ -320,6 +394,10 @@ async def search_memories(
     # would be clobbered if we wrote back the stale snapshot (review 2026-07-04).
     # All mutators are sync-atomic on the event loop, so a fresh load-modify-save
     # with no await in between cannot lose a concurrent write.
+    #
+    # Only last_used_at changes here — no embedding is added or removed — so pass
+    # embeddings_changed=False: the write touches only the small main store, never
+    # re-serializing the bulky sidecar embedding index.
     if top:
         returned_ids = {s["id"] for s in top}
         fresh = _load()
@@ -329,7 +407,7 @@ async def search_memories(
                 item["last_used_at"] = now
                 changed = True
         if changed:
-            _save(fresh)
+            _save(fresh, embeddings_changed=False)
     return top
 
 

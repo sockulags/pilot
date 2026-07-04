@@ -34,8 +34,9 @@ class MemoryTests(unittest.TestCase):
     def tearDown(self):
         for p in self._patches:
             p.stop()
-        if os.path.exists(self.tmp.name):
-            os.unlink(self.tmp.name)
+        for path in (self.tmp.name, self.tmp.name + ".emb.json"):
+            if os.path.exists(path):
+                os.unlink(path)
 
     def test_cosine_identical_and_orthogonal(self):
         from memory import _cosine
@@ -201,6 +202,32 @@ class MemoryTests(unittest.TestCase):
         self.assertIsNone(list_memories()[0]["last_used_at"])
         await search_memories("Vad heter jag?")
         self.assertIsNotNone(list_memories()[0]["last_used_at"])
+
+    def test_recall_does_not_reserialize_embeddings(self):
+        asyncio.run(self._recall_skips_embeddings())
+
+    async def _recall_skips_embeddings(self):
+        import memory
+        from memory import save_memory, search_memories
+
+        await save_memory("Jag heter Lucas.")
+
+        # Record which files get written during a recall. A recall only refreshes
+        # last_used_at, so it must rewrite the small main store but must NOT
+        # re-serialize the bulky embedding sidecar.
+        written: list[str] = []
+        orig = memory._write_json_atomic
+
+        def _spy(path, obj):
+            written.append(path)
+            return orig(path, obj)
+
+        with mock.patch.object(memory, "_write_json_atomic", _spy):
+            hits = await search_memories("Vad heter jag?")
+
+        self.assertTrue(hits)  # recall actually happened (and touched last_used_at)
+        self.assertIn(memory.MEMORY_FILE, written)
+        self.assertNotIn(memory._embeddings_file(), written)
 
     # --- instruction sanitization -------------------------------------------
 
