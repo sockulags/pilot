@@ -495,10 +495,53 @@ def _redact(text: str) -> str:
     return out
 
 
+def environment(model: str = "", backend: str = "ollama") -> dict:
+    """Best-effort reproducibility metadata for a run.
+
+    Captures the git commit, OS/Python, and (when reachable) the Ollama version
+    and the exact model digest — so a committed report says precisely what
+    produced it. Every field degrades to None on failure; this never raises.
+    """
+    import platform
+    import subprocess
+
+    def _run(cmd: list[str]) -> str | None:
+        try:
+            out = subprocess.run(cmd, capture_output=True, timeout=8)
+            text = (out.stdout or b"").decode("utf-8", errors="replace").strip()
+            return text or None
+        except Exception:  # noqa: BLE001 — metadata is best-effort
+            return None
+
+    env: dict = {
+        "git_commit": _run(["git", "rev-parse", "--short", "HEAD"]),
+        "git_dirty": bool(_run(["git", "status", "--porcelain"])),
+        "os": f"{platform.system()} {platform.release()}",
+        "python": platform.python_version(),
+        "backend": backend,
+        "model": model,
+    }
+    if backend == "ollama" and model:
+        show = _run(["ollama", "show", model])
+        if show:
+            digest = re.search(r"(?:digest|Digest)\s*[:=]?\s*([0-9a-f]{12,})", show)
+            quant = re.search(r"(?:quantization|Quantization)\s*[:=]?\s*(\S+)", show)
+            env["model_digest"] = digest.group(1)[:16] if digest else None
+            env["model_quantization"] = quant.group(1) if quant else None
+        env["ollama_version"] = _run(["ollama", "--version"])
+    return env
+
+
 def aggregate(
-    results: list[LiveResult], *, model: str, timestamp: str, backend: str = "ollama"
+    results: list[LiveResult], *, model: str, timestamp: str, backend: str = "ollama",
+    env: dict | None = None, trials: int = 1,
 ) -> dict:
-    """Reduce per-task results into the report structure (metrics from §4)."""
+    """Reduce per-task results into the report structure (metrics from §4).
+
+    ``trials`` > 1 means each task was run multiple times; a per-task variance
+    section (pass count / latency spread) is added so the noisy behaviour of
+    small local models is visible instead of hidden behind one flappy verdict.
+    """
     scored = [r for r in results if not r.skipped]
     passed = [r for r in scored if r.passed]
     latencies = [r.latency_s for r in scored]
@@ -540,10 +583,31 @@ def aggregate(
         not safety_failures and not primary_failures and not primary_skipped
     )
 
+    # Per-task variance across trials (only meaningful when trials > 1).
+    by_task: dict[str, dict] = {}
+    if trials > 1:
+        grouped: dict[str, list[LiveResult]] = {}
+        for r in results:
+            grouped.setdefault(r.name, []).append(r)
+        for name, runs in grouped.items():
+            run_scored = [r for r in runs if not r.skipped]
+            run_lat = [r.latency_s for r in run_scored]
+            by_task[name] = {
+                "runs": len(runs),
+                "passed": sum(1 for r in run_scored if r.passed),
+                "scored": len(run_scored),
+                "pass_rate": round(sum(1 for r in run_scored if r.passed) / len(run_scored), 3) if run_scored else None,
+                "latency_median": round(percentile(run_lat, 50), 2),
+                "latency_spread": round(max(run_lat) - min(run_lat), 2) if run_lat else 0.0,
+            }
+
     return {
         "backend": backend,
         "model": model,
         "timestamp": timestamp,
+        "trials": trials,
+        "environment": env or {},
+        "variance": by_task,
         "totals": {
             "tasks": len(results),
             "scored": len(scored),
@@ -600,8 +664,12 @@ def aggregate(
     }
 
 
-def render_markdown(report: dict) -> str:
-    """Render the aggregate report as a human-readable Markdown document."""
+def render_markdown(report: dict, previous: dict | None = None) -> str:
+    """Render the aggregate report as a human-readable Markdown document.
+
+    ``previous`` (a prior report dict) adds a "Change vs previous run" line so a
+    regression is visible at a glance.
+    """
     t = report["totals"]
     lat = report["latency_s"]
     lines: list[str] = []
@@ -611,8 +679,28 @@ def render_markdown(report: dict) -> str:
     lines.append(f"**Suite:** {verdict}  ")
     lines.append(f"**Backend:** `{report.get('backend', 'ollama')}`  ")
     lines.append(f"**Model:** `{report['model']}`  ")
+    if report.get("trials", 1) > 1:
+        lines.append(f"**Trials/task:** {report['trials']}  ")
     lines.append(f"**Run:** {report['timestamp']}")
     lines.append("")
+
+    if previous:
+        lines.append(_delta_line(report, previous))
+        lines.append("")
+
+    env = report.get("environment") or {}
+    if env:
+        commit = env.get("git_commit") or "?"
+        dirty = " (dirty)" if env.get("git_dirty") else ""
+        bits = [f"commit `{commit}`{dirty}", f"{env.get('os', '?')}", f"Python {env.get('python', '?')}"]
+        if env.get("model_digest"):
+            bits.append(f"digest `{env['model_digest']}`")
+        if env.get("model_quantization"):
+            bits.append(f"quant `{env['model_quantization']}`")
+        if env.get("ollama_version"):
+            bits.append(f"ollama `{env['ollama_version']}`")
+        lines.append("**Environment:** " + " · ".join(bits))
+        lines.append("")
     solve = t["solve_rate"]
     solve_txt = f"{solve:.0%}" if solve is not None else "n/a"
     lines.append(
@@ -679,10 +767,54 @@ def render_markdown(report: dict) -> str:
             f"| {r['name']}{flag} | {r['category']} | {icon.get(r['status'], r['status'])} "
             f"| {r['latency_s']}s | {fail} |"
         )
-    lines.append("")
+    variance = report.get("variance") or {}
+    if variance:
+        lines.append("## Per-task variance (across trials)")
+        lines.append("")
+        lines.append("| Task | Pass rate | Runs | Latency median | Latency spread |")
+        lines.append("|---|---|---|---|---|")
+        for name, v in sorted(variance.items()):
+            rate = v["pass_rate"]
+            rate_txt = f"{rate:.0%}" if rate is not None else "—"
+            lines.append(
+                f"| {name} | {rate_txt} ({v['passed']}/{v['scored']}) | {v['runs']} "
+                f"| {v['latency_median']}s | ±{v['latency_spread']}s |"
+            )
+        lines.append("")
+
     lines.append("Legend: ⭐ primary-scenario task, 🔒 safety gate (pass/fail).")
     lines.append("")
     return "\n".join(lines)
+
+
+def _delta_line(report: dict, previous: dict) -> str:
+    """One-line change summary vs the previous run (solve rate + verdict flip)."""
+    cur = report["totals"].get("solve_rate")
+    prev = previous.get("totals", {}).get("solve_rate")
+    prev_commit = (previous.get("environment") or {}).get("git_commit") or previous.get("timestamp", "?")
+    if cur is None or prev is None:
+        return f"**Change vs previous ({prev_commit}):** n/a"
+    diff = cur - prev
+    arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "→")
+    verdict_flip = ""
+    if report["suite_passed"] != previous.get("suite_passed"):
+        verdict_flip = " — verdict flipped " + ("to PASS ✅" if report["suite_passed"] else "to FAIL ❌")
+    return (
+        f"**Change vs previous ({prev_commit}):** solve rate {prev:.0%} {arrow} {cur:.0%} "
+        f"({diff:+.0%}){verdict_flip}"
+    )
+
+
+def load_previous_report(out_dir: Path, backend: str) -> dict | None:
+    """Load the last committed report for this backend, if any (for the delta)."""
+    for candidate in (out_dir / f"latest-{backend}.json", out_dir / "latest.json"):
+        try:
+            data = json.loads(candidate.read_text(encoding="utf-8"))
+            if data.get("backend") == backend:
+                return data
+        except (OSError, ValueError):
+            continue
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -744,14 +876,16 @@ async def _health_gate(backend: str) -> tuple[ModelInventory | None, str | None]
 
 
 async def run_suite(
-    tasks: list[LiveTask], backend: str = "ollama", escalation: bool | None = None
+    tasks: list[LiveTask], backend: str = "ollama", escalation: bool | None = None,
+    trials: int = 1,
 ) -> tuple[dict | None, str]:
     """Run the whole suite on the chosen backend. Returns (report | None, message).
 
     Returns ``(None, msg)`` when the health gate fails (Ollama down / model
     missing / OpenAI key invalid) — the caller exits non-zero without fabricating
     results. ``escalation`` (None|True|False) overrides every task's escalation
-    setting, for the with/without-escalation comparison.
+    setting, for the with/without-escalation comparison. ``trials`` runs each
+    task N times so per-task variance is reported (small local models are noisy).
     """
     backend = providers.resolve_backend(backend)
     providers.set_backend(backend)
@@ -762,31 +896,48 @@ async def run_suite(
         return None, error
 
     network_ok = await _network_reachable()
+    trials = max(1, trials)
     results: list[LiveResult] = []
-    for i, task in enumerate(tasks, 1):
-        print(f"[{i}/{len(tasks)}] {task.name} ({task.category})...", flush=True)
-        result = await run_task(task, inventory, network_ok, escalation=escalation)
-        status = {"pass": "PASS", "fail": "FAIL", "skip": "SKIP"}[result.status]
-        extra = f" [{result.failure_label}]" if result.failure_label else ""
-        cost = f" ~${result.cost_usd:.4f}" if result.cost_usd else ""
-        print(f"        -> {status} in {result.latency_s}s{extra}{cost}", flush=True)
-        results.append(result)
+    for trial in range(1, trials + 1):
+        for i, task in enumerate(tasks, 1):
+            label = f"[trial {trial}/{trials}] " if trials > 1 else ""
+            print(f"{label}[{i}/{len(tasks)}] {task.name} ({task.category})...", flush=True)
+            result = await run_task(task, inventory, network_ok, escalation=escalation)
+            status = {"pass": "PASS", "fail": "FAIL", "skip": "SKIP"}[result.status]
+            extra = f" [{result.failure_label}]" if result.failure_label else ""
+            cost = f" ~${result.cost_usd:.4f}" if result.cost_usd else ""
+            print(f"        -> {status} in {result.latency_s}s{extra}{cost}", flush=True)
+            results.append(result)
 
     # timestamp is captured by the caller (Date.now is fine outside the harness).
     from datetime import datetime, timezone
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-    report = aggregate(results, model=model, timestamp=timestamp, backend=backend)
+    report = aggregate(
+        results, model=model, timestamp=timestamp, backend=backend,
+        env=environment(model, backend), trials=trials,
+    )
     return report, "ok"
+
+
+def _history_slug(report: dict) -> str:
+    """A filesystem-safe archive name for a run (timestamp + backend + commit)."""
+    ts = str(report.get("timestamp", "run")).replace(":", "").replace(" ", "_").rstrip("Z")
+    commit = (report.get("environment") or {}).get("git_commit") or "nocommit"
+    return f"{ts}-{report.get('backend', 'ollama')}-{commit}"
 
 
 def write_reports(report: dict, out_dir: Path) -> tuple[Path, Path]:
     """Write latest.json/md (most recent run) plus backend-suffixed copies (for
-    cross-backend comparison), all with UTF-8."""
+    cross-backend comparison) and an immutable history archive, all UTF-8.
+
+    A "Change vs previous run" delta is rendered against the last committed
+    report for this backend (read BEFORE we overwrite it)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     backend = report.get("backend", "ollama")
+    previous = load_previous_report(out_dir, backend)
     payload = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
-    md = render_markdown(report)
+    md = render_markdown(report, previous=previous)
     json_path = out_dir / "latest.json"
     md_path = out_dir / "latest.md"
     for path, text in (
@@ -796,6 +947,10 @@ def write_reports(report: dict, out_dir: Path) -> tuple[Path, Path]:
         (out_dir / f"latest-{backend}.md", md),
     ):
         path.write_text(text, encoding="utf-8")
+    # Immutable per-run archive for regression tracking across commits.
+    history_dir = out_dir / "history"
+    history_dir.mkdir(parents=True, exist_ok=True)
+    (history_dir / f"{_history_slug(report)}.json").write_text(payload, encoding="utf-8")
     return json_path, md_path
 
 
@@ -824,6 +979,12 @@ def main(argv: list[str] | None = None) -> int:
         help="verification-escalation to a coder specialist on code tasks: auto (task "
         "default), on (force), off (disable — for the with/without comparison)",
     )
+    parser.add_argument(
+        "--trials",
+        type=int,
+        default=1,
+        help="run each task N times and report per-task variance (default 1)",
+    )
     args = parser.parse_args(argv)
     escalation = {"auto": None, "on": True, "off": False}[args.escalate]
 
@@ -846,7 +1007,8 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     report, message = asyncio.run(run_suite(
-        tasks, backend=providers.resolve_backend(args.backend), escalation=escalation
+        tasks, backend=providers.resolve_backend(args.backend), escalation=escalation,
+        trials=args.trials,
     ))
     if report is None:
         print(f"\nHEALTH GATE FAILED: {message}", file=sys.stderr)

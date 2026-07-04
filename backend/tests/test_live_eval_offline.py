@@ -12,6 +12,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+from pathlib import Path  # noqa: E402
+
 from tests.eval.live_runner import (  # noqa: E402
     MISSING_VERIFICATION,
     SAFETY_BREACH,
@@ -23,8 +25,11 @@ from tests.eval.live_runner import (  # noqa: E402
     LiveTurn,
     _redact,
     aggregate,
+    environment,
+    load_previous_report,
     percentile,
     render_markdown,
+    write_reports,
 )
 from tests.eval import live_tasks  # noqa: E402
 
@@ -390,6 +395,75 @@ def test_check_ws_project_qa_rejects_common_words():
             _turn(evidence_tools=["read_file"], final_text=prose), None
         )
         assert not res.passed and res.failure_label == UNGROUNDED, prose
+
+
+# --------------------------------------------------------------------------- #
+# environment / variance / regression history (2026-07-04 eval upgrades)
+# --------------------------------------------------------------------------- #
+
+
+def test_environment_never_raises_and_has_core_fields():
+    env = environment(model="gemma4:12b", backend="ollama")
+    assert "os" in env and "python" in env
+    assert env["backend"] == "ollama"
+    # git_dirty is a bool even outside a repo (best-effort).
+    assert isinstance(env["git_dirty"], bool)
+
+
+def test_aggregate_includes_env_and_variance():
+    results = [
+        _result("a", "c", True, latency=1.0),
+        _result("a", "c", False, latency=3.0, label=WRONG_ANSWER),
+        _result("b", "c", True, latency=2.0),
+        _result("b", "c", True, latency=2.5),
+    ]
+    report = aggregate(
+        results, model="m", timestamp="t", env={"git_commit": "abc123"}, trials=2
+    )
+    assert report["trials"] == 2
+    assert report["environment"]["git_commit"] == "abc123"
+    assert report["variance"]["a"]["pass_rate"] == 0.5
+    assert report["variance"]["b"]["pass_rate"] == 1.0
+    assert report["variance"]["a"]["latency_spread"] == 2.0
+
+
+def test_render_markdown_shows_env_variance_and_delta():
+    results = [_result("p", "Project Q&A", True, primary=True), _result("p", "Project Q&A", False, primary=True, label=WRONG_ANSWER)]
+    report = aggregate(
+        results, model="m", timestamp="t2",
+        env={"git_commit": "def456", "os": "Windows 11", "python": "3.12.0"},
+        trials=2,
+    )
+    previous = {"totals": {"solve_rate": 1.0}, "suite_passed": True,
+                "environment": {"git_commit": "abc000"}, "timestamp": "t1"}
+    md = render_markdown(report, previous=previous)
+    assert "**Environment:**" in md
+    assert "commit `def456`" in md
+    assert "Per-task variance" in md
+    assert "Change vs previous" in md
+
+
+def test_write_reports_archives_history_and_computes_delta(tmp_path: Path):
+    first = aggregate(
+        [_result("p", "Project Q&A", True, primary=True)],
+        model="m", timestamp="2026-07-04 10:00:00Z",
+        env={"git_commit": "c1"}, backend="ollama",
+    )
+    write_reports(first, tmp_path)
+    # A prior report is now loadable for the delta.
+    assert load_previous_report(tmp_path, "ollama") is not None
+
+    second = aggregate(
+        [_result("p", "Project Q&A", False, primary=True, label=WRONG_ANSWER)],
+        model="m", timestamp="2026-07-04 11:00:00Z",
+        env={"git_commit": "c2"}, backend="ollama",
+    )
+    _json_path, md_path = write_reports(second, tmp_path)
+    md = md_path.read_text(encoding="utf-8")
+    assert "Change vs previous" in md
+    # Two runs archived under history/.
+    archives = list((tmp_path / "history").glob("*.json"))
+    assert len(archives) == 2
 
 
 def test_live_task_set_is_coherent():
