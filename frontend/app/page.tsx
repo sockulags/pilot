@@ -5,6 +5,7 @@ import ChatInput from "@/components/TaskInput";
 import Transcript from "@/components/ActionLog";
 import ProjectBar from "@/components/ProjectBar";
 import JobsPanel from "@/components/JobsPanel";
+import SettingsPanel from "@/components/SettingsPanel";
 import { ToastProvider, useToast } from "@/components/Toast";
 import Dialog, { useDialogA11y } from "@/components/Dialog";
 import { t } from "@/app/strings";
@@ -335,6 +336,7 @@ function Workspace() {
   const [routeMode, setRouteMode] = useState("auto");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [jobsOpen, setJobsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
@@ -344,6 +346,7 @@ function Workspace() {
   const [wsStatus, setWsStatus] = useState<WsStatus>("disconnected");
   const [showJump, setShowJump] = useState(false);
   const [reconnectNonce, setReconnectNonce] = useState(0);
+  const [authFailed, setAuthFailed] = useState(false);
   const [composerSeed, setComposerSeed] = useState("");
   const [composerKey, setComposerKey] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -402,6 +405,19 @@ function Workspace() {
     _setRunning(value);
   }, []);
 
+  // Finalize any still-open assistant turn so its spinner can't hang forever
+  // after a mid-stream disconnect (review 2026-07-04).
+  const finalizeOpenTurns = useCallback((note: string) => {
+    setTranscript((prev) => {
+      if (!prev.some((it) => it.kind === "assistant" && !it.done)) return prev;
+      return prev.map((it) =>
+        it.kind === "assistant" && !it.done
+          ? { ...it, done: true, summary: it.summary ?? note }
+          : it
+      );
+    });
+  }, []);
+
   // Track whether the user is parked at the bottom of the feed. We only
   // auto-follow new content when they are, so scrolling up to read history
   // isn't yanked back down on every streamed token.
@@ -454,6 +470,11 @@ function Workspace() {
       const next = [...prev];
       let idx = next.findIndex((item) => item.kind === "assistant" && item.turn === turn);
       if (idx === -1) {
+        // A turn-less error/done event (e.g. an auth or transport error before
+        // any turn_start) must not fabricate a phantom forever-'working'
+        // assistant bubble. Only create the assistant row for events that
+        // actually begin/continue a turn (review 2026-07-04).
+        if (ev.type === "error" || ev.type === "done") return prev;
         next.push({ kind: "assistant", id: idRef.current++, turn, text: "", events: [], done: false });
         idx = next.length - 1;
       }
@@ -492,9 +513,22 @@ function Workspace() {
         case "consult":
           updated.events.push({ id: idRef.current++, type: "consult", tool: ev.model, content: ev.content });
           break;
-        case "expert_delta":
-          updated.events.push({ id: idRef.current++, type: "expert", tool: ev.model, content: ev.content });
+        case "expert_delta": {
+          // Coalesce token-by-token expert stream into a single event (like
+          // assistant_delta), instead of one event per chunk — which flooded
+          // the timeline with fragments and made rendering O(n²) (review
+          // 2026-07-04).
+          const last = updated.events[updated.events.length - 1];
+          if (last && last.type === "expert" && last.tool === ev.model) {
+            updated.events = [
+              ...updated.events.slice(0, -1),
+              { ...last, content: (last.content ?? "") + (ev.content ?? "") },
+            ];
+          } else {
+            updated.events.push({ id: idRef.current++, type: "expert", tool: ev.model, content: ev.content });
+          }
           break;
+        }
         default:
           updated.events.push({ id: idRef.current++, type: ev.type, content: ev.content });
       }
@@ -521,6 +555,18 @@ function Workspace() {
 
       ws.onmessage = (e) => {
         const msg = JSON.parse(e.data) as ServerEvent;
+        // A rejected hello closes the socket after this error; stop the retry
+        // loop and surface a terminal state instead of reconnecting every 3s
+        // forever (review 2026-07-04).
+        if (msg.type === "error" && msg.content === "unauthorized") {
+          dead = true;
+          setAuthFailed(true);
+          setWsStatus("error");
+          setRunning(false);
+          if (retryTimer) clearTimeout(retryTimer);
+          try { ws.close(); } catch {}
+          return;
+        }
         if (msg.type === "history") {
           turnRef.current = msg.turn ?? 0;
           if (transcriptRef.current.length === 0 && msg.messages?.length) {
@@ -570,7 +616,10 @@ function Workspace() {
       ws.onclose = () => {
         if (dead) return;
         setWsStatus("disconnected");
-        if (runningRef.current) setRunning(false);
+        if (runningRef.current) {
+          setRunning(false);
+          finalizeOpenTurns(t.status.disconnected);
+        }
         retryTimer = setTimeout(openWs, RECONNECT_DELAY);
       };
     }
@@ -581,10 +630,12 @@ function Workspace() {
       if (retryTimer) clearTimeout(retryTimer);
       wsRef.current?.close();
     };
-  }, [applyEvent, setRunning, reconnectNonce]);
+  }, [applyEvent, setRunning, reconnectNonce, finalizeOpenTurns]);
 
   // Force an immediate reconnect (tears down and re-runs the socket effect).
   const reconnect = useCallback(() => {
+    setAuthFailed(false);
+    tokenRef.current = localStorage.getItem("pilot_token") || "";
     setWsStatus("connecting");
     setReconnectNonce((n) => n + 1);
   }, []);
@@ -726,6 +777,9 @@ function Workspace() {
             ⏰
             {jobs.length > 0 && <span className="badge">{jobs.length}</span>}
           </button>
+          <button className="ic" onClick={() => setSettingsOpen(true)} title={t.settings.open} aria-label={t.settings.open}>
+            ⚙
+          </button>
           <button className="ic reset" onClick={requestReset} title={t.header.newConversation} aria-label={t.header.newConversation}>⟲</button>
           <div className="brain status" title={STATUS_LABEL[wsStatus]}>
             <span className="conn" style={{ background: wsStatus === "error" ? "var(--del)" : wsStatus === "connecting" ? "var(--amber)" : "var(--green)" }} />
@@ -737,7 +791,11 @@ function Workspace() {
           <div className={`connbanner ${wsStatus}`} role="status">
             <span className="cb-dot" />
             <span className="cb-msg">
-              {wsStatus === "connecting" ? t.connection.connecting : t.connection.dropped}
+              {authFailed
+                ? t.connection.unauthorized
+                : wsStatus === "connecting"
+                ? t.connection.connecting
+                : t.connection.dropped}
             </span>
             {wsStatus !== "connecting" && (
               <button className="cb-retry" onClick={reconnect}>{t.connection.retry}</button>
@@ -838,6 +896,7 @@ function Workspace() {
         />
       )}
       {jobsOpen && <JobsPanel jobs={jobs} onClose={() => setJobsOpen(false)} onAdd={addJob} onPause={pauseJob} onResume={resumeJob} onDelete={deleteJob} />}
+      {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
     </>
   );
 }

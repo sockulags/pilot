@@ -41,8 +41,14 @@ OFFLOAD_ENGINES = {CLAUDE_CODE, CODEX}
 # ("read"/"shell"/"desktop") without coupling to its scheduled-job profiles,
 # which are a different concern. The external agents additionally need an
 # "external_agent" grant plus workspace write access.
+# NOTE: local_chat carries the FULL tool capability set, not read-only. The chat
+# route runs the same coordinator loop as computer (only the intent hint differs;
+# the tool allowlist is identical), so a "chat" turn can still run a shell command
+# or a desktop action if the model chooses to. Advertising read-only here was
+# misleading (review 2026-07-04); until the coordinator actually enforces
+# per-engine permissions, the honest advertisement is the real capability.
 REQUIRED_PERMISSIONS: dict[str, list[str]] = {
-    LOCAL_CHAT: ["read_files"],
+    LOCAL_CHAT: ["read_files", "shell", "desktop"],
     LOCAL_TOOLS: ["read_files", "shell", "desktop"],
     LOCAL_REPO_AGENT: ["read_files", "shell"],
     CLAUDE_CODE: ["external_agent", "workspace_write"],
@@ -178,7 +184,11 @@ def _explain(
 def _mentions_github_terms(text: str) -> bool:
     # Imported lazily to keep this module's import surface small and avoid any
     # circularity surprises; PROJECT_GITHUB_TERMS lives with the classifier.
+    import re
+
     from agents.orchestrator import PROJECT_GITHUB_TERMS
 
-    haystack = f" {text.lower()} "
-    return any(term in haystack for term in PROJECT_GITHUB_TERMS)
+    lowered = text.lower()
+    return any(
+        re.search(rf"\b{re.escape(term.strip())}\b", lowered) for term in PROJECT_GITHUB_TERMS
+    )

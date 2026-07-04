@@ -13,6 +13,7 @@ from fastapi.websockets import WebSocket
 
 from api.ws import websocket_endpoint
 from api.mcp import create_mcp_app
+from api.settings import create_settings_router
 from agents.vision import validate_vision_model
 from config import (
     BACKEND_HOST,
@@ -73,6 +74,10 @@ def create_app() -> FastAPI:
     @app.websocket("/ws")
     async def ws(websocket: WebSocket):
         await websocket_endpoint(websocket)
+
+    # Model settings REST API (providers + per-role assignments). Same-token
+    # guarded as the WS; mounted before the static frontend so /api matches first.
+    app.include_router(create_settings_router())
 
     # Serve the built frontend from one origin when it exists (production /
     # remote). Mounted last so /health and /ws match first. In dev (no out/)

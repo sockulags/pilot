@@ -174,17 +174,26 @@ def run_command_sync(cmd: str, cwd: str | None = None, timeout: int = 30) -> str
     # Same shell as the async path (PowerShell on Windows) so the MCP surface
     # (pilot_run_command) and the agent loop never execute the same command under
     # two incompatible shells (adversarial review 2026-07-03).
+    #
+    # Decode as UTF-8 with errors="replace" (NOT the locale codec): PowerShell's
+    # redirected-pipe output can carry OEM code-page bytes (cp850/437) that are
+    # undefined under the default cp1252 strict decoder, which would raise
+    # UnicodeDecodeError straight out of subprocess.run and crash /mcp/call with
+    # a 500. We also ask the child to emit UTF-8 so both run_command surfaces
+    # agree (review 2026-07-04).
     if os.name == "nt":
-        argv = ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd]
+        prelude = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $OutputEncoding=[Text.Encoding]::UTF8; "
+        argv = ["powershell", "-NoProfile", "-NonInteractive", "-Command", prelude + cmd]
         result = subprocess.run(
-            argv, capture_output=True, text=True, cwd=cwd, timeout=timeout,
+            argv, capture_output=True, cwd=cwd, timeout=timeout,
         )
     else:
         result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, cwd=cwd, timeout=timeout,
+            cmd, shell=True, capture_output=True, cwd=cwd, timeout=timeout,
         )
-    output = result.stdout + result.stderr
-    return output.strip()
+    stdout = (result.stdout or b"").decode("utf-8", errors="replace")
+    stderr = (result.stderr or b"").decode("utf-8", errors="replace")
+    return (stdout + stderr).strip()
 
 
 WINDOWS_APP_ALIASES = {

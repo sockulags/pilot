@@ -16,6 +16,7 @@ which small local models handle far more reliably.
 import logging
 import json
 import os
+import re
 from typing import AsyncGenerator
 
 from agents import providers
@@ -175,7 +176,9 @@ async def classify_turn(
     ]
 
     try:
-        result = await providers.chat_once(messages, OLLAMA_ROUTER_MODEL, temperature=0.1)
+        result = await providers.chat_once(
+            messages, OLLAMA_ROUTER_MODEL, temperature=0.1, role="classifier"
+        )
         content = (result.get("content") or "").strip()
     except Exception as exc:
         logger.warning("classify_turn request failed: %s", exc)
@@ -200,8 +203,10 @@ def route_project_bound_message(user_message: str, project: str | None) -> dict 
     if not project:
         return None
 
-    text = f" {user_message.lower()} "
-    if not any(term in text for term in PROJECT_GITHUB_TERMS):
+    # Whole-word match so 'gh'/'pr' don't fire inside 'ugh'/'April' and force an
+    # ordinary chat onto the computer route (review 2026-07-04).
+    lowered = user_message.lower()
+    if not any(re.search(rf"\b{re.escape(term.strip())}\b", lowered) for term in PROJECT_GITHUB_TERMS):
         return None
 
     # GitHub/repo requests go to the computer route so the coordinator can use the
@@ -265,10 +270,13 @@ async def _stream_ollama_chat(
     """Stream content chunks for the given messages via the active backend.
 
     Named for history (tests patch this symbol); it now delegates to the provider
-    so the final-answer stream follows PILOT_ANSWER_BACKEND (local or OpenAI). The
-    ``think=False`` / temperature match the previous Ollama payload.
+    so the final-answer stream follows the "synthesis" role assignment (settings
+    page), then PILOT_ANSWER_BACKEND (local or OpenAI). The ``think=False`` /
+    temperature match the previous Ollama payload.
     """
-    async for piece in providers.chat_stream(messages, model, temperature=0.2, think=False):
+    async for piece in providers.chat_stream(
+        messages, model, temperature=0.2, think=False, role="synthesis"
+    ):
         yield piece
 
 

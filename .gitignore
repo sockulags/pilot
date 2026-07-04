@@ -10,6 +10,9 @@ backend/.python-version
 # Persisted chat sessions
 backend/data/
 
+# Per-run eval archives (latest.* stay committed; history/ is local run history)
+backend/tests/eval/results/history/
+
 # Node
 frontend/node_modules/
 frontend/.next/

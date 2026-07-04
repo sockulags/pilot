@@ -225,10 +225,17 @@ _COMMAND_SECTIONS = {
 
 
 def _first_fenced_command(lines: list[str], start: int) -> str:
-    """Return the first command line inside the next code fence after ``start``."""
+    """Return the first command inside a code fence that belongs to THIS section.
+
+    Stops at the next ``#`` heading: a section documented in prose with no fenced
+    command must not borrow an UNRELATED later section's command (review
+    2026-07-04 — a prose-only ``## Testing`` followed by ``## Release`` would
+    otherwise yield the release command as the test command)."""
     in_fence = False
     for line in lines[start:]:
         stripped = line.strip()
+        if not in_fence and stripped.startswith("#"):
+            break  # reached the next section without finding a fence — give up
         if stripped.startswith("```"):
             if in_fence:
                 break

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+import model_settings
 from config import (
     AGENT_ROLE_MODELS,
     INTENT_AGENT_ROLES,
@@ -36,6 +37,9 @@ class AgentSelection:
     fallback_reason: str | None = None
 
 
+# Follow-up ("continue with the earlier task") phrases. Matched as WHOLE WORDS
+# (see _is_followup) after ö→o folding, so short verbs like "kör"/"kor" do not
+# fire inside 'korea', 'körkort', 'dekor' and hijack the turn (review 2026-07-04).
 _FOLLOWUP_TERMS = (
     "sätt igång",
     "satt igang",
@@ -50,6 +54,10 @@ _FOLLOWUP_TERMS = (
     "do it",
     "go ahead",
 )
+
+# The shortest resolved follow-up base we will accept; below this the first
+# message is more likely noise ("hej!") than a real task to resume.
+_MIN_FOLLOWUP_BASE_CHARS = 15
 
 _CURRENT_TERMS = (
     "aktuella",
@@ -212,11 +220,56 @@ def choose_coordinator_model(
     return select_agent_for_intent(model_mode, ctx, available_models).model
 
 
+def _settings_selection(
+    role: str, installed: set[str]
+) -> AgentSelection | None:
+    """Resolve ``role`` through the persisted model settings, if configured.
+
+    Settings become the authority once the user has assigned anything relevant:
+    an explicit role assignment wins, else the ``default_agent`` assignment
+    ("default runs everything"). Cloud assignments need no local install check;
+    an Ollama assignment must actually be installed (ANY installed model — the
+    user chose it deliberately, so registry membership is not required). An
+    assigned-but-uninstalled model falls back with a recorded reason.
+    """
+    assigned = model_settings.resolve_role_model(role)
+    source_role = role
+    if not assigned and role != "default_agent":
+        assigned = model_settings.resolve_role_model("default_agent")
+        source_role = "default_agent"
+    if not assigned:
+        return None
+    if model_settings.is_cloud_model_id(assigned):
+        return AgentSelection(role, assigned, assigned)
+    if assigned in installed:
+        return AgentSelection(role, assigned, assigned)
+    fallback = OLLAMA_MODEL
+    return AgentSelection(
+        role=role,
+        model=fallback,
+        configured_model=assigned,
+        fallback_role="default_agent",
+        fallback_reason=(
+            f"settings-assigned {source_role} model {assigned!r} is not installed; "
+            f"falling back to {fallback!r}"
+        ),
+    )
+
+
 def select_agent_for_intent(
     model_mode: str,
     ctx: TaskContext,
     available_models: set[str] | None = None,
+    installed_all: set[str] | None = None,
 ) -> AgentSelection:
+    """Pick the coordinator model for a turn.
+
+    Precedence: a user pin > persisted model settings (role assignment, then the
+    default assignment) > the env role defaults (AGENT_ROLE_MODELS) > OLLAMA_MODEL.
+    ``available_models`` is the healthy registry set (auto-pick pool);
+    ``installed_all`` is every installed Ollama model — settings assignments may
+    use any installed model, not just registry entries.
+    """
     if model_mode and model_mode != "auto":
         model = tools_capable_model(model_mode)
         configured = model_mode
@@ -236,6 +289,7 @@ def select_agent_for_intent(
     # so an unverified configured expert is never selected; the caller should pass
     # the real inventory (see model_inventory.get_model_inventory) to widen this.
     available = available_models if available_models is not None else {OLLAMA_MODEL}
+    installed = installed_all if installed_all is not None else available
     raw_intent = getattr(ctx, "intent", "")
     if isinstance(raw_intent, str) and raw_intent:
         intent = raw_intent
@@ -244,6 +298,11 @@ def select_agent_for_intent(
     else:
         intent = "chat"
     role = INTENT_AGENT_ROLES.get(intent, "default_agent")
+
+    from_settings = _settings_selection(role, installed)
+    if from_settings is not None:
+        return from_settings
+
     configured = AGENT_ROLE_MODELS.get(role) or OLLAMA_MODEL
     if _agent_model_available(configured, available):
         return AgentSelection(role, configured, configured)
@@ -336,9 +395,29 @@ def sanitize_final_reply(text: str, had_actions: bool, needs_tools: bool = False
     return raw
 
 
+def _fold(text: str) -> str:
+    """Lowercase and fold Swedish diacritics so word-boundary matching is robust
+    to å/ä/ö spelling (kör ~ kor)."""
+    lowered = text.lower()
+    return lowered.translate(str.maketrans("åäö", "aao"))
+
+
+def _is_followup(text: str) -> bool:
+    """Whether ``text`` is (only) a short 'continue the earlier task' nudge.
+
+    Whole-word / whole-phrase match on folded text, so 'korea' or 'körkort'
+    never counts as the follow-up verb 'kör'."""
+    folded = _fold(text)
+    for term in _FOLLOWUP_TERMS:
+        folded_term = _fold(term)
+        pattern = r"\b" + re.escape(folded_term) + r"\b"
+        if re.search(pattern, folded):
+            return True
+    return False
+
+
 def _resolve_followup(conversation: list[dict], latest: str) -> str:
-    latest_lc = latest.lower()
-    if not _contains_any(latest_lc, _FOLLOWUP_TERMS):
+    if not _is_followup(latest):
         return latest
 
     user_messages = [
@@ -348,7 +427,13 @@ def _resolve_followup(conversation: list[dict], latest: str) -> str:
     ]
     if not user_messages:
         return latest
-    base = user_messages[0]
+    # Resume the most recent SUBSTANTIVE prior task, not necessarily the very
+    # first message (which may be a greeting). Fall back to the verbatim latest
+    # message if the resolved base is trivially short.
+    substantive = [m for m in user_messages if len(m) >= _MIN_FOLLOWUP_BASE_CHARS]
+    base = substantive[0] if substantive else user_messages[0]
+    if len(base) < _MIN_FOLLOWUP_BASE_CHARS:
+        return latest
     refinements = [m for m in user_messages[1:] if _is_refinement(m)]
     suffix = " ".join(refinements)
     return f"{base} {suffix}".strip()

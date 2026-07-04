@@ -70,6 +70,10 @@ def create_mcp_app() -> FastAPI:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         tool = body.get("name")
         args = body.get("arguments", {})
+        if not isinstance(args, dict):
+            return JSONResponse(
+                {"error": "invalid arguments: expected an object"}, status_code=400
+            )
         internal_tool = _MCP_TO_INTERNAL.get(tool)
         if internal_tool and registry.confirmation_required(internal_tool, args):
             return {
@@ -79,6 +83,24 @@ def create_mcp_app() -> FastAPI:
                 "sideEffects": registry.side_effects_for(internal_tool),
                 "reason": registry.confirmation_reason(internal_tool, args),
             }
+
+        # Required-argument guard: a client omitting e.g. "cmd" must get a clear
+        # 400, not an unhandled KeyError -> HTTP 500 (review 2026-07-04).
+        REQUIRED = {
+            "pilot_click": ("x", "y"),
+            "pilot_type": ("text",),
+            "pilot_run_command": ("cmd",),
+            "pilot_open_app": ("name",),
+            "pilot_read_file": ("path",),
+            "pilot_find_file": ("name",),
+            "pilot_focus_window": ("title",),
+        }
+        missing = [k for k in REQUIRED.get(tool, ()) if k not in args]
+        if missing:
+            return JSONResponse(
+                {"error": f"missing required argument(s): {', '.join(missing)}"},
+                status_code=400,
+            )
 
         if tool == "pilot_screenshot":
             img = screenshot()

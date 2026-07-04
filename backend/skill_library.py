@@ -84,10 +84,18 @@ async def _ensure_embedded() -> None:
     skills = load_skills()
     if _embedded or not skills:
         return
+    all_ok = True
     for skill in skills:
         if skill.embedding is None:
             skill.embedding = await _embed(skill.triggers, is_query=False)
-    _embedded = True
+            if skill.embedding is None:
+                all_ok = False
+    # Only latch _embedded once EVERY skill actually embedded. A transient
+    # embedding failure (Ollama down / model not pulled on the first turn) used
+    # to permanently disable skill retrieval until a backend restart, because
+    # _embedded=True short-circuited every later call while embeddings stayed
+    # None (review 2026-07-04). Now we retry on the next turn until it succeeds.
+    _embedded = all_ok
 
 
 async def search_skills(

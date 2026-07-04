@@ -18,8 +18,16 @@ closed early.
 
 from __future__ import annotations
 
+import re
+
 OPEN_TAG = "<UNTRUSTED_EVIDENCE>"
 CLOSE_TAG = "</UNTRUSTED_EVIDENCE>"
+
+# Matches ANY UNTRUSTED_EVIDENCE tag the LLM might read as a block boundary:
+# open or close, with or without attributes, and tolerant of whitespace inside
+# the angle brackets ("</ UNTRUSTED_EVIDENCE >", '<UNTRUSTED_EVIDENCE src="x">').
+# Exact-string matching missed all of these (adversarial review 2026-07-04).
+_TAG_RE = re.compile(r"<\s*/?\s*untrusted_evidence\b[^>]*>", re.IGNORECASE)
 
 # Short system-policy rule (English — it's machine policy, not user-facing copy).
 UNTRUSTED_RULE = (
@@ -33,33 +41,17 @@ UNTRUSTED_RULE = (
 
 
 def neutralize(content: str) -> str:
-    """Defang any attempt to close the wrapper from inside the content.
+    """Defang any attempt to open or close the wrapper from inside the content.
 
-    Replaces literal occurrences of the delimiter tags (case-insensitive) with a
-    visibly-inert form so injected content cannot break out of the block. The
-    text itself is preserved (not stripped) so genuine facts remain usable.
+    Any UNTRUSTED_EVIDENCE tag — open/close, attribute-bearing, or whitespace-
+    padded — is rewritten to a visibly-inert ``(...)`` form so injected content
+    can neither close the block early nor forge the attribute-form opening tag
+    that ``wrap_untrusted`` itself emits. The text is preserved (not stripped)
+    so genuine facts remain usable.
     """
     if not content:
         return ""
-    out = content
-    for tag in (CLOSE_TAG, OPEN_TAG):
-        lowered_tag = tag.lower()
-        # Case-insensitive literal replacement without regex (tags are fixed).
-        result = []
-        i = 0
-        low = out.lower()
-        while True:
-            j = low.find(lowered_tag, i)
-            if j == -1:
-                result.append(out[i:])
-                break
-            result.append(out[i:j])
-            # Insert a zero-effect marker that breaks the tag without losing text.
-            defanged = out[j:j + len(tag)].replace("<", "(").replace(">", ")")
-            result.append(defanged)
-            i = j + len(tag)
-        out = "".join(result)
-    return out
+    return _TAG_RE.sub(lambda m: m.group(0).replace("<", "(").replace(">", ")"), content)
 
 
 def wrap_untrusted(content: str, source: str = "") -> str:

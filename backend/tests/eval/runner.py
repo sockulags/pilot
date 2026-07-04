@@ -82,6 +82,11 @@ class Scenario:
     consult_reply: str | None = None
     memories: str = ""
     compose_text: str | None = None  # stubbed final compose_reply output
+    # Stubbed screen observation returned by every perceive() this turn. Stubbing
+    # it keeps the deterministic suite from taking a REAL screenshot / making a
+    # live vision call (runner previously left perceive un-stubbed — audit
+    # 2026-07-04), and lets adversarial scenarios inject hostile screen text.
+    perceive_output: str = "Screen observation: a plain desktop. Elements: [1] Start"
 
     # --- coordinator-path knobs (mirror run_coordinator kwargs) ---
     task_contract_intent: str | None = None
@@ -222,11 +227,17 @@ async def _run_coordinator(scenario: Scenario) -> ScenarioResult:
         # write off this id so the memory_write contract can verify it.
         return "eval-mem-id"
 
+    async def fake_perceive(task, history, emit):
+        return scenario.perceive_output
+
     patches = [
         mock.patch.object(coordinator, "available_expert_models", new=_av(scenario.experts)),
         mock.patch.object(coordinator, "search_skills", new=_av([])),
         mock.patch.object(coordinator, "refine_query", new=_av(scenario.message)),
         mock.patch.object(coordinator, "_consult_expert", new=fake_consult),
+        # Stub perceive so no real screenshot / vision call happens, and so
+        # adversarial scenarios can inject hostile screen text deterministically.
+        mock.patch.object(coordinator.agent_loop, "perceive", new=fake_perceive),
         mock.patch.object(coordinator, "save_memory", new=fake_save_memory),
         mock.patch.object(
             coordinator.agent_loop, "execute_tool",

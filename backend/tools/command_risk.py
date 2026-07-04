@@ -58,13 +58,52 @@ class CommandRisk:
 # ---------------------------------------------------------------------------
 
 # Read-only commands that are always safe (the *first* token of a part).
+# NOTE: `find` is deliberately NOT here — Git's bundled Unix `find` on Windows
+# supports `-delete`/`-exec`, so it is classified conditionally (see
+# _classify_find) rather than assumed safe.
 _SAFE_COMMANDS = {
     "ls", "dir", "pwd", "cd", "echo", "cat", "type", "head", "tail",
-    "wc", "grep", "find", "which", "where", "whoami", "hostname", "date",
+    "wc", "grep", "which", "where", "whoami", "hostname", "date",
     "pytest", "true", "false", "test", "printenv", "env",
     "get-childitem", "gci", "get-location", "gl", "write-output", "write-host",
     "test-path", "select-string", "measure-object",
 }
+
+# Language interpreters. With an inline-eval flag they run arbitrary code with
+# no file on disk to inspect — the classic injection sink — so those forms are
+# gated as CODE_EXECUTION. (Running a *named script file*, e.g. `python -m
+# pytest` or `python build.py`, stays ungated so ordinary build/test flows are
+# not interrupted; the file itself is visible and reviewable.)
+_INTERPRETERS = {
+    "python", "python3", "py", "node", "nodejs", "deno", "bun",
+    "ruby", "perl", "php", "rscript", "pwsh-command",
+}
+# Inline-eval flags per interpreter family (lowercased). `-e`/`-c`/`--eval`/`-r`
+# and PowerShell's `-command`/`-encodedcommand` all execute a string argument.
+_INLINE_EVAL_FLAGS = {"-c", "-e", "--eval", "-r", "--exec", "eval"}
+
+# Script hosts and loader binaries that execute a script/DLL argument directly —
+# almost never benign in an autonomous agent context.
+_SCRIPT_HOST_COMMANDS = {
+    "wscript", "cscript", "mshta", "osascript", "rundll32", "regsvr32",
+    "certutil", "bitsadmin", "msiexec", "installutil", "regasm",
+}
+
+# Windows system/persistence tools: registry, scheduled tasks, services, WMI,
+# boot config, firewall. Side-effecting and a common persistence vector.
+_SYSTEM_MUTATION_COMMANDS = {
+    "reg", "schtasks", "sc", "wmic", "bcdedit", "netsh", "diskpart",
+    "cipher", "vssadmin", "wevtutil", "net", "setx",
+    "new-service", "set-service", "register-scheduledtask",
+    "new-scheduledtask", "set-itemproperty", "new-itemproperty",
+    "stop-service", "start-service", "restart-service",
+}
+
+# Extensions that make a bare path an executable invocation.
+_EXECUTABLE_SUFFIXES = (
+    ".exe", ".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse",
+    ".wsf", ".wsh", ".msi", ".scr", ".com", ".pif", ".cpl", ".jar",
+)
 
 # Verbs that, after `git`, are read-only in *every* form.
 _SAFE_GIT_SUBCOMMANDS = {
@@ -200,6 +239,33 @@ def _classify_git_fetch(args: list[str]) -> set[str]:
     return set()
 
 
+# `find` destructive actions (Git's bundled Unix find supports these on Windows).
+_FIND_DESTRUCTIVE_FLAGS = {"-delete"}
+_FIND_EXEC_FLAGS = {"-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf"}
+
+
+def _classify_find(args: list[str]) -> set[str]:
+    """`find` is read-only unless it deletes or executes per match."""
+    classes: set[str] = set()
+    if any(a in _FIND_DESTRUCTIVE_FLAGS for a in args):
+        classes.add(DELETE)
+    if any(a in _FIND_EXEC_FLAGS for a in args):
+        classes.add(PROCESS_SPAWN)
+    return classes
+
+
+def _looks_like_executable_path(token: str) -> bool:
+    """True for a direct executable invocation: ./x, .\\x, C:\\...\\x.exe, x.bat."""
+    t = token.strip().strip("'\"").lower()
+    if not t:
+        return False
+    if t.startswith("./") or t.startswith(".\\") or t.startswith("~/"):
+        return True
+    if re.match(r"^[a-z]:\\", t) or re.match(r"^\\\\", t):  # C:\... or UNC \\host
+        return True
+    return t.endswith(_EXECUTABLE_SUFFIXES)
+
+
 # ---------------------------------------------------------------------------
 # Classification
 # ---------------------------------------------------------------------------
@@ -231,6 +297,30 @@ def _classify_part(part: str) -> set[str]:
     first = tokens[0].lower()
     rest = [t.lower() for t in tokens[1:]]
 
+    # Direct executable invocation by path (./run.sh, .\setup.exe, C:\x\y.bat,
+    # bare foo.exe) — the classifier can't see inside it, so it must be gated.
+    if _looks_like_executable_path(tokens[0]):
+        classes.add(PROCESS_SPAWN)
+
+    # Language interpreters running INLINE code (python -c, node -e, perl -e,
+    # php -r, Rscript -e, deno eval, pwsh -Command). A named script file is left
+    # ungated (build/test flows); only the string-eval forms are code-execution.
+    if first in _INTERPRETERS or first in {"powershell", "pwsh"}:
+        if any(_flag_matches(a, _INLINE_EVAL_FLAGS) or a in _INLINE_EVAL_FLAGS for a in rest):
+            classes.add(CODE_EXECUTION)
+        if first in {"powershell", "pwsh"} and any(
+            a in {"-command", "-c"} or a.startswith("-e") for a in rest
+        ):
+            classes.add(CODE_EXECUTION)
+
+    # Script hosts / loaders that execute a script or DLL argument.
+    if first in _SCRIPT_HOST_COMMANDS:
+        classes.add(PROCESS_SPAWN)
+
+    # Windows registry / scheduled-task / service / WMI mutation surfaces.
+    if first in _SYSTEM_MUTATION_COMMANDS:
+        classes.add(PROCESS_SPAWN)
+
     # git push vs read-only git.
     if first == "git":
         sub = rest[0] if rest else ""
@@ -251,6 +341,10 @@ def _classify_part(part: str) -> set[str]:
             # Unknown git subcommand — be conservative only if it looks mutating.
             if sub in {"commit", "add", "rm", "reset", "checkout", "merge", "rebase", "tag", "clean"}:
                 classes.add(WRITE)
+
+    # `find` with -delete/-exec (Git's Unix find ships these on Windows).
+    if first == "find":
+        classes |= _classify_find(rest)
 
     # Package installs.
     if first in _PACKAGE_MANAGERS and any(v in rest for v in _INSTALL_VERBS):

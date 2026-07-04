@@ -25,6 +25,7 @@ import re
 from pathlib import Path
 from typing import Callable
 
+import model_settings
 from agents import loop as agent_loop
 from agents import providers
 from agents.gateway import refine_query
@@ -124,13 +125,16 @@ ANSWER_DEFAULT = {"action": "answer", "thinking": "defaulting to answer"}
 async def available_expert_models(
     coordinator_model: str, inventory: ModelInventory | None = None
 ) -> dict[str, dict]:
-    """Registry models actually installed/healthy in Ollama, minus the coordinator.
+    """Registry models actually installed/healthy in Ollama, minus the coordinator,
+    plus any models on configured cloud providers (settings page).
 
-    Fails CLOSED: if model discovery fails (Ollama down, ``/api/tags`` error or
-    empty), the inventory reports no healthy models and we advertise NO experts,
-    so the coordinator answers itself or uses tools rather than routing a turn to
-    a model that is not actually installed. ``inventory`` may be passed by a
-    caller that already fetched it once for the turn.
+    Fails CLOSED for local models: if model discovery fails (Ollama down,
+    ``/api/tags`` error or empty), the inventory reports no healthy models and we
+    advertise NO local experts, so the coordinator answers itself or uses tools
+    rather than routing a turn to a model that is not actually installed.
+    Cloud entries need no install check — being configured with a key IS their
+    availability signal (a failed call degrades gracefully in _consult_expert).
+    ``inventory`` may be passed by a caller that already fetched it once.
     """
     if inventory is None:
         inventory = await get_model_inventory()
@@ -140,11 +144,22 @@ async def available_expert_models(
             "coordinator %r",
             coordinator_model,
         )
-    return {
+    experts = {
         mid: meta
         for mid, meta in OLLAMA_MODELS.items()
         if mid in inventory.healthy and mid != coordinator_model
     }
+    for entry in model_settings.enabled_cloud_providers():
+        for model_name in entry.get("models", []):
+            cid = model_settings.cloud_model_id(entry["id"], model_name)
+            if cid != coordinator_model:
+                experts[cid] = {
+                    "label": model_name,
+                    "hint": f"Molnmodell via {entry.get('label', entry['id'])} — "
+                            "starkare generell kapacitet (data lämnar datorn)",
+                    "tools": True,
+                }
+    return experts
 
 
 def _expert_menu(experts: dict[str, dict]) -> str:
@@ -644,10 +659,15 @@ async def run_coordinator(
     system = _system_prompt(intent_hint + _contract_prompt(contract))
     # Tools-capable models drive their decisions via native function-calling;
     # others (and a tools-rejecting endpoint) fall back to the JSON action path.
-    # OpenAI chat models are all tool-calling capable; for Ollama it depends on
-    # the model's registry entry. Either way the decision loop drives native tools.
-    use_tools = providers.resolve_backend() == providers.OPENAI or bool(
-        OLLAMA_MODELS.get(coordinator_model, {}).get("tools")
+    # OpenAI chat models (env backend or a cloud:-assigned coordinator) are all
+    # tool-calling capable. For Ollama the registry entry decides; a settings-
+    # assigned model OUTSIDE the registry is assumed tools-capable — the Ollama
+    # 400-retry in providers drops the tools payload if the model rejects it.
+    use_tools = (
+        providers.resolve_backend() == providers.OPENAI
+        or model_settings.is_cloud_model_id(coordinator_model)
+        or coordinator_model not in OLLAMA_MODELS
+        or bool(OLLAMA_MODELS.get(coordinator_model, {}).get("tools"))
     )
     # Retrieve task-relevant skills once (the "how" layer); injected each step.
     skills = format_skills(await search_skills(task))
@@ -664,18 +684,17 @@ async def run_coordinator(
     steps = 0
     tool_calls = 0  # executed tool count, for the optional per-job max_tool_calls cap
     file_output_done = False
+    written_paths: set[str] = set()  # per-path write_file de-dupe (multi-file safe)
     command_counts: dict[tuple[str, str], int] = {}  # repeated-run_command guard
 
     if required_first_tool and not abort.is_set():
         tool = str(required_first_tool.get("tool") or "").strip()
         args = dict(required_first_tool.get("args") or {})
         if tool in registry.coordinator_tool_names():
-            applied_args, _result = await _execute_and_record_tool(
+            applied_args, result = await _execute_and_record_tool(
                 tool, args, project_cwd, emit, runtime_state, notes, contract
             )
-            if tool == "run_command" and _command_writes_file(
-                str(applied_args.get("cmd") or applied_args.get("command") or "")
-            ):
+            if tool == "run_command" and _command_wrote_file(applied_args, result):
                 file_output_done = True
         else:
             notes.append(f"(required first tool {tool!r} unavailable; skipped)")
@@ -746,7 +765,27 @@ async def run_coordinator(
             question = str(decision.get("question") or "").strip()
             if question:
                 return LoopOutcome("needs_input", _render_notes(notes), question, runtime_state)
-            # No question produced — fall through to answering rather than stalling.
+            # No question produced — an empty clarify is not a licence to finish
+            # ungrounded. If a contract is still unsatisfied, keep gathering (as
+            # the answer branch does) rather than returning done and letting
+            # compose_reply synthesise a source-less answer (adversarial review
+            # 2026-07-04). Only fall through to done when the gate is clear.
+            contract_result = verify_contract(contract, runtime_state) if contract else None
+            if contract_result and not contract_result.satisfied:
+                notes.append(
+                    "Empty clarify with an unsatisfied contract; missing "
+                    + missing_requirements_text(contract_result.missing)
+                    + ". Continue gathering evidence or explicitly fail."
+                )
+                continue
+            if not can_compose_final_answer(contract, runtime_state):
+                notes.append("Empty clarify but contract verification is incomplete; continuing.")
+                continue
+            if require_file_output and not file_output_done:
+                notes.append(
+                    "Empty clarify but the requested output file has not been written yet; continuing."
+                )
+                continue
             return LoopOutcome("done", _render_notes(notes), runtime_state=runtime_state)
 
         if action == "consult":
@@ -796,13 +835,11 @@ async def run_coordinator(
                         "thinking",
                         content=f"{model} föreslog kommando: {proposed_cmd}",
                     ))
-                    applied_args, _res = await _execute_and_record_tool(
+                    applied_args, res = await _execute_and_record_tool(
                         "run_command", {"cmd": proposed_cmd}, project_cwd,
                         emit, runtime_state, notes, contract,
                     )
-                    if _command_writes_file(
-                        str(applied_args.get("cmd") or "") if applied_args else ""
-                    ):
+                    if applied_args and _command_wrote_file(applied_args, res):
                         file_output_done = True
             continue
 
@@ -870,17 +907,21 @@ async def run_coordinator(
         # gates (e.g. write_file's inside-the-project check) judge the real
         # target, not an ambiguous relative path.
         args = agent_loop.apply_project_cwd_to_args(tool, args, project_cwd)
-        if tool == "write_file" and file_output_done:
-            # The turn's file output already exists and is verified; a re-write
-            # adds nothing and (with overwrite) would only stall on confirmation
-            # — observed live: gpt-4o-mini rewrote the same file until gated.
-            note = (
-                "(skipped write_file: a file was already written and verified "
-                "this turn — answer now and report its path)"
-            )
-            emit(make_event("thinking", content=note))
-            notes.append(note)
-            continue
+        if tool == "write_file":
+            target = _normalize_path_key(args.get("path"))
+            if target and target in written_paths:
+                # This exact file was already written and verified this turn; a
+                # re-write adds nothing and (with overwrite) only stalls on
+                # confirmation — observed live: gpt-4o-mini rewrote the same file
+                # until gated. A DIFFERENT path is allowed through so multi-file
+                # tasks still work (adversarial review 2026-07-04).
+                note = (
+                    f"(skipped write_file: {args.get('path')!r} was already written "
+                    "and verified this turn — write a different file or answer now)"
+                )
+                emit(make_event("thinking", content=note))
+                notes.append(note)
+                continue
         confirmation = _confirmation_required(tool, args)
         if confirmation:
             emit(make_event(
@@ -938,10 +979,13 @@ async def run_coordinator(
             bool(evidence["ok"]),
             bool(evidence["artifact_verified"]),
         )
-        if tool == "run_command" and _command_writes_file(str(args.get("cmd") or args.get("command") or "")):
+        if tool == "run_command" and _command_wrote_file(args, result):
             file_output_done = True
         if tool == "write_file" and evidence["ok"] and evidence["artifact_verified"]:
             file_output_done = True
+            target = _normalize_path_key(args.get("path"))
+            if target:
+                written_paths.add(target)
         if tool in agent_loop.POST_ACTION_OBSERVE_TOOLS:
             last_observation = await agent_loop.perceive(task, history, emit)
             # Record the post-action observation as evidence (action+verify).
@@ -1355,6 +1399,14 @@ def _markdown_items(items) -> list[str]:
     return [f"- `{item}`" for item in values] or ["- `(none)`"]
 
 
+def _normalize_path_key(path) -> str:
+    """A case-insensitive, separator-normalized key for de-duping write targets."""
+    text = str(path or "").strip().strip("'\"")
+    if not text:
+        return ""
+    return text.replace("\\", "/").rstrip("/").lower()
+
+
 def _ps_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
@@ -1380,6 +1432,16 @@ def _command_writes_file(cmd: str) -> bool:
     )
 
 
+def _command_wrote_file(args: dict, result: str) -> bool:
+    """A run_command counts as producing a file only when it BOTH looks like a
+    write AND actually succeeded — a failed write must not satisfy the file gate
+    (adversarial review 2026-07-04)."""
+    cmd = str(args.get("cmd") or args.get("command") or "")
+    if not _command_writes_file(cmd):
+        return False
+    return agent_loop.tool_execution_succeeded("run_command", result)
+
+
 def _tool_evidence(tool: str, args: dict, result: str) -> dict:
     ok = agent_loop.tool_execution_succeeded(tool, result)
     artifact_verified = (
@@ -1393,23 +1455,43 @@ def _tool_evidence(tool: str, args: dict, result: str) -> dict:
     }
 
 
+def _command_output_section(result: str) -> str:
+    """Return only the command's OUTPUT, stripped of loop.py's result header.
+
+    ``execute_tool`` prefixes every run_command result with
+    ``Command: ...\\nShell: ...\\nCurrent working directory: ...\\nOutput:\\n``.
+    Verification must reason about the OUTPUT, never the header — the header
+    always contains "Current working directory:", whose substring "directory:"
+    otherwise makes any inspection command look like it found a directory
+    (adversarial review 2026-07-04: a Test-Path returning False still passed).
+    """
+    text = str(result or "")
+    marker = "Output:\n"
+    idx = text.rfind(marker)
+    return text[idx + len(marker):] if idx != -1 else text
+
+
 def _command_verifies_artifact(args: dict, result: str) -> bool:
+    """True only when an inspection command's OUTPUT positively confirms the
+    artifact exists.
+
+    A Test-Path must actually print ``True``; a listing must show a real entry.
+    A failed/negative check (``False``, empty, error) is never a verification.
+    """
     cmd = str(args.get("cmd") or args.get("command") or "").lower()
-    text = str(result or "").lower()
-    verification_command = any(
-        token in cmd
-        for token in (
-            "test-path",
-            "get-item",
-            "dir ",
-            "get-childitem",
-        )
-    )
-    positive_result = (
-        "\ntrue" in text
-        or "output:\ntrue" in text
-        or "exists" in text
-        or "file:" in text
-        or "directory:" in text
-    )
-    return verification_command and positive_result
+    output = _command_output_section(result).strip().lower()
+    if not output:
+        return False
+    is_test_path = "test-path" in cmd
+    is_listing = any(token in cmd for token in ("get-item", "get-childitem", "dir ", "ls "))
+    if is_test_path:
+        # Boolean cmdlet: the output must be exactly/last-line True, not False.
+        lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
+        return bool(lines) and lines[-1] == "true"
+    if is_listing:
+        # A listing that found the item shows a mode/length/name row or an
+        # explicit path; an empty or error output means it did not.
+        if any(bad in output for bad in ("cannot find", "does not exist", "not exist", "error")):
+            return False
+        return any(token in output for token in ("mode", "length", "lastwritetime", "directory:", "file:", "\\", "/"))
+    return False

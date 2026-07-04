@@ -315,12 +315,21 @@ async def search_memories(
     top = [s for s in scored if s["score"] >= MEMORY_MIN_SCORE][: (k or MEMORY_TOP_K)]
 
     # Refresh last_used_at for what we actually return (provenance / aging).
+    # RE-LOAD the store first: `data` was read BEFORE the await on _embed(), so
+    # any save_memory/delete_memory that completed during that HTTP round-trip
+    # would be clobbered if we wrote back the stale snapshot (review 2026-07-04).
+    # All mutators are sync-atomic on the event loop, so a fresh load-modify-save
+    # with no await in between cannot lose a concurrent write.
     if top:
         returned_ids = {s["id"] for s in top}
-        for item in data["items"]:
+        fresh = _load()
+        changed = False
+        for item in fresh["items"]:
             if item["id"] in returned_ids:
                 item["last_used_at"] = now
-        _save(data)
+                changed = True
+        if changed:
+            _save(fresh)
     return top
 
 

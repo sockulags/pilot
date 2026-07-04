@@ -1,11 +1,22 @@
-"""Model backend abstraction: local Ollama or an OpenAI-compatible API.
+"""Model backend abstraction: local Ollama and OpenAI-compatible cloud providers.
 
-Pilot is local-first — every model-driven call runs on Ollama by default. This
-module lets the *answering/decision* calls (turn classification, the tool-decision
-loop, expert consults, final synthesis) optionally run against an
-OpenAI-compatible endpoint instead, selected by ``PILOT_ANSWER_BACKEND`` (or the
-``backend=`` argument, which the eval runner sets per run). Perception/vision and
-memory embeddings are NOT routed here — they stay local.
+Pilot is local-first — every model-driven call runs on Ollama by default. Three
+mechanisms can route a call elsewhere, in precedence order:
+
+1. **Run-level backend override** (``set_backend`` / the ``backend=`` argument)
+   — used by the eval runner to force a whole suite onto one backend for a
+   clean A/B. When active, role assignments and cloud model ids are ignored so
+   the comparison stays pure.
+2. **Cloud model ids** — a model id of the form ``cloud:<provider>:<model>``
+   (see ``model_settings``) routes that single call to the named
+   OpenAI-compatible provider. This is how per-role cloud assignments and cloud
+   expert consults flow through the agent unchanged.
+3. **Role assignments** — calls tagged with ``role=`` ("classifier", "gateway",
+   "synthesis") consult the persisted model settings: an explicit assignment
+   for the role wins, then the ``default_agent`` assignment ("default runs
+   everything"), then the caller's model argument, then the env default.
+
+Perception/vision and memory embeddings are NOT routed here — they stay local.
 
 Two entry points cover every call shape the agent needs:
 
@@ -29,10 +40,10 @@ from typing import Any, AsyncGenerator
 
 import httpx
 
+import model_settings
 from agents.json_utils import extract_json_object
 from config import (
     ANSWER_BACKEND,
-    OLLAMA_BASE_URL,
     OLLAMA_MODEL,
     OLLAMA_MODELS,
     OPENAI_API_KEY,
@@ -67,13 +78,18 @@ def set_backend(backend: str | None) -> None:
     _backend_override = _norm(backend) if backend else None
 
 
+def backend_forced() -> bool:
+    """True while a run-level override (eval --backend) is active."""
+    return _backend_override is not None
+
+
 def resolve_backend(backend: str | None = None) -> str:
     """Effective backend: explicit arg > run override > PILOT_ANSWER_BACKEND."""
     return _norm(backend or _backend_override or ANSWER_BACKEND)
 
 
 def answer_model(backend: str | None = None, model: str | None = None) -> str:
-    """Resolve the model id for a backend.
+    """Resolve the model id for a backend (legacy env path).
 
     On the OpenAI path a local (Ollama) model id passed by the agent (e.g.
     ``gemma4:12b``) is ignored in favour of ``OPENAI_MODEL`` — so the agent keeps
@@ -81,7 +97,7 @@ def answer_model(backend: str | None = None, model: str | None = None) -> str:
     """
     be = resolve_backend(backend)
     if be == OPENAI:
-        if model and model not in OLLAMA_MODELS:
+        if model and model not in OLLAMA_MODELS and not model_settings.is_cloud_model_id(model):
             return model  # an explicit OpenAI model id
         return OPENAI_MODEL
     return model or OLLAMA_MODEL
@@ -89,6 +105,40 @@ def answer_model(backend: str | None = None, model: str | None = None) -> str:
 
 def openai_configured() -> bool:
     return bool(OPENAI_API_KEY)
+
+
+def apply_role(model: str | None, role: str | None) -> str | None:
+    """Effective model for a role-tagged call.
+
+    Assignment for the role wins, then the ``default_agent`` assignment
+    ("default runs everything"), then the caller's model argument (legacy env
+    behaviour). Returns either an Ollama id or a ``cloud:...`` id.
+    """
+    if not role:
+        return model
+    assigned = model_settings.resolve_role_model(role)
+    if assigned:
+        return assigned
+    default = model_settings.resolve_role_model("default_agent")
+    if default:
+        return default
+    return model
+
+
+def _cloud_route(model: str | None) -> tuple[dict, str] | None:
+    """(provider entry, model name) when ``model`` is a resolvable cloud id."""
+    parsed = model_settings.parse_cloud_model_id(model or "")
+    if not parsed:
+        return None
+    provider_id, model_name = parsed
+    entry = model_settings.cloud_provider(provider_id)
+    if entry is None:
+        logger.warning(
+            "cloud model %r references unavailable provider %r; using local default",
+            model, provider_id,
+        )
+        return None
+    return entry, model_name
 
 
 # --------------------------------------------------------------------------- #
@@ -129,12 +179,37 @@ async def chat_once(
     tools: list[dict] | None = None,
     temperature: float = 0.1,
     backend: str | None = None,
+    role: str | None = None,
 ) -> dict:
     """One non-streamed turn. Returns a normalized ``{"content", "tool_calls"}``."""
-    be = resolve_backend(backend)
-    if be == OPENAI:
-        return await _openai_once(messages, answer_model(be, model), tools, temperature)
-    return await _ollama_once(messages, answer_model(be, model), tools, temperature)
+    if backend or backend_forced():
+        # Eval A/B: force one backend, ignore role/cloud routing for purity.
+        be = resolve_backend(backend)
+        base = None if model_settings.is_cloud_model_id(model) else model
+        if be == OPENAI:
+            return await _openai_once(
+                messages, answer_model(be, base), tools, temperature,
+                OPENAI_BASE_URL, OPENAI_API_KEY,
+            )
+        return await _ollama_once(messages, answer_model(be, base), tools, temperature)
+
+    model = apply_role(model, role)
+    cloud = _cloud_route(model)
+    if cloud:
+        entry, model_name = cloud
+        return await _openai_once(
+            messages, model_name, tools, temperature,
+            str(entry.get("base_url") or OPENAI_BASE_URL),
+            model_settings.provider_api_key(entry),
+        )
+    if model_settings.is_cloud_model_id(model):
+        model = None  # unresolvable cloud id — fall back to the local default
+    if resolve_backend() == OPENAI:
+        return await _openai_once(
+            messages, answer_model(OPENAI, model), tools, temperature,
+            OPENAI_BASE_URL, OPENAI_API_KEY,
+        )
+    return await _ollama_once(messages, model or OLLAMA_MODEL, tools, temperature)
 
 
 async def chat_stream(
@@ -144,15 +219,47 @@ async def chat_stream(
     temperature: float = 0.2,
     think: bool = False,
     backend: str | None = None,
+    role: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream content deltas. ``think`` only affects the Ollama backend."""
-    be = resolve_backend(backend)
-    if be == OPENAI:
-        async for piece in _openai_stream(messages, answer_model(be, model), temperature):
+    if backend or backend_forced():
+        be = resolve_backend(backend)
+        base = None if model_settings.is_cloud_model_id(model) else model
+        if be == OPENAI:
+            async for piece in _openai_stream(
+                messages, answer_model(be, base), temperature,
+                OPENAI_BASE_URL, OPENAI_API_KEY,
+            ):
+                yield piece
+        else:
+            async for piece in _ollama_stream(
+                messages, answer_model(be, base), temperature, think
+            ):
+                yield piece
+        return
+
+    model = apply_role(model, role)
+    cloud = _cloud_route(model)
+    if cloud:
+        entry, model_name = cloud
+        async for piece in _openai_stream(
+            messages, model_name, temperature,
+            str(entry.get("base_url") or OPENAI_BASE_URL),
+            model_settings.provider_api_key(entry),
+        ):
             yield piece
-    else:
-        async for piece in _ollama_stream(messages, answer_model(be, model), temperature, think):
+        return
+    if model_settings.is_cloud_model_id(model):
+        model = None  # unresolvable cloud id — fall back to the local default
+    if resolve_backend() == OPENAI:
+        async for piece in _openai_stream(
+            messages, answer_model(OPENAI, model), temperature,
+            OPENAI_BASE_URL, OPENAI_API_KEY,
+        ):
             yield piece
+        return
+    async for piece in _ollama_stream(messages, model or OLLAMA_MODEL, temperature, think):
+        yield piece
 
 
 # --------------------------------------------------------------------------- #
@@ -171,12 +278,13 @@ async def _ollama_once(
     }
     if tools:
         payload["tools"] = tools
+    base_url = model_settings.ollama_base_url()
     async with httpx.AsyncClient(timeout=90) as client:
-        resp = await client.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload)
+        resp = await client.post(f"{base_url}/api/chat", json=payload)
         if tools and resp.status_code >= 400:
             # Endpoint/model rejected the tools payload — retry as plain JSON.
             payload.pop("tools", None)
-            resp = await client.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload)
+            resp = await client.post(f"{base_url}/api/chat", json=payload)
         resp.raise_for_status()
         data = resp.json()
     record_usage(data.get("prompt_eval_count", 0), data.get("eval_count", 0), OLLAMA)
@@ -193,8 +301,9 @@ async def _ollama_stream(
         "think": think,
         "options": {"temperature": temperature},
     }
+    base_url = model_settings.ollama_base_url()
     async with httpx.AsyncClient(timeout=180) as client:
-        async with client.stream("POST", f"{OLLAMA_BASE_URL}/api/chat", json=payload) as resp:
+        async with client.stream("POST", f"{base_url}/api/chat", json=payload) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 if not line.strip():
@@ -210,26 +319,34 @@ async def _ollama_stream(
 
 
 # --------------------------------------------------------------------------- #
-# OpenAI-compatible implementations
+# OpenAI-compatible implementations (env OpenAI or any configured cloud provider)
 # --------------------------------------------------------------------------- #
 
 
-def _openai_headers() -> dict:
-    return {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+def _openai_headers(api_key: str) -> dict:
+    return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
 
 async def _openai_once(
-    messages: list[dict], model: str, tools: list[dict] | None, temperature: float
+    messages: list[dict],
+    model: str,
+    tools: list[dict] | None,
+    temperature: float,
+    base_url: str,
+    api_key: str,
 ) -> dict:
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not set; cannot use the openai backend")
+    if not api_key:
+        raise RuntimeError(
+            "no API key configured for the OpenAI-compatible backend "
+            "(set OPENAI_API_KEY or add a cloud provider on the settings page)"
+        )
     payload: dict = {"model": model, "messages": messages, "temperature": temperature}
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
-            f"{OPENAI_BASE_URL}/chat/completions", json=payload, headers=_openai_headers()
+            f"{base_url}/chat/completions", json=payload, headers=_openai_headers(api_key)
         )
         resp.raise_for_status()
         data = resp.json()
@@ -240,10 +357,17 @@ async def _openai_once(
 
 
 async def _openai_stream(
-    messages: list[dict], model: str, temperature: float
+    messages: list[dict],
+    model: str,
+    temperature: float,
+    base_url: str,
+    api_key: str,
 ) -> AsyncGenerator[str, None]:
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not set; cannot use the openai backend")
+    if not api_key:
+        raise RuntimeError(
+            "no API key configured for the OpenAI-compatible backend "
+            "(set OPENAI_API_KEY or add a cloud provider on the settings page)"
+        )
     payload = {
         "model": model,
         "messages": messages,
@@ -253,7 +377,8 @@ async def _openai_stream(
     }
     async with httpx.AsyncClient(timeout=180) as client:
         async with client.stream(
-            "POST", f"{OPENAI_BASE_URL}/chat/completions", json=payload, headers=_openai_headers()
+            "POST", f"{base_url}/chat/completions", json=payload,
+            headers=_openai_headers(api_key),
         ) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():

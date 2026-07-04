@@ -27,6 +27,7 @@ from pathlib import Path
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+import model_settings
 from agents.coordinator import run_coordinator
 from agents.gateway import refine_query
 from agents.model_inventory import get_model_inventory
@@ -57,6 +58,7 @@ from jobs import (
     list_jobs,
     parse_job_command,
     set_enabled,
+    valid_schedule,
 )
 from memory import format_for_prompt, search_memories
 from projects import add_project, list_projects, path_for_id, remove_project
@@ -72,15 +74,36 @@ def model_catalog() -> list[dict]:
 
 
 def agent_role_catalog() -> list[dict]:
+    """Effective model per agent role, for the UI.
+
+    Settings assignments (settings page) win over the env defaults; a cloud
+    assignment is labelled with its provider. ``source`` says where the value
+    came from so the UI can show inheritance.
+    """
     roles = []
-    for role, model in AGENT_ROLE_MODELS.items():
-        meta = OLLAMA_MODELS.get(model, {})
+    for role, env_model in AGENT_ROLE_MODELS.items():
+        assigned = model_settings.resolve_role_model(role)
+        inherited = model_settings.resolve_role_model("default_agent")
+        model = assigned or inherited or env_model
+        source = "role" if assigned else ("default" if inherited else "env")
+        parsed = model_settings.parse_cloud_model_id(model)
+        if parsed:
+            provider_id, model_name = parsed
+            entry = model_settings.cloud_provider(provider_id)
+            provider_label = (entry or {}).get("label", provider_id)
+            model_label = f"{model_name} ({provider_label})"
+            available = entry is not None
+        else:
+            meta = OLLAMA_MODELS.get(model, {})
+            model_label = meta.get("label", model)
+            available = is_known_model(model) or source != "env"
         roles.append({
             "role": role,
             "label": AGENT_ROLE_LABELS.get(role, role.replace("_", " ").title()),
             "model": model,
-            "model_label": meta.get("label", model),
-            "available": is_known_model(model),
+            "model_label": model_label,
+            "available": available,
+            "source": source,
         })
     return roles
 
@@ -316,7 +339,10 @@ async def websocket_endpoint(websocket: WebSocket):
         # The coordinator (front brain) is fast gemma4 in auto mode; a pin makes
         # the chosen model the lead. It consults installed experts as needed.
         agent_selection = select_agent_for_intent(
-            model_mode, task_context, available_models=set(inventory.healthy)
+            model_mode,
+            task_context,
+            available_models=set(inventory.healthy),
+            installed_all=set(inventory.installed_all),
         )
         coordinator_model = agent_selection.model
 
@@ -600,9 +626,16 @@ async def websocket_endpoint(websocket: WebSocket):
                 await send_jobs()
 
             elif msg_type == "message":
+                # Serialize turns: cancel and AWAIT the in-flight turn before
+                # starting a new one, so two handle_message coroutines never
+                # mutate the shared conversation/session concurrently. Abort is
+                # cooperative and can lag inside a multi-second model call, so a
+                # fixed sleep is not a synchronization primitive (review
+                # 2026-07-04).
                 if turn_task and not turn_task.done():
                     current_abort.set()
-                    await asyncio.sleep(0.1)
+                    turn_task.cancel()
+                    await asyncio.gather(turn_task, return_exceptions=True)
                 current_abort = asyncio.Event()
                 turn_counter += 1
                 turn_task = asyncio.create_task(
@@ -611,10 +644,22 @@ async def websocket_endpoint(websocket: WebSocket):
 
             elif msg_type == "abort":
                 current_abort.set()
+                # Cancel and await the in-flight turn so its tail (append +
+                # persist) cannot run after we report it aborted.
+                if turn_task and not turn_task.done():
+                    turn_task.cancel()
+                    await asyncio.gather(turn_task, return_exceptions=True)
                 send({"type": "done", "turn": turn_counter, "summary": "Avbruten"})
 
             elif msg_type == "reset":
                 current_abort.set()
+                # Cancel and await the in-flight turn BEFORE clearing state:
+                # otherwise the dying turn's tail appends its assistant message to
+                # the fresh (empty) conversation and persist() re-creates the
+                # session file we just cleared (review 2026-07-04).
+                if turn_task and not turn_task.done():
+                    turn_task.cancel()
+                    await asyncio.gather(turn_task, return_exceptions=True)
                 conversation = []
                 turn_counter = 0
                 claude_session_id = None  # keep cwd/agent; fresh coding sessions next turn
@@ -669,7 +714,14 @@ async def websocket_endpoint(websocket: WebSocket):
                     schedule = msg.get("schedule") or {}
                     payload = str(msg.get("payload", "")).strip()
                     kind = "task" if msg.get("kind") == "task" else "reminder"
-                    if schedule.get("type") and payload:
+                    # Validate the client-supplied schedule at the boundary so a
+                    # malformed one is rejected with feedback instead of being
+                    # persisted and crashing the scheduler tick.
+                    if not payload:
+                        send({"type": "error", "content": "Jobbet saknar text."})
+                    elif not valid_schedule(schedule):
+                        send({"type": "error", "content": "Ogiltigt schema för jobbet."})
+                    else:
                         create_job(
                             session_id=session_id,
                             title=str(msg.get("title") or payload)[:60],

@@ -47,9 +47,43 @@ _RECURRING = {"interval", "daily", "weekly"}
 
 # --- schedule math ----------------------------------------------------------
 
-def _parse_hhmm(time_str: str) -> tuple[int, int]:
-    hh, mm = (time_str or "00:00").split(":")
-    return int(hh), int(mm)
+def _parse_hhmm(time_str) -> tuple[int, int]:
+    """Parse 'HH:MM' into validated (hour, minute). Raises ValueError on anything
+    out of range or of the wrong shape (e.g. 730, '24:00', '07:65')."""
+    hh, mm = str(time_str or "00:00").split(":")
+    hour, minute = int(hh), int(mm)
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError(f"time out of range: {time_str!r}")
+    return hour, minute
+
+
+def valid_schedule(schedule) -> bool:
+    """Whether a client-supplied schedule dict is well-formed enough to compute.
+
+    The WS add_job surface accepts a raw client dict; this is the boundary guard
+    so a malformed schedule is rejected up front instead of crashing
+    compute_next_run mid-tick (review 2026-07-04)."""
+    if not isinstance(schedule, dict):
+        return False
+    stype = schedule.get("type")
+    if stype not in VALID_SCHEDULE_TYPES:
+        return False
+    try:
+        if stype == "interval":
+            return int(schedule.get("interval_seconds") or 0) > 0
+        if stype == "once":
+            return _once_target(schedule) is not None
+        # daily / weekly
+        _parse_hhmm(schedule.get("time", "00:00"))
+        if stype == "weekly":
+            weekdays = schedule.get("weekdays")
+            if not isinstance(weekdays, (list, tuple)) or not weekdays:
+                return False
+            if not all(isinstance(d, int) and 0 <= d <= 6 for d in weekdays):
+                return False
+        return True
+    except (ValueError, TypeError):
+        return False
 
 
 def _once_target(schedule: dict) -> float | None:
@@ -69,37 +103,45 @@ def compute_next_run(schedule: dict, after_ts: float) -> float | None:
     """Next epoch strictly after ``after_ts`` the schedule fires, or None.
 
     None means "never again" — an interval with no period, or a `once` whose
-    target is already at/behind ``after_ts``.
+    target is already at/behind ``after_ts``. Never raises: a malformed schedule
+    (wrong types, out-of-range time, string weekdays) yields None rather than
+    crashing the scheduler tick (review 2026-07-04).
     """
-    stype = schedule.get("type")
-    if stype == "interval":
-        secs = int(schedule.get("interval_seconds") or 0)
-        return after_ts + secs if secs > 0 else None
+    if not isinstance(schedule, dict):
+        return None
+    try:
+        stype = schedule.get("type")
+        if stype == "interval":
+            secs = int(schedule.get("interval_seconds") or 0)
+            return after_ts + secs if secs > 0 else None
 
-    if stype == "once":
-        target = _once_target(schedule)
-        return target if target is not None and target > after_ts else None
+        if stype == "once":
+            target = _once_target(schedule)
+            return target if target is not None and target > after_ts else None
 
-    if stype in ("daily", "weekly"):
-        try:
+        if stype in ("daily", "weekly"):
             hh, mm = _parse_hhmm(schedule.get("time", "00:00"))
-        except ValueError:
+            weekdays = schedule.get("weekdays") if stype == "weekly" else None
+            if stype == "weekly":
+                if not isinstance(weekdays, (list, tuple)) or not weekdays:
+                    return None
+                if not all(isinstance(d, int) for d in weekdays):
+                    return None
+            base = datetime.fromtimestamp(after_ts)
+            # Scan today..+7 days for the first HH:MM slot strictly after after_ts
+            # that also matches an allowed weekday (daily = every day).
+            for delta in range(0, 8):
+                cand = (base + timedelta(days=delta)).replace(
+                    hour=hh, minute=mm, second=0, microsecond=0
+                )
+                if cand.timestamp() <= after_ts:
+                    continue
+                if weekdays is not None and cand.weekday() not in weekdays:
+                    continue
+                return cand.timestamp()
             return None
-        weekdays = schedule.get("weekdays") if stype == "weekly" else None
-        if stype == "weekly" and not weekdays:
-            return None
-        base = datetime.fromtimestamp(after_ts)
-        # Scan today..+7 days for the first HH:MM slot strictly after after_ts
-        # that also matches an allowed weekday (daily = every day).
-        for delta in range(0, 8):
-            cand = (base + timedelta(days=delta)).replace(
-                hour=hh, minute=mm, second=0, microsecond=0
-            )
-            if cand.timestamp() <= after_ts:
-                continue
-            if weekdays is not None and cand.weekday() not in weekdays:
-                continue
-            return cand.timestamp()
+    except (ValueError, TypeError) as exc:
+        logger.warning("invalid schedule %r: %s", schedule, exc)
         return None
 
     return None

@@ -22,8 +22,8 @@ from dataclasses import dataclass, field
 
 import httpx
 
+import model_settings
 from config import (
-    OLLAMA_BASE_URL,
     OLLAMA_MODEL,
     OLLAMA_MODELS,
     OLLAMA_VISION_MODEL,
@@ -51,6 +51,10 @@ class ModelInventory:
     healthy: frozenset[str] = field(default_factory=frozenset)
     tools_capable: frozenset[str] = field(default_factory=frozenset)
     vision_capable: frozenset[str] = field(default_factory=frozenset)
+    # EVERY model name Ollama reports, registry or not. Role assignments from
+    # the settings page may deliberately use any installed model; the healthy/
+    # tools sets above stay registry-scoped for the automatic picker.
+    installed_all: frozenset[str] = field(default_factory=frozenset)
     discovery_ok: bool = False
 
     def is_healthy(self, model: str | None) -> bool:
@@ -78,7 +82,7 @@ async def _fetch_installed_names() -> set[str] | None:
     """
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{OLLAMA_BASE_URL}/api/tags")
+            resp = await client.get(f"{model_settings.ollama_base_url()}/api/tags")
             resp.raise_for_status()
             models = resp.json().get("models", [])
     except Exception as exc:  # noqa: BLE001 — any failure is fail-closed
@@ -126,5 +130,6 @@ def build_inventory(installed_names: set[str]) -> ModelInventory:
         healthy=healthy,
         tools_capable=tools_capable,
         vision_capable=vision_capable,
+        installed_all=frozenset(installed_names),
         discovery_ok=True,
     )

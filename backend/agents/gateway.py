@@ -19,9 +19,8 @@ it adds no extra model call.
 
 import logging
 
-import httpx
-
-from config import GATEWAY_REFINE_ENABLED, OLLAMA_BASE_URL, OLLAMA_GATEWAY_MODEL
+from agents import providers
+from config import GATEWAY_REFINE_ENABLED, OLLAMA_GATEWAY_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -59,18 +58,13 @@ async def refine_query(
         {"role": "user", "content": f"{context}User's request:\n{task}"},
     ]
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                f"{OLLAMA_BASE_URL}/api/chat",
-                json={
-                    "model": model or OLLAMA_GATEWAY_MODEL,
-                    "messages": messages,
-                    "stream": False,
-                    "options": {"temperature": 0.0},
-                },
-            )
-            resp.raise_for_status()
-            refined = resp.json()["message"]["content"].strip()
+        # Through the provider layer so the "gateway" role assignment (settings
+        # page) applies — a cloud default can refine too. Unassigned, this is the
+        # same local Ollama call as before.
+        result = await providers.chat_once(
+            messages, model or OLLAMA_GATEWAY_MODEL, temperature=0.0, role="gateway"
+        )
+        refined = (result.get("content") or "").strip()
     except Exception as exc:
         logger.warning("refine_query failed, using verbatim task: %s", exc)
         return task
