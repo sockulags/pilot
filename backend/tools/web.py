@@ -1,18 +1,27 @@
 """Lightweight web access: search + fetch.
 
-No API key and no extra dependencies (httpx only) so it works out of the box —
+Zero-config by default (httpx only, no API key) so it works out of the box —
 the gap behind "what's the weather Wednesday?" / "look this up" (sessions
-b0b0c177, e251136a). web_search uses DuckDuckGo's HTML endpoint; fetch_url
+b0b0c177, e251136a). web_search scrapes DuckDuckGo's HTML endpoint; fetch_url
 pulls a page and reduces it to readable text.
+
+Web retrieval is the eval's admitted weakest link (README): DuckDuckGo scraping
+is brittle and returned zero sources for the research-to-file task. So the
+search layer is now PLUGGABLE — set PILOT_SEARCH_PROVIDER + PILOT_SEARCH_API_KEY
+to route through a resilient JSON search API (Tavily/Brave-style) instead. With
+no key configured we fall back to the DuckDuckGo scraper, keeping the local-first
+path intact. Network calls retry with a short back-off.
 """
 
 from __future__ import annotations
 
+import asyncio
 import html
+import os
 import re
 from dataclasses import dataclass
 from urllib.parse import unquote
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, TypeVar
 
 import httpx
 from tool_results import ToolResult
@@ -199,27 +208,205 @@ def parse_search_results_html(body: str, max_results: int = 5) -> list[WebSearch
     return results
 
 
+# --------------------------------------------------------------------------- #
+# Retry / back-off around network calls
+# --------------------------------------------------------------------------- #
+# A couple of short attempts smooth over transient blocks/timeouts without
+# stalling a turn. Read at call time (not import) so tests can shrink the delay.
+_RETRY_ATTEMPTS = max(1, int(os.getenv("PILOT_HTTP_RETRIES", "2")))
+_RETRY_BASE_DELAY = float(os.getenv("PILOT_HTTP_RETRY_DELAY", "0.5"))
+
+_T = TypeVar("_T")
+
+
+async def _with_retry(
+    op: Callable[[], Awaitable[_T]],
+    *,
+    attempts: int | None = None,
+    base_delay: float | None = None,
+) -> _T:
+    """Run an async network op, retrying transient failures with linear back-off.
+
+    Retries on transport errors and 429/5xx responses; a 4xx (other than 429) is
+    a client error and re-raised immediately. The last exception propagates.
+    """
+    n = attempts if attempts is not None else _RETRY_ATTEMPTS
+    delay = base_delay if base_delay is not None else _RETRY_BASE_DELAY
+    last: Exception | None = None
+    for i in range(n):
+        try:
+            return await op()
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status != 429 and status < 500:
+                raise
+            last = exc
+        except httpx.HTTPError as exc:
+            last = exc
+        if i < n - 1 and delay > 0:
+            await asyncio.sleep(delay * (i + 1))
+    assert last is not None  # loop ran at least once and did not return
+    raise last
+
+
+# --------------------------------------------------------------------------- #
+# Pluggable search provider
+# --------------------------------------------------------------------------- #
+def _search_provider() -> str:
+    """Configured provider id, read at call time. Empty/unknown -> duckduckgo."""
+    return (os.getenv("PILOT_SEARCH_PROVIDER") or "duckduckgo").strip().lower()
+
+
+def _search_api_key() -> str:
+    return (os.getenv("PILOT_SEARCH_API_KEY") or "").strip()
+
+
+# Default endpoints per JSON provider; PILOT_SEARCH_BASE_URL overrides either.
+_PROVIDER_ENDPOINTS = {
+    "tavily": "https://api.tavily.com/search",
+    "brave": "https://api.search.brave.com/res/v1/web/search",
+}
+
+
+def _use_json_provider(provider: str) -> bool:
+    """Route through the JSON API when a non-DDG provider has a key and endpoint.
+
+    Requires a key. A known provider (tavily/brave) supplies its own endpoint;
+    any other name works too as long as PILOT_SEARCH_BASE_URL points at a
+    Tavily-shaped API — so self-hosted/compatible services need no code change.
+    """
+    if provider == "duckduckgo" or not _search_api_key():
+        return False
+    return provider in _PROVIDER_ENDPOINTS or bool((os.getenv("PILOT_SEARCH_BASE_URL") or "").strip())
+
+
+def _parse_tavily_results(payload: dict, max_results: int) -> list[WebSearchResult]:
+    results: list[WebSearchResult] = []
+    for item in (payload or {}).get("results", []) or []:
+        url = (item.get("url") or "").strip()
+        if not url or is_blocked_result_url(url):
+            continue
+        results.append(
+            WebSearchResult(
+                title=(item.get("title") or url).strip(),
+                url=url,
+                snippet=(item.get("content") or item.get("snippet") or "").strip(),
+            )
+        )
+        if len(results) >= max_results:
+            break
+    return results
+
+
+def _parse_brave_results(payload: dict, max_results: int) -> list[WebSearchResult]:
+    results: list[WebSearchResult] = []
+    web = ((payload or {}).get("web") or {}).get("results", []) or []
+    for item in web:
+        url = (item.get("url") or "").strip()
+        if not url or is_blocked_result_url(url):
+            continue
+        results.append(
+            WebSearchResult(
+                title=_strip_tags(item.get("title") or url),
+                url=url,
+                snippet=_strip_tags(item.get("description") or ""),
+            )
+        )
+        if len(results) >= max_results:
+            break
+    return results
+
+
+async def _search_json_api(
+    provider: str, query: str, max_results: int
+) -> list[WebSearchResult]:
+    """Query a resilient JSON search API (Tavily/Brave-style) behind one interface.
+
+    Requires PILOT_SEARCH_API_KEY. Tavily takes a JSON POST with the key in the
+    body; Brave takes a GET with the key in an ``X-Subscription-Token`` header.
+    Both return JSON, which is far less brittle than scraping HTML.
+    """
+    api_key = _search_api_key()
+    base = (os.getenv("PILOT_SEARCH_BASE_URL") or _PROVIDER_ENDPOINTS.get(provider, "")).strip()
+    if not base:
+        raise RuntimeError(f"no search endpoint configured for provider {provider!r}")
+
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+        if provider == "brave":
+            async def _call() -> httpx.Response:
+                resp = await client.get(
+                    base,
+                    params={"q": query, "count": max_results},
+                    headers={
+                        "Accept": "application/json",
+                        "X-Subscription-Token": api_key,
+                    },
+                )
+                resp.raise_for_status()
+                return resp
+
+            resp = await _with_retry(_call)
+            return _parse_brave_results(resp.json(), max_results)
+
+        # Tavily-style: key in the JSON body (the common default provider).
+        async def _call() -> httpx.Response:
+            resp = await client.post(
+                base,
+                json={
+                    "api_key": api_key,
+                    "query": query,
+                    "max_results": max_results,
+                },
+                headers={
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+            )
+            resp.raise_for_status()
+            return resp
+
+        resp = await _with_retry(_call)
+        return _parse_tavily_results(resp.json(), max_results)
+
+
 async def search_web_results(query: str, max_results: int = 5) -> list[WebSearchResult]:
     """Search the web and return structured results, not presentation text.
 
-    Tries DuckDuckGo's HTML endpoint first; when that yields nothing (challenge
-    page, transient block) it falls back to the lite endpoint, which serves a
-    much simpler page and is rarely blocked. Retrieval was the eval's weakest
-    measured link (2026-07-02: research-to-file failed on BOTH backends because
-    zero sources came back), so the search layer must not depend on one endpoint.
+    When PILOT_SEARCH_PROVIDER names a JSON API (e.g. "tavily"/"brave") AND
+    PILOT_SEARCH_API_KEY is set, route through it — resilient JSON beats scraping.
+    Otherwise (the zero-config default) scrape DuckDuckGo's HTML endpoint, falling
+    back to the lite endpoint when it yields nothing (challenge page, transient
+    block). Retrieval was the eval's weakest measured link (2026-07-02:
+    research-to-file failed on BOTH backends because zero sources came back), so
+    the search layer must neither depend on one endpoint nor on scraping at all.
     """
-    primary_error: Exception | None = None
-    try:
-        async with httpx.AsyncClient(
-            timeout=20, follow_redirects=True, headers={"User-Agent": _UA}
-        ) as client:
-            resp = await client.post(
-                "https://html.duckduckgo.com/html/", data={"q": query}
-            )
-            resp.raise_for_status()
-            results = parse_search_results_html(resp.text, max_results)
+    provider = _search_provider()
+    if _use_json_provider(provider):
+        try:
+            results = await _search_json_api(provider, query, max_results)
             if results:
                 return results
+        except Exception as exc:  # noqa: BLE001 — degrade to the scraper below
+            # A configured API that fails must not brick search: fall through to
+            # DuckDuckGo so the tool still returns something.
+            _log_provider_fallback(provider, exc)
+
+    primary_error: Exception | None = None
+    try:
+        async def _call() -> httpx.Response:
+            async with httpx.AsyncClient(
+                timeout=20, follow_redirects=True, headers={"User-Agent": _UA}
+            ) as client:
+                resp = await client.post(
+                    "https://html.duckduckgo.com/html/", data={"q": query}
+                )
+                resp.raise_for_status()
+                return resp
+
+        resp = await _with_retry(_call)
+        results = parse_search_results_html(resp.text, max_results)
+        if results:
+            return results
     except Exception as exc:  # noqa: BLE001 — fall through to the lite endpoint
         primary_error = exc
 
@@ -232,6 +419,17 @@ async def search_web_results(query: str, max_results: int = 5) -> list[WebSearch
         ) from exc
 
 
+def _log_provider_fallback(provider: str, exc: Exception) -> None:
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "search provider %r failed (%s: %s); falling back to DuckDuckGo",
+        provider,
+        type(exc).__name__,
+        exc,
+    )
+
+
 _LITE_RESULT_RE = re.compile(
     r'<a[^>]+rel="nofollow"[^>]+href="(?P<href>[^"]+)"[^>]*>(?P<title>.*?)</a>',
     re.IGNORECASE | re.DOTALL,
@@ -240,12 +438,16 @@ _LITE_RESULT_RE = re.compile(
 
 async def _search_lite(query: str, max_results: int = 5) -> list[WebSearchResult]:
     """Fallback search via DuckDuckGo's lite endpoint (simple HTML, rarely blocked)."""
-    async with httpx.AsyncClient(
-        timeout=20, follow_redirects=True, headers={"User-Agent": _UA}
-    ) as client:
-        resp = await client.post("https://lite.duckduckgo.com/lite/", data={"q": query})
-        resp.raise_for_status()
-        body = resp.text
+    async def _call() -> httpx.Response:
+        async with httpx.AsyncClient(
+            timeout=20, follow_redirects=True, headers={"User-Agent": _UA}
+        ) as client:
+            resp = await client.post("https://lite.duckduckgo.com/lite/", data={"q": query})
+            resp.raise_for_status()
+            return resp
+
+    resp = await _with_retry(_call)
+    body = resp.text
     results: list[WebSearchResult] = []
     for m in _LITE_RESULT_RE.finditer(body):
         url = _clean_ddg_href(m.group("href"))
@@ -460,25 +662,70 @@ async def web_research(
     return result.to_text()
 
 
+# Non-content elements whose *inner* text is noise (menus, scripts, chrome).
+# Dropped whole (open tag → close tag) before flattening the rest to text.
+_NON_CONTENT_TAGS = (
+    "script", "style", "noscript", "template", "svg", "iframe",
+    "nav", "header", "footer", "aside", "form",
+)
+_NON_CONTENT_RE = re.compile(
+    r"(?is)<(" + "|".join(_NON_CONTENT_TAGS) + r")\b[^>]*>.*?</\1>"
+)
+# Comments carry no readable text and can hide markup.
+_COMMENT_RE = re.compile(r"(?s)<!--.*?-->")
+# Prefer the main article body when the page marks one, so boilerplate around a
+# short article does not crowd out the actual content within max_chars.
+_MAIN_RE = re.compile(r"(?is)<(main|article)\b[^>]*>(?P<body>.*?)</\1>")
+
+
+def html_to_text(body: str) -> str:
+    """Reduce an HTML document to readable text.
+
+    Dependency-light and robust: drop comments and non-content elements
+    (script/style plus nav/header/footer/aside/form), prefer a <main>/<article>
+    region when present, then flatten remaining tags and collapse whitespace.
+    """
+    body = _COMMENT_RE.sub(" ", body)
+    body = _NON_CONTENT_RE.sub(" ", body)
+    # Re-run once: nested chrome (e.g. a <nav> inside a stripped <header>) is
+    # already gone, but a page may repeat top-level sections.
+    body = _NON_CONTENT_RE.sub(" ", body)
+
+    match = _MAIN_RE.search(body)
+    if match:
+        candidate = match.group("body")
+        # Only prefer <main> when it actually carries text — some sites use an
+        # empty <main> shell hydrated by JS.
+        if len(re.sub(r"(?s)<[^>]+>", "", candidate).strip()) >= 200:
+            body = candidate
+
+    text = re.sub(r"(?s)<[^>]+>", " ", body)
+    text = html.unescape(text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 async def fetch_url(url: str, max_chars: int = 4000) -> str:
     """Fetch a URL and return its readable text content (HTML reduced to text)."""
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     try:
-        async with httpx.AsyncClient(
-            timeout=20, follow_redirects=True, headers={"User-Agent": _UA}
-        ) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            content_type = resp.headers.get("content-type", "")
-            text = resp.text
+        async def _call() -> httpx.Response:
+            async with httpx.AsyncClient(
+                timeout=20, follow_redirects=True, headers={"User-Agent": _UA}
+            ) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                return resp
+
+        resp = await _with_retry(_call)
+        content_type = resp.headers.get("content-type", "")
+        text = resp.text
     except Exception as exc:
         return f"fetch_url failed: {type(exc).__name__}: {exc}"
 
     if "html" in content_type or text.lstrip().startswith("<"):
-        text = re.sub(r"(?is)<(script|style|noscript)[^>]*>.*?</\1>", " ", text)
-        text = re.sub(r"(?s)<[^>]+>", " ", text)
-        text = html.unescape(text)
-    text = re.sub(r"\s+", " ", text).strip()
+        text = html_to_text(text)
+    else:
+        text = re.sub(r"\s+", " ", text).strip()
     suffix = "" if len(text) <= max_chars else " …[truncated]"
     return f"{url}\n\n{text[:max_chars]}{suffix}"

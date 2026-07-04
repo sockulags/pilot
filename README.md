@@ -144,7 +144,7 @@ Two honest takeaways from running this:
 - **Not** multi-user or internet-exposed hosting — the network model is single-user loopback/LAN (optionally behind e.g. Tailscale with tokens).
 - **No** account/credential entry on your behalf, financial transactions, or irreversible bulk operations without explicit confirmation.
 - Vision is optional; when no multimodal model is available, desktop input tools are **blocked** rather than run blind.
-- Web retrieval quality bounds research tasks — the eval shows this is the current weakest link, not the answering model.
+- Web retrieval quality bounds research tasks — the eval shows this is the current weakest link, not the answering model. Retrieval is pluggable: it scrapes DuckDuckGo out of the box (zero-config), and routes through a resilient JSON search API (Tavily/Brave-style) when you set `PILOT_SEARCH_PROVIDER` + `PILOT_SEARCH_API_KEY`, falling back to the scraper if no key is set.
 
 ---
 
