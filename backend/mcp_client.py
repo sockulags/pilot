@@ -101,6 +101,11 @@ class _ServerWorker:
             if item is None:  # shutdown sentinel
                 return
             tool_name, args, fut = item
+            # Skip a request whose caller already gave up (timed out / cancelled):
+            # executing it would run the tool's side effects AFTER the caller was
+            # told it failed (review 2026-07-04).
+            if fut.done():
+                continue
             try:
                 result = await session.call_tool(tool_name, args or {})
                 if not fut.done():
