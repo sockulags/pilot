@@ -1,0 +1,17 @@
+# Normalize line endings: LF in the repo for all text files, detected
+# automatically. Windows batch/cmd scripts keep CRLF (some cmd.exe versions
+# mishandle LF in labels); everything else — including PowerShell — uses LF.
+* text=auto eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets: never touch their bytes.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
