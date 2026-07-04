@@ -692,7 +692,7 @@ async def run_coordinator(
         args = dict(required_first_tool.get("args") or {})
         if tool in registry.coordinator_tool_names():
             applied_args, result = await _execute_and_record_tool(
-                tool, args, project_cwd, emit, runtime_state, notes, contract
+                tool, args, project_cwd, emit, runtime_state, notes, contract, capabilities
             )
             if tool == "run_command" and _command_wrote_file(applied_args, result):
                 file_output_done = True
@@ -703,15 +703,19 @@ async def run_coordinator(
         for step in plan_steps(contract):
             if abort.is_set():
                 break
-            await _execute_planned_step(step, contract, project_cwd, emit, runtime_state, notes)
+            await _execute_planned_step(
+                step, contract, project_cwd, emit, runtime_state, notes, capabilities
+            )
 
     if contract and contract.intent == "local_model_audit_report" and not abort.is_set():
-        return await _run_local_model_audit_playbook(project_cwd, emit, runtime_state, notes, contract)
+        return await _run_local_model_audit_playbook(
+            project_cwd, emit, runtime_state, notes, contract, capabilities
+        )
 
     if contract and contract.intent == "code_task" and code_task_spec and not abort.is_set():
         return await _run_code_task_playbook(
             code_task_spec, task, coordinator_model, experts, project_cwd,
-            emit, runtime_state, notes, contract, escalation_enabled, abort,
+            emit, runtime_state, notes, contract, escalation_enabled, abort, capabilities,
         )
 
     while steps < COORDINATOR_MAX_STEPS and not abort.is_set():
@@ -837,7 +841,7 @@ async def run_coordinator(
                     ))
                     applied_args, res = await _execute_and_record_tool(
                         "run_command", {"cmd": proposed_cmd}, project_cwd,
-                        emit, runtime_state, notes, contract,
+                        emit, runtime_state, notes, contract, capabilities,
                     )
                     if applied_args and _command_wrote_file(applied_args, res):
                         file_output_done = True
@@ -1005,6 +1009,7 @@ async def _run_local_model_audit_playbook(
     runtime_state: RuntimeState,
     notes: list[str],
     contract: TaskContract,
+    capabilities: str | None = None,
 ) -> LoopOutcome:
     root = Path(project_cwd) if project_cwd else Path.cwd()
     report_path = root / "local_model_audit_report.md"
@@ -1017,6 +1022,7 @@ async def _run_local_model_audit_playbook(
         runtime_state,
         notes,
         contract,
+        capabilities,
     )
     _config_args, config_text = await _execute_and_record_tool(
         "read_file",
@@ -1026,6 +1032,7 @@ async def _run_local_model_audit_playbook(
         runtime_state,
         notes,
         contract,
+        capabilities,
     )
 
     doc_texts: dict[str, str] = {}
@@ -1038,6 +1045,7 @@ async def _run_local_model_audit_playbook(
             runtime_state,
             notes,
             contract,
+            capabilities,
         )
         doc_texts[path] = text
 
@@ -1052,6 +1060,7 @@ async def _run_local_model_audit_playbook(
             runtime_state,
             notes,
             contract,
+            capabilities,
         )
         doc_texts["backend/.env"] = env_text
 
@@ -1075,6 +1084,7 @@ async def _run_local_model_audit_playbook(
         runtime_state,
         notes,
         contract,
+        capabilities,
     )
     await _execute_and_record_tool(
         "run_command",
@@ -1084,6 +1094,7 @@ async def _run_local_model_audit_playbook(
         runtime_state,
         notes,
         contract,
+        capabilities,
     )
 
     result = verify_contract(contract, runtime_state)
@@ -1101,6 +1112,7 @@ async def _execute_planned_step(
     emit: Callable[[dict], None],
     runtime_state: RuntimeState,
     notes: list[str],
+    capabilities: str | None = None,
 ) -> tuple[dict, str] | None:
     policy = validate_step_allowed(step, contract)
     if not policy.allowed:
@@ -1115,6 +1127,7 @@ async def _execute_planned_step(
         runtime_state,
         notes,
         contract,
+        capabilities,
     )
 
 
@@ -1191,7 +1204,7 @@ async def _run_code_task_playbook(
     spec: dict, task: str, lead_model: str, experts: dict[str, dict],
     project_cwd: str | None, emit: Callable[[dict], None],
     runtime_state: RuntimeState, notes: list[str], contract: TaskContract | None,
-    escalation_enabled: bool, abort: asyncio.Event,
+    escalation_enabled: bool, abort: asyncio.Event, capabilities: str | None = None,
 ) -> LoopOutcome:
     """Author → verify → (on a VERIFIED failure) escalate to a coder specialist.
 
@@ -1229,10 +1242,10 @@ async def _run_code_task_playbook(
 
         await _execute_and_record_tool(
             "write_file", {"path": solution_path, "content": code, "overwrite": True},
-            project_cwd, emit, runtime_state, notes, contract,
+            project_cwd, emit, runtime_state, notes, contract, capabilities,
         )
         _args, output = await _execute_and_record_tool(
-            "run_command", {"cmd": verify_command}, project_cwd, emit, runtime_state, notes, contract,
+            "run_command", {"cmd": verify_command}, project_cwd, emit, runtime_state, notes, contract, capabilities,
         )
         if tests_passed_text(output):
             who = f"specialist {author}" if escalated else f"lead {author}"
@@ -1252,7 +1265,21 @@ async def _execute_and_record_tool(
     runtime_state: RuntimeState,
     notes: list[str],
     contract: TaskContract | None = None,
+    capabilities: str | None = None,
 ) -> tuple[dict, str]:
+    # Per-job capability gate: mirror the main decision loop so a tool routed
+    # through the playbook / required_first_tool path is bound by the scheduled
+    # job's profile too. None = unrestricted (interactive turns); a denied tool
+    # is skipped (not executed) and recorded for the audit trail.
+    if capabilities is not None and not tool_allowed(tool, capabilities):
+        note = (
+            f"(tool {tool!r} not permitted for this scheduled job's "
+            f"{capabilities!r} profile; skipped)"
+        )
+        emit(make_event("error", content=note))
+        notes.append(note)
+        runtime_state.record_error(note, tool, args)
+        return {}, note
     if contract:
         policy = validate_step_allowed(
             PlannedStep(tool, dict(args or {}), contract.intent, "direct tool execution"),
