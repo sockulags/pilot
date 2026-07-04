@@ -14,8 +14,9 @@ import logging
 import os
 import re
 import tempfile
+import time
 
-from config import SESSIONS_DIR
+from config import MAX_PERSISTED_MESSAGES, SESSIONS_DIR, SESSIONS_MAX_AGE_DAYS
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,13 @@ def save_session(
     if turn <= 0 and not messages:
         return
     os.makedirs(SESSIONS_DIR, exist_ok=True)
+    # Bound the persisted history: keep only the most recent N messages so a very
+    # long-lived session can't grow the file without limit. The live turn still
+    # runs on the full in-memory conversation; only what lands on disk (and is
+    # replayed as `history` on resume) is trimmed. `turn` is preserved so the
+    # session id and its counter survive — resume still works.
+    if MAX_PERSISTED_MESSAGES > 0 and len(messages) > MAX_PERSISTED_MESSAGES:
+        messages = messages[-MAX_PERSISTED_MESSAGES:]
     payload = {
         "messages": messages,
         "turn": turn,
@@ -100,6 +108,47 @@ def save_session(
         os.replace(tmp, _path(session_id))
     except Exception as exc:
         logger.warning("Could not save session %s: %s", session_id, exc)
+    # Piggy-back a cheap prune of stale session files on the save we just did, so
+    # the directory doesn't accumulate abandoned sessions forever. Best-effort:
+    # never let it break a save.
+    prune_old_sessions()
+
+
+def prune_old_sessions(max_age_days: int | None = None) -> int:
+    """Delete session files untouched for more than `max_age_days` days.
+
+    Cheap mtime scan of SESSIONS_DIR, invoked opportunistically from
+    save_session. Returns the number of files removed. Config-gated: a
+    non-positive max age disables the prune entirely (the old behaviour). Only
+    the current session being written is never touched — it was just saved, so
+    its mtime is fresh. Fully best-effort; any error is swallowed.
+    """
+    if max_age_days is None:
+        max_age_days = SESSIONS_MAX_AGE_DAYS
+    if max_age_days <= 0:
+        return 0
+    cutoff = time.time() - max_age_days * 86400
+    removed = 0
+    try:
+        entries = os.scandir(SESSIONS_DIR)
+    except FileNotFoundError:
+        return 0
+    except Exception as exc:
+        logger.warning("Could not scan sessions dir for prune: %s", exc)
+        return 0
+    with entries:
+        for entry in entries:
+            if not entry.name.endswith(".json"):
+                continue
+            try:
+                if entry.stat().st_mtime < cutoff:
+                    os.remove(entry.path)
+                    removed += 1
+            except FileNotFoundError:
+                continue
+            except Exception as exc:
+                logger.warning("Could not prune session file %s: %s", entry.path, exc)
+    return removed
 
 
 def clear_session(session_id: str) -> None:

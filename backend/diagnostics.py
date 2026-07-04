@@ -3,11 +3,39 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from typing import Any
 
+from config import DIAGNOSTICS_MAX_BYTES
+
+logger = logging.getLogger(__name__)
+
 DIAGNOSTICS_FILE = os.path.join(os.path.dirname(__file__), "data", "turn_diagnostics.jsonl")
+
+
+def _rotate_if_needed() -> None:
+    """Roll the diagnostics log to a single .1 backup once it grows too large.
+
+    Keeps one previous generation (DIAGNOSTICS_FILE.1), so on-disk use is bounded
+    at roughly 2x DIAGNOSTICS_MAX_BYTES instead of growing forever. Config-gated:
+    a non-positive cap disables rotation. Best-effort — a failed roll never stops
+    the append that follows (the row is simply written to the current file).
+    """
+    if DIAGNOSTICS_MAX_BYTES <= 0:
+        return
+    try:
+        size = os.path.getsize(DIAGNOSTICS_FILE)
+    except OSError:
+        return
+    if size < DIAGNOSTICS_MAX_BYTES:
+        return
+    backup = DIAGNOSTICS_FILE + ".1"
+    try:
+        os.replace(DIAGNOSTICS_FILE, backup)
+    except OSError as exc:
+        logger.warning("Could not rotate diagnostics log: %s", exc)
 
 
 def _compact_event(event: dict[str, Any]) -> dict[str, Any]:
@@ -65,6 +93,7 @@ def append_turn_diagnostic(
         "retries": retries,
     }
     os.makedirs(os.path.dirname(DIAGNOSTICS_FILE), exist_ok=True)
+    _rotate_if_needed()
     line = json.dumps(row, ensure_ascii=False)
     with open(DIAGNOSTICS_FILE, "a", encoding="utf-8") as f:
         f.write(line + "\n")

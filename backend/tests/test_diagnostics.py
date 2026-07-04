@@ -49,6 +49,53 @@ class TurnDiagnosticsTests(unittest.TestCase):
         self.assertEqual("web_research", row["tools"][0]["tool"])
         self.assertEqual("error", row["errors"][0]["type"])
 
+    def _append_one(self, diagnostics):
+        diagnostics.append_turn_diagnostic(
+            session_id="s1",
+            turn=1,
+            route="chat",
+            model="gemma4:12b",
+            events=[],
+            status="done",
+        )
+
+    def test_rotation_rolls_to_backup_when_over_limit(self):
+        import diagnostics
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "turn_diagnostics.jsonl")
+            backup = path + ".1"
+            with mock.patch.object(diagnostics, "DIAGNOSTICS_FILE", path), \
+                    mock.patch.object(diagnostics, "DIAGNOSTICS_MAX_BYTES", 50):
+                # First write creates the file (no rotation on an empty/missing file).
+                self._append_one(diagnostics)
+                self.assertFalse(os.path.exists(backup))
+                # Grow past the cap, then the next append rolls the current file
+                # to .1 and starts a fresh log.
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write("x" * 100 + "\n")
+                self._append_one(diagnostics)
+
+            self.assertTrue(os.path.exists(backup))
+            self.assertTrue(os.path.exists(path))
+            # The fresh log holds only the row written after the roll.
+            with open(path, encoding="utf-8") as f:
+                rows = [json.loads(line) for line in f]
+            self.assertEqual(1, len(rows))
+
+    def test_rotation_disabled_when_max_bytes_zero(self):
+        import diagnostics
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "turn_diagnostics.jsonl")
+            with mock.patch.object(diagnostics, "DIAGNOSTICS_FILE", path), \
+                    mock.patch.object(diagnostics, "DIAGNOSTICS_MAX_BYTES", 0):
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write("x" * 1000 + "\n")
+                self._append_one(diagnostics)
+
+            self.assertFalse(os.path.exists(path + ".1"))
+
 
 if __name__ == "__main__":
     unittest.main()

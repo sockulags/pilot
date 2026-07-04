@@ -14,6 +14,27 @@ SESSIONS_DIR = os.getenv(
     os.path.join(os.path.dirname(__file__), "data", "sessions"),
 )
 
+# --- Bounded-growth caps for the on-disk stores -----------------------------
+# The persisted conversation, the diagnostics log and the sessions dir all grow
+# without bound over a long-lived install. These caps keep each one honest with
+# safe defaults; the full recent context still drives every turn (only the tail
+# kept on disk is trimmed) and a session can always still be resumed.
+#
+# Keep at most the N most recent messages when saving a session. 0 disables the
+# cap (unbounded, the old behaviour). 200 is generous for context yet bounds a
+# runaway file.
+MAX_PERSISTED_MESSAGES = int(os.getenv("MAX_PERSISTED_MESSAGES", "200"))
+
+# Roll the diagnostics JSONL to a single .1 backup once it exceeds this many
+# bytes (keeping one previous generation, so at most ~2x on disk). 0 disables
+# rotation. 5 MiB holds a lot of compact per-turn rows.
+DIAGNOSTICS_MAX_BYTES = int(os.getenv("DIAGNOSTICS_MAX_BYTES", str(5 * 1024 * 1024)))
+
+# Best-effort prune of old session files. A session file untouched for more than
+# this many days is deleted on the next save (cheap mtime scan). 0 disables the
+# prune. 90 days keeps plenty of resumable history while shedding stale sessions.
+SESSIONS_MAX_AGE_DAYS = int(os.getenv("SESSIONS_MAX_AGE_DAYS", "90"))
+
 # File holding the configured list of project roots for the `code` route.
 PROJECTS_FILE = os.getenv(
     "PROJECTS_FILE",
