@@ -314,6 +314,72 @@ class WebSocketScenarioTests(unittest.TestCase):
         self.assertEqual("confirmation_required", result["meta"]["runtime_state"]["actions"][0]["decision"])
         self.assertEqual("high", result["meta"]["runtime_state"]["actions"][0]["risk_level"])
 
+    def test_turn_exceeding_watchdog_timeout_is_terminated_and_client_notified(self):
+        import asyncio
+        import threading
+
+        import api.ws as ws_api
+        import store
+
+        app = FastAPI()
+
+        @app.websocket("/ws")
+        async def ws(websocket: WebSocket):
+            await ws_api.websocket_endpoint(websocket)
+
+        # threading.Event: the ASGI app runs in the TestClient's own loop/thread,
+        # so the flag is observed from the test thread after the socket closes.
+        aborted = threading.Event()
+
+        async def fake_classify_turn(prior, text, project=None, model_mode="auto"):
+            return {"route": "computer", "task": text, "thinking": "watchdog test", "model": "gemma4:12b"}
+
+        async def slow_run_coordinator(task, emit, abort, *args, **kwargs):
+            # Simulate a hung Ollama call / stalled agent: sleep well past the
+            # (patched, tiny) turn timeout. Record when the watchdog aborts us.
+            try:
+                await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                aborted.set()
+                raise
+            return None
+
+        async def fake_search_memories(text, *args, **kwargs):
+            return []
+
+        async def fake_get_model_inventory():
+            from agents.model_inventory import ModelInventory
+
+            return ModelInventory()
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(store, "SESSIONS_DIR", tmp), \
+             mock.patch.object(ws_api, "WS_TURN_TIMEOUT_SECONDS", 0.3), \
+             mock.patch.object(ws_api, "list_projects", return_value=[]), \
+             mock.patch.object(ws_api, "list_jobs", return_value=[]), \
+             mock.patch.object(ws_api, "append_turn_diagnostic"), \
+             mock.patch.object(ws_api, "classify_turn", new=fake_classify_turn), \
+             mock.patch.object(ws_api, "get_model_inventory", new=fake_get_model_inventory), \
+             mock.patch.object(ws_api, "run_coordinator", new=slow_run_coordinator), \
+             mock.patch.object(ws_api, "search_memories", new=fake_search_memories):
+            with TestClient(app) as client:
+                with client.websocket_connect("/ws") as websocket:
+                    websocket.send_json({"type": "hello", "session_id": "scenario-watchdog"})
+                    self._drain_until(websocket, {"jobs"})
+                    websocket.send_json({"type": "message", "text": "Gör något som hänger sig"})
+                    events = self._drain_until(websocket, {"done"})
+
+        # The client is notified (not left spinning): a friendly Swedish error and
+        # a terminating done event both arrive.
+        error_events = [e for e in events if e.get("type") == "error"]
+        self.assertTrue(error_events, "expected a timeout error event")
+        self.assertIn("lång tid", error_events[-1]["content"])
+        done_events = [e for e in events if e.get("type") == "done"]
+        self.assertTrue(done_events)
+        self.assertEqual("Timeout", done_events[-1].get("summary"))
+        # The hung work was actually cancelled by the watchdog.
+        self.assertTrue(aborted.is_set(), "expected the hung turn to be cancelled")
+
     def _run_scenario(
         self,
         session_id: str,

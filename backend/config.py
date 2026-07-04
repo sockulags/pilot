@@ -69,6 +69,14 @@ JOBS_TICK_SECONDS = int(os.getenv("JOBS_TICK_SECONDS", "20"))
 JOB_MAX_RUNTIME_SECONDS = int(os.getenv("JOB_MAX_RUNTIME_SECONDS", "300"))
 JOB_MAX_TOOL_CALLS = int(os.getenv("JOB_MAX_TOOL_CALLS", "20"))
 
+# Wall-clock bound for a single interactive WS turn, mirroring how the scheduler
+# bounds task jobs (JOB_MAX_RUNTIME_SECONDS). A hung Ollama call or a stalled
+# external coding agent would otherwise leave the client spinning forever; on
+# timeout the turn is cancelled, its abort event is set, and the client gets a
+# friendly done/error event instead. Generous default (builds/tests/research can
+# legitimately run minutes). Set to 0 to disable the watchdog entirely.
+WS_TURN_TIMEOUT_SECONDS = int(os.getenv("WS_TURN_TIMEOUT_SECONDS", "300"))
+
 # --- Local model registry (dynamic per-turn model selection) ----------------
 # The orchestrator picks the best local model for each turn ("auto"), or the
 # user pins one via the UI toggle / `/model <id>`. Each entry carries a hint the

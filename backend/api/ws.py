@@ -48,6 +48,7 @@ from config import (
     OLLAMA_MODEL,
     OLLAMA_MODELS,
     PILOT_AUTH_TOKEN,
+    WS_TURN_TIMEOUT_SECONDS,
     is_known_model,
 )
 from connections import register, unregister
@@ -573,6 +574,39 @@ async def websocket_endpoint(websocket: WebSocket):
         except OSError:
             pass
 
+    async def run_turn(text: str, turn: int, abort: asyncio.Event):
+        """Run one turn under a wall-clock watchdog.
+
+        Mirrors how the scheduler bounds task jobs (JOB_MAX_RUNTIME_SECONDS): a
+        hung Ollama call or a stalled external coding agent would otherwise leave
+        the client spinning forever. On timeout the turn is cancelled, its abort
+        event is set, and the client gets a friendly done/error event instead of
+        an eternal spinner. WS_TURN_TIMEOUT_SECONDS = 0 disables the bound. The
+        serialization in the `message`/`abort`/`reset` handlers still cancels and
+        awaits *this* task, so no extra locking is introduced.
+        """
+        if WS_TURN_TIMEOUT_SECONDS <= 0:
+            await handle_message(text, turn, abort)
+            return
+        try:
+            await asyncio.wait_for(
+                handle_message(text, turn, abort), timeout=WS_TURN_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            # Stop the in-flight work cooperatively, then tell the client the turn
+            # ended rather than leaving it spinning. handle_message was cancelled
+            # by wait_for; abort halts any straggling generator on the next check.
+            abort.set()
+            send({
+                "type": "error",
+                "turn": turn,
+                "content": (
+                    f"Turen tog för lång tid (över {WS_TURN_TIMEOUT_SECONDS}s) och avbröts. "
+                    "Modellen eller en extern agent svarade inte — försök igen."
+                ),
+            })
+            send({"type": "done", "turn": turn, "summary": "Timeout"})
+
     try:
         while True:
             raw = await websocket.receive_text()
@@ -639,7 +673,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 current_abort = asyncio.Event()
                 turn_counter += 1
                 turn_task = asyncio.create_task(
-                    handle_message(msg.get("text", ""), turn_counter, current_abort)
+                    run_turn(msg.get("text", ""), turn_counter, current_abort)
                 )
 
             elif msg_type == "abort":
