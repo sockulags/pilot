@@ -75,6 +75,17 @@ The model-driven calls — classification, the tool-decision loop, expert consul
 
 This is a deployment lever, not a mode switch buried in code: local for privacy and zero cost, the API path for harder multi-step tasks — with the trade-off measured (below) rather than asserted. **Privacy note:** on the `openai` backend, gathered evidence (file contents, screen text, web results) is sent to the API.
 
+### Model settings — per-role models, cloud + local mixed
+
+The env variables above set the **default** model chain, but the settings page (the ⚙ button, or `PUT /api/settings/models`) makes model selection a runtime, per-role decision that overrides those defaults:
+
+- **Default runs everything.** With no settings saved, behaviour is exactly the env-driven default: `OLLAMA_MODEL` on the `ollama` backend. The settings layer only ever *overrides* — delete `backend/data/model_settings.json` to restore stock behaviour.
+- **A model per role.** Roles are the agent roles the auto-picker chooses between per turn intent (`default_agent`, `research_agent`, `code_agent`, `quick_code_agent`, `deep_reasoning_agent`, `vision_agent`) and the fixed pipeline stages every turn runs through (`classifier`, `gateway`, `synthesis`). Any role can be pinned to a specific model; unassigned roles inherit the default assignment ("default runs everything else").
+- **Cloud and local, mixed freely.** Add any number of OpenAI-compatible providers (OpenAI, OpenRouter, Groq, Mistral, or a custom base URL) with their own key and model list. A role can then run on a cloud model while everything else stays on local Ollama — e.g. research on a frontier cloud model, code and chat local. Cloud models are encoded as `cloud:<provider>:<model>` ids and flow through the same provider layer, so routing, consults and the eval meta handle them unchanged.
+- **Fail closed.** A role pointing at a disabled/missing provider, or an Ollama model that isn't installed, silently falls back to the default chain with a recorded reason — a bad settings file never takes a turn down. API keys live only in the local settings file (gitignored) and are never returned to the browser; `vision` and memory embeddings stay local by design.
+
+The settings page is fed by live discovery (`GET /api/models/available`): the installed Ollama models and each configured cloud provider's reachability, with a per-provider "Test" button.
+
 ---
 
 ## Safety boundaries
@@ -98,16 +109,19 @@ The eval suite treats the safety layers as **pass/fail gates** — a single inje
 
 Two suites, both in `backend/tests/eval/`:
 
-1. **Deterministic replay suite** (`runner.py`, `scenarios.py`) — 28+ golden and adversarial scenarios (prompt injection in files/web/memory/screen, contract gating, capability profiles) that run in CI with no model and no network.
+1. **Deterministic replay suite** (`runner.py`, `scenarios.py`) — 40+ golden and adversarial scenarios (prompt injection in files/web/memory/screen, contract gating, capability profiles, the command-risk escalation surfaces) that run in CI with no model and no network. Screen perception is stubbed, so the suite never takes a real screenshot or makes a live vision call.
 2. **Live-model runner** (`live_runner.py`) — drives the **real agent** end to end against a live model and scores 10 tasks with deterministic checkers: solve rate per category, latency (median/p90), a failure taxonomy, per-task tokens/cost, and hard safety gates.
 
 ```bash
 cd backend
 uv run python -m tests.eval.live_runner                    # local backend
 uv run python -m tests.eval.live_runner --backend openai   # OpenAI backend
+uv run python -m tests.eval.live_runner --trials 3         # per-task variance
 ```
 
-Reports land in `backend/tests/eval/results/` (committed). Latest comparison, same 10 tasks:
+Each run records a **reproducibility block** (git commit + dirty flag, OS/Python, exact model digest/quantization and Ollama version), archives an immutable copy under `results/history/`, and renders a **"change vs previous run"** delta so a regression is visible at a glance. `--trials N` runs every task N times and reports per-task pass rate and latency spread — small local models are noisy, and the report shows it rather than hiding behind one flappy verdict.
+
+Reports land in `backend/tests/eval/results/` (`latest.*` committed; `history/` local). Latest comparison, same 10 tasks:
 
 | Metric | Local `gemma4:12b` | OpenAI `gpt-4o-mini` |
 |---|---|---|
@@ -149,19 +163,34 @@ pilot/
 ├── backend/
 │   ├── main.py                 # Entrypoint (FastAPI + MCP)
 │   ├── config.py               # Env-based config
+│   ├── model_settings.py       # runtime per-role model settings (providers + roles)
 │   ├── agents/
 │   │   ├── orchestrator.py     # classify_turn + compose_reply (final answer layer)
 │   │   ├── coordinator.py      # in-turn tool/consult loop (the "front brain")
-│   │   ├── providers.py        # model backends: ollama | openai
+│   │   ├── providers.py        # model backends: ollama | openai | cloud providers, role-aware
 │   │   ├── routing.py          # explainable RoutingDecision
 │   │   ├── task_contracts.py   # evidence-gated completion contracts
 │   │   ├── untrusted.py        # prompt-injection quarantine
 │   │   └── safety.py           # desktop-action guards
-│   ├── tools/                  # run_command, files, web, screen/input, registry
+│   ├── tools/                  # registry + run_command, files, web, screen/input, extras (grep/http/pdf/procs/clipboard)
 │   ├── tests/eval/             # deterministic replay suite + live-model runner
-│   └── api/                    # ws.py (WebSocket), mcp.py (MCP server)
-└── frontend/                   # Next.js chat UI
+│   └── api/                    # ws.py (WebSocket), mcp.py (MCP), settings.py (model settings REST)
+└── frontend/                   # Next.js chat UI (+ SettingsPanel for model roles)
 ```
+
+## Tools
+
+The agent's tools are declared once in `tools/registry.py` (single source of truth for the coordinator menu, the loop's behaviour sets, the MCP manifest and the native function-call schemas). Beyond the OS/desktop and web basics, the set covers:
+
+| Tool | What it does |
+|---|---|
+| `search_in_files` | grep file **contents** (text or regex) for "where does X live" — filename search finds files, this finds the lines |
+| `read_document` | extract text from a **PDF** (page by page, via pypdf) or a text file — the research/"find my CV" flows land on PDFs |
+| `http_request` | call a **JSON/HTTP API** (method, headers, body, params) — distinct from `fetch_url`, which returns page text; a non-GET method requires confirmation |
+| `list_processes` | list running processes (name, pid, memory) — "is Ollama running?", read-only |
+| `read_clipboard` / `write_clipboard` | read or set the OS clipboard — "summarize what I copied", "copy that result" |
+
+Everything side-effecting flows through the same layered safety model (command-risk classification, contract allowlists, prompt-injection quarantine). The command-risk classifier now treats inline interpreter execution (`python -c`, `node -e`), direct executable invocation (`.\setup.exe`), Windows persistence tools (`reg`, `schtasks`, `sc`) and `find -delete/-exec` as confirmation-gated, closing the earlier default-allow gap for unrecognised commands.
 
 ## MCP integration
 
