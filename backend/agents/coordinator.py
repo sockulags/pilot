@@ -42,6 +42,7 @@ from agents.runtime_phases import (
     verify_contract,
 )
 from agents.runtime_state import RuntimeState
+from agents.routing import tool_permitted
 from agents.safety import unsafe_tool_block_reason
 from job_permissions import tool_allowed
 from agents.task_contracts import TaskContract, build_task_contract, tests_passed_text
@@ -527,6 +528,7 @@ def _proposal_block_reason(
     command_counts: dict,
     max_tool_calls: int | None,
     tool_calls: int,
+    required_permissions: list[str] | None = None,
 ) -> str | None:
     """Why an expert-proposed command must NOT run, or None if it may.
 
@@ -542,6 +544,8 @@ def _proposal_block_reason(
         return "only read-only inspection commands may be auto-run from a proposal"
     if capabilities is not None and not tool_allowed("run_command", capabilities):
         return f"run_command is not permitted by the {capabilities!r} job profile"
+    if not tool_permitted("run_command", required_permissions):
+        return f"run_command is not granted by this engine's permissions {required_permissions!r}"
     if contract and "run_command" not in contract.allowed_tools:
         return f"run_command is outside the {contract.intent} contract allowlist"
     confirmation = _confirmation_required("run_command", {"cmd": cmd})
@@ -639,6 +643,7 @@ async def run_coordinator(
     task_contract_intent: str | None = None,
     inventory: ModelInventory | None = None,
     capabilities: str | None = None,
+    required_permissions: list[str] | None = None,
     max_tool_calls: int | None = None,
     code_task_spec: dict | None = None,
     escalation_enabled: bool = True,
@@ -652,6 +657,15 @@ async def run_coordinator(
     tool not granted by that profile is skipped with an audit note instead of
     executed. ``max_tool_calls`` optionally caps how many tools a run may execute
     (a per-job override of COORDINATOR_MAX_STEPS); None means no extra cap.
+
+    ``required_permissions`` is the routing engine's coarse permission set
+    (read_files/shell/desktop; see agents.routing.REQUIRED_PERMISSIONS). None
+    means unrestricted — no engine gate. When set, a tool the engine's set does
+    not grant is skipped with an audit note, the same way ``capabilities`` gates
+    scheduled jobs. The two gates are independent and both apply; because the
+    interactive local_chat/local_tools engines carry the full set, this never
+    reduces current interactive capability — it makes a narrower future engine
+    (e.g. read-only) actually enforced rather than decorative.
     """
     coordinator_model = coordinator_model or OLLAMA_MODEL
     experts = await available_expert_models(coordinator_model, inventory)
@@ -692,7 +706,8 @@ async def run_coordinator(
         args = dict(required_first_tool.get("args") or {})
         if tool in registry.coordinator_tool_names():
             applied_args, result = await _execute_and_record_tool(
-                tool, args, project_cwd, emit, runtime_state, notes, contract, capabilities
+                tool, args, project_cwd, emit, runtime_state, notes, contract,
+                capabilities, required_permissions,
             )
             if tool == "run_command" and _command_wrote_file(applied_args, result):
                 file_output_done = True
@@ -704,18 +719,21 @@ async def run_coordinator(
             if abort.is_set():
                 break
             await _execute_planned_step(
-                step, contract, project_cwd, emit, runtime_state, notes, capabilities
+                step, contract, project_cwd, emit, runtime_state, notes,
+                capabilities, required_permissions,
             )
 
     if contract and contract.intent == "local_model_audit_report" and not abort.is_set():
         return await _run_local_model_audit_playbook(
-            project_cwd, emit, runtime_state, notes, contract, capabilities
+            project_cwd, emit, runtime_state, notes, contract, capabilities,
+            required_permissions,
         )
 
     if contract and contract.intent == "code_task" and code_task_spec and not abort.is_set():
         return await _run_code_task_playbook(
             code_task_spec, task, coordinator_model, experts, project_cwd,
-            emit, runtime_state, notes, contract, escalation_enabled, abort, capabilities,
+            emit, runtime_state, notes, contract, escalation_enabled, abort,
+            capabilities, required_permissions,
         )
 
     while steps < COORDINATOR_MAX_STEPS and not abort.is_set():
@@ -822,6 +840,7 @@ async def run_coordinator(
                 block = _proposal_block_reason(
                     proposed_cmd, contract, capabilities, project_cwd,
                     command_counts, max_tool_calls, tool_calls,
+                    required_permissions,
                 )
                 if block:
                     notes.append(
@@ -842,6 +861,7 @@ async def run_coordinator(
                     applied_args, res = await _execute_and_record_tool(
                         "run_command", {"cmd": proposed_cmd}, project_cwd,
                         emit, runtime_state, notes, contract, capabilities,
+                        required_permissions,
                     )
                     if applied_args and _command_wrote_file(applied_args, res):
                         file_output_done = True
@@ -891,6 +911,20 @@ async def run_coordinator(
             note = (
                 f"(tool {tool!r} not permitted for this scheduled job's "
                 f"{capabilities!r} profile; skipped)"
+            )
+            emit(make_event("error", content=note))
+            notes.append(note)
+            runtime_state.record_error(note, tool, args)
+            continue
+        # Routing engine-permission gate: the engine's coarse permission set
+        # (read_files/shell/desktop) bounds which tools it may drive. None =
+        # unrestricted; a tool the set doesn't grant is skipped and recorded.
+        # No-op for the full-capability interactive engines, real for a narrower
+        # one (see agents.routing.tool_permitted).
+        if not tool_permitted(tool, required_permissions):
+            note = (
+                f"(tool {tool!r} not granted by this engine's permissions "
+                f"{required_permissions!r}; skipped)"
             )
             emit(make_event("error", content=note))
             notes.append(note)
@@ -1010,6 +1044,7 @@ async def _run_local_model_audit_playbook(
     notes: list[str],
     contract: TaskContract,
     capabilities: str | None = None,
+    required_permissions: list[str] | None = None,
 ) -> LoopOutcome:
     root = Path(project_cwd) if project_cwd else Path.cwd()
     report_path = root / "local_model_audit_report.md"
@@ -1023,6 +1058,7 @@ async def _run_local_model_audit_playbook(
         notes,
         contract,
         capabilities,
+        required_permissions,
     )
     _config_args, config_text = await _execute_and_record_tool(
         "read_file",
@@ -1033,6 +1069,7 @@ async def _run_local_model_audit_playbook(
         notes,
         contract,
         capabilities,
+        required_permissions,
     )
 
     doc_texts: dict[str, str] = {}
@@ -1046,6 +1083,7 @@ async def _run_local_model_audit_playbook(
             notes,
             contract,
             capabilities,
+            required_permissions,
         )
         doc_texts[path] = text
 
@@ -1061,6 +1099,7 @@ async def _run_local_model_audit_playbook(
             notes,
             contract,
             capabilities,
+            required_permissions,
         )
         doc_texts["backend/.env"] = env_text
 
@@ -1085,6 +1124,7 @@ async def _run_local_model_audit_playbook(
         notes,
         contract,
         capabilities,
+        required_permissions,
     )
     await _execute_and_record_tool(
         "run_command",
@@ -1095,6 +1135,7 @@ async def _run_local_model_audit_playbook(
         notes,
         contract,
         capabilities,
+        required_permissions,
     )
 
     result = verify_contract(contract, runtime_state)
@@ -1113,6 +1154,7 @@ async def _execute_planned_step(
     runtime_state: RuntimeState,
     notes: list[str],
     capabilities: str | None = None,
+    required_permissions: list[str] | None = None,
 ) -> tuple[dict, str] | None:
     policy = validate_step_allowed(step, contract)
     if not policy.allowed:
@@ -1128,6 +1170,7 @@ async def _execute_planned_step(
         notes,
         contract,
         capabilities,
+        required_permissions,
     )
 
 
@@ -1205,6 +1248,7 @@ async def _run_code_task_playbook(
     project_cwd: str | None, emit: Callable[[dict], None],
     runtime_state: RuntimeState, notes: list[str], contract: TaskContract | None,
     escalation_enabled: bool, abort: asyncio.Event, capabilities: str | None = None,
+    required_permissions: list[str] | None = None,
 ) -> LoopOutcome:
     """Author → verify → (on a VERIFIED failure) escalate to a coder specialist.
 
@@ -1243,9 +1287,11 @@ async def _run_code_task_playbook(
         await _execute_and_record_tool(
             "write_file", {"path": solution_path, "content": code, "overwrite": True},
             project_cwd, emit, runtime_state, notes, contract, capabilities,
+            required_permissions,
         )
         _args, output = await _execute_and_record_tool(
-            "run_command", {"cmd": verify_command}, project_cwd, emit, runtime_state, notes, contract, capabilities,
+            "run_command", {"cmd": verify_command}, project_cwd, emit, runtime_state,
+            notes, contract, capabilities, required_permissions,
         )
         if tests_passed_text(output):
             who = f"specialist {author}" if escalated else f"lead {author}"
@@ -1266,6 +1312,7 @@ async def _execute_and_record_tool(
     notes: list[str],
     contract: TaskContract | None = None,
     capabilities: str | None = None,
+    required_permissions: list[str] | None = None,
 ) -> tuple[dict, str]:
     # Per-job capability gate: mirror the main decision loop so a tool routed
     # through the playbook / required_first_tool path is bound by the scheduled
@@ -1275,6 +1322,18 @@ async def _execute_and_record_tool(
         note = (
             f"(tool {tool!r} not permitted for this scheduled job's "
             f"{capabilities!r} profile; skipped)"
+        )
+        emit(make_event("error", content=note))
+        notes.append(note)
+        runtime_state.record_error(note, tool, args)
+        return {}, note
+    # Routing engine-permission gate (parity with the main loop): a tool routed
+    # through the playbook / required_first_tool path is bound by the engine's
+    # coarse permission set too. None = unrestricted.
+    if not tool_permitted(tool, required_permissions):
+        note = (
+            f"(tool {tool!r} not granted by this engine's permissions "
+            f"{required_permissions!r}; skipped)"
         )
         emit(make_event("error", content=note))
         notes.append(note)

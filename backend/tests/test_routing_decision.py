@@ -124,6 +124,63 @@ class RoutingDecisionTests(unittest.TestCase):
         self.assertIn("reason", event)
 
 
+class ToolPermissionEnforcementTests(unittest.TestCase):
+    """The required_permissions set is enforceable: each coordinator tool maps to
+    a coarse permission, and the interactive engines' full set grants them all."""
+
+    def test_tool_permission_maps_by_side_effect_and_category(self):
+        from agents.routing import tool_permission
+
+        self.assertEqual("read_files", tool_permission("read_file"))
+        self.assertEqual("read_files", tool_permission("list_dir"))
+        self.assertEqual("read_files", tool_permission("web_search"))
+        self.assertEqual("read_files", tool_permission("github_issues"))
+        # run_command + side-effecting file writes need shell.
+        self.assertEqual("shell", tool_permission("run_command"))
+        self.assertEqual("shell", tool_permission("write_file"))
+        # Desktop input needs the desktop grant.
+        for tool in ("click", "type_text", "key_press", "hotkey", "scroll"):
+            self.assertEqual("desktop", tool_permission(tool))
+
+    def test_none_permissions_is_unrestricted(self):
+        from agents.routing import tool_permitted
+
+        for tool in ("run_command", "type_text", "read_file"):
+            self.assertTrue(tool_permitted(tool, None))
+
+    def test_read_only_set_blocks_shell_and_desktop(self):
+        from agents.routing import tool_permitted
+
+        self.assertTrue(tool_permitted("read_file", ["read_files"]))
+        self.assertTrue(tool_permitted("web_search", ["read_files"]))
+        self.assertFalse(tool_permitted("run_command", ["read_files"]))
+        self.assertFalse(tool_permitted("write_file", ["read_files"]))
+        self.assertFalse(tool_permitted("type_text", ["read_files"]))
+
+    def test_full_interactive_set_grants_every_coordinator_tool(self):
+        # local_chat/local_tools carry read_files+shell+desktop; enforcing that
+        # set must not skip ANY coordinator tool — current interactive capability
+        # is unchanged. This is the invariant the enforce-permissions task asserts.
+        from agents.routing import LOCAL_CHAT, LOCAL_TOOLS, REQUIRED_PERMISSIONS, tool_permitted
+        from tools import registry
+
+        for engine in (LOCAL_CHAT, LOCAL_TOOLS):
+            perms = REQUIRED_PERMISSIONS[engine]
+            for tool in registry.coordinator_tool_names():
+                self.assertTrue(
+                    tool_permitted(tool, perms),
+                    f"{engine} must grant {tool}",
+                )
+
+    def test_local_repo_agent_grants_read_and_shell_not_desktop(self):
+        from agents.routing import LOCAL_REPO_AGENT, REQUIRED_PERMISSIONS, tool_permitted
+
+        perms = REQUIRED_PERMISSIONS[LOCAL_REPO_AGENT]
+        self.assertTrue(tool_permitted("read_file", perms))
+        self.assertTrue(tool_permitted("run_command", perms))
+        self.assertFalse(tool_permitted("type_text", perms))
+
+
 class RoutingEventEmittedBeforeActionTests(unittest.TestCase):
     """ws-level check: the routing_decision event precedes the coordinator/run."""
 

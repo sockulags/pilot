@@ -55,6 +55,60 @@ REQUIRED_PERMISSIONS: dict[str, list[str]] = {
     CODEX: ["external_agent", "workspace_write"],
 }
 
+# The three coarse permissions a LOCAL engine's tools are gated on. The external
+# engines don't run coordinator tools (they hand off to an out-of-process agent),
+# so their grants ("external_agent"/"workspace_write") are not in this set — a
+# permission set that grants none of these authorizes no coordinator tool.
+READ_FILES = "read_files"
+SHELL = "shell"
+DESKTOP = "desktop"
+
+
+def tool_permission(tool: str) -> str:
+    """The coarse permission a coordinator tool needs to run.
+
+    Mirrors job_permissions._capability_for_tool but in the engine-permission
+    vocabulary (read_files / shell / desktop) that ``REQUIRED_PERMISSIONS``
+    advertises, so the value surfaced to the UI is the value enforced:
+
+    - desktop input (click/type/key/...) -> ``desktop``
+    - run_command, or any other side-effecting tool (e.g. write_file) -> ``shell``
+    - everything else (read/list/search/web/github, no side effects) -> ``read_files``
+
+    Imported lazily to keep this module import-light and free of the
+    tools.registry <-> agents cycle other lazy imports here already avoid.
+    """
+    from agents.safety import UNSAFE_DESKTOP_TOOLS
+    from tools import registry
+
+    if tool in UNSAFE_DESKTOP_TOOLS:
+        return DESKTOP
+    if tool == "run_command":
+        return SHELL
+    spec = registry.get(tool)
+    # Side effects trump category: a side-effecting tool in a read-ish category
+    # (write_file lives under "files") still needs the "shell" grant — a
+    # read-only engine may never write.
+    if spec is not None and spec.side_effects:
+        return SHELL
+    # Read/list/search/web/github and any other no-side-effect tool need only the
+    # read grant; an unknown tool is treated conservatively as shell.
+    return READ_FILES if spec is not None else SHELL
+
+
+def tool_permitted(tool: str, required_permissions: list[str] | None) -> bool:
+    """Whether ``tool`` may run for an engine that holds ``required_permissions``.
+
+    ``None`` means unrestricted (the interactive default — no engine gate is
+    applied), so all current chat/computer behaviour is preserved. A concrete
+    list gates each tool on the coarse permission it needs; because local_chat /
+    local_tools carry the full ``read_files``+``shell``+``desktop`` set, this is a
+    no-op for those engines and only bites a future narrower engine.
+    """
+    if required_permissions is None:
+        return True
+    return tool_permission(tool) in set(required_permissions)
+
 
 @dataclass
 class RoutingDecision:

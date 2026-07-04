@@ -482,6 +482,15 @@ class CoordinatorCapabilityGateTests(unittest.TestCase):
     def test_unrestricted_default_runs_run_command(self):
         asyncio.run(self._unrestricted_default_runs_run_command())
 
+    def test_read_only_engine_permissions_block_shell_and_desktop(self):
+        asyncio.run(self._read_only_engine_permissions_block_shell_and_desktop())
+
+    def test_full_engine_permissions_run_run_command(self):
+        asyncio.run(self._full_engine_permissions_run_run_command())
+
+    def test_engine_permissions_block_required_first_tool(self):
+        asyncio.run(self._engine_permissions_block_required_first_tool())
+
     async def _read_only_profile_skips_run_command(self):
         from agents import coordinator
 
@@ -561,6 +570,94 @@ class CoordinatorCapabilityGateTests(unittest.TestCase):
             )
 
         self.assertEqual(["run_command"], executed)
+
+    async def _read_only_engine_permissions_block_shell_and_desktop(self):
+        """A routing engine that grants only read_files must block run_command and
+        desktop tools — the mechanism the enforce-permissions task makes real."""
+        from agents import coordinator
+
+        executed: list[str] = []
+
+        async def fake_execute(tool, args, emit):
+            executed.append(tool)
+            return "ran"
+
+        with mock.patch.object(coordinator, "available_expert_models", new=_av(self._experts())), \
+             mock.patch.object(coordinator, "search_skills", new=_av([])), \
+             mock.patch.object(coordinator.agent_loop, "execute_tool", new=fake_execute), \
+             mock.patch.object(coordinator, "_decide_step", new=_seq([
+                 {"action": "tool", "tool": "run_command", "args": {"cmd": "echo hi"}},
+                 {"action": "tool", "tool": "type_text", "args": {"text": "hi"}},
+                 {"action": "tool", "tool": "read_file", "args": {"path": "README.md"}},
+                 {"action": "answer", "thinking": "done"},
+             ])):
+            outcome = await coordinator.run_coordinator(
+                "do a thing", lambda e: None, asyncio.Event(),
+                coordinator_model="gemma4:12b",
+                required_permissions=["read_files"],
+            )
+
+        # The read grant runs read_file but neither run_command (shell) nor
+        # type_text (desktop); both denials are recorded for the audit trail.
+        self.assertEqual(["read_file"], executed)
+        errors = " ".join(e.get("error", "") for e in outcome.runtime_state.errors)
+        self.assertIn("run_command", errors)
+        self.assertIn("type_text", errors)
+        self.assertIn("not granted by this engine's permissions", errors)
+
+    async def _full_engine_permissions_run_run_command(self):
+        """The interactive engines carry read_files+shell+desktop, so nothing is
+        blocked — current interactive capability is unchanged."""
+        from agents import coordinator
+
+        executed: list[str] = []
+
+        async def fake_execute(tool, args, emit):
+            executed.append(tool)
+            return "ran"
+
+        with mock.patch.object(coordinator, "available_expert_models", new=_av(self._experts())), \
+             mock.patch.object(coordinator, "search_skills", new=_av([])), \
+             mock.patch.object(coordinator.agent_loop, "execute_tool", new=fake_execute), \
+             mock.patch.object(coordinator, "_decide_step", new=_seq([
+                 {"action": "tool", "tool": "run_command", "args": {"cmd": "echo hi"}},
+                 {"action": "answer", "thinking": "done"},
+             ])):
+            await coordinator.run_coordinator(
+                "do a thing", lambda e: None, asyncio.Event(),
+                coordinator_model="gemma4:12b",
+                required_permissions=["read_files", "shell", "desktop"],
+            )
+
+        self.assertEqual(["run_command"], executed)
+
+    async def _engine_permissions_block_required_first_tool(self):
+        """The engine gate also applies on the required_first_tool / playbook path
+        (via _execute_and_record_tool), not only in the main decision loop."""
+        from agents import coordinator
+
+        executed: list[str] = []
+
+        async def fake_execute(tool, args, emit):
+            executed.append(tool)
+            return "ran"
+
+        with mock.patch.object(coordinator, "available_expert_models", new=_av(self._experts())), \
+             mock.patch.object(coordinator, "search_skills", new=_av([])), \
+             mock.patch.object(coordinator.agent_loop, "execute_tool", new=fake_execute), \
+             mock.patch.object(coordinator, "_decide_step", new=_seq([{"action": "answer", "thinking": "done"}])):
+            outcome = await coordinator.run_coordinator(
+                "do a thing", lambda e: None, asyncio.Event(),
+                coordinator_model="gemma4:12b",
+                required_permissions=["read_files"],
+                required_first_tool={"tool": "run_command", "args": {"cmd": "echo hi"}},
+            )
+
+        self.assertEqual([], executed)
+        self.assertTrue(any(
+            "not granted by this engine's permissions" in e.get("error", "")
+            for e in outcome.runtime_state.errors
+        ))
 
     def _experts(self):
         return {"qwen2.5-coder:14b": {"label": "Coder", "hint": "code", "tools": True}}

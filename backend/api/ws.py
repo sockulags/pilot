@@ -439,6 +439,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 require_file_output=task_context.creates_file,
                 task_contract_intent=resolve_task_contract_intent(task_context),
                 inventory=inventory,
+                # Enforce the routing engine's advertised permission set. For the
+                # interactive local_chat/local_tools/local_repo_agent engines this
+                # is the full read_files+shell(+desktop) set, so it never reduces
+                # capability — it makes the mechanism real for a narrower engine.
+                required_permissions=routing.required_permissions,
             )
             turn_status = outcome.status
             if outcome.status == "needs_input":
