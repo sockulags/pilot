@@ -180,8 +180,21 @@ async def chat_once(
     temperature: float = 0.1,
     backend: str | None = None,
     role: str | None = None,
+    fmt: str | None = None,
+    schema: dict | None = None,
 ) -> dict:
-    """One non-streamed turn. Returns a normalized ``{"content", "tool_calls"}``."""
+    """One non-streamed turn. Returns a normalized ``{"content", "tool_calls"}``.
+
+    ``fmt``/``schema`` request structured (JSON-constrained) output for a
+    decision that expects a JSON object: ``fmt="json"`` asks for free-form JSON,
+    ``schema=`` (a JSON schema dict) constrains the shape. Ollama takes these via
+    the ``/api/chat`` ``format`` field; the OpenAI path maps them to
+    ``response_format`` — but ONLY when no tools are being used (the two are
+    mutually exclusive on the OpenAI side, and a native tool call already returns
+    structured arguments). Both are additive hints: an endpoint that ignores them
+    still returns prose the lenient ``extract_json_object`` fallback parses, so no
+    current behaviour regresses.
+    """
     if backend or backend_forced():
         # Eval A/B: force one backend, ignore role/cloud routing for purity.
         be = resolve_backend(backend)
@@ -189,9 +202,11 @@ async def chat_once(
         if be == OPENAI:
             return await _openai_once(
                 messages, answer_model(be, base), tools, temperature,
-                OPENAI_BASE_URL, OPENAI_API_KEY,
+                OPENAI_BASE_URL, OPENAI_API_KEY, fmt=fmt, schema=schema,
             )
-        return await _ollama_once(messages, answer_model(be, base), tools, temperature)
+        return await _ollama_once(
+            messages, answer_model(be, base), tools, temperature, fmt=fmt, schema=schema
+        )
 
     model = apply_role(model, role)
     cloud = _cloud_route(model)
@@ -200,16 +215,18 @@ async def chat_once(
         return await _openai_once(
             messages, model_name, tools, temperature,
             str(entry.get("base_url") or OPENAI_BASE_URL),
-            model_settings.provider_api_key(entry),
+            model_settings.provider_api_key(entry), fmt=fmt, schema=schema,
         )
     if model_settings.is_cloud_model_id(model):
         model = None  # unresolvable cloud id — fall back to the local default
     if resolve_backend() == OPENAI:
         return await _openai_once(
             messages, answer_model(OPENAI, model), tools, temperature,
-            OPENAI_BASE_URL, OPENAI_API_KEY,
+            OPENAI_BASE_URL, OPENAI_API_KEY, fmt=fmt, schema=schema,
         )
-    return await _ollama_once(messages, model or OLLAMA_MODEL, tools, temperature)
+    return await _ollama_once(
+        messages, model or OLLAMA_MODEL, tools, temperature, fmt=fmt, schema=schema
+    )
 
 
 async def chat_stream(
@@ -268,7 +285,13 @@ async def chat_stream(
 
 
 async def _ollama_once(
-    messages: list[dict], model: str, tools: list[dict] | None, temperature: float
+    messages: list[dict],
+    model: str,
+    tools: list[dict] | None,
+    temperature: float,
+    *,
+    fmt: str | None = None,
+    schema: dict | None = None,
 ) -> dict:
     payload: dict = {
         "model": model,
@@ -278,6 +301,13 @@ async def _ollama_once(
     }
     if tools:
         payload["tools"] = tools
+    # Structured-output hint: /api/chat "format" is either "json" or a JSON schema
+    # (schema wins when both are given). A model/endpoint that ignores it still
+    # returns prose the caller's extract_json_object fallback parses.
+    if schema is not None:
+        payload["format"] = schema
+    elif fmt:
+        payload["format"] = fmt
     base_url = model_settings.ollama_base_url()
     async with httpx.AsyncClient(timeout=90) as client:
         resp = await client.post(f"{base_url}/api/chat", json=payload)
@@ -334,6 +364,9 @@ async def _openai_once(
     temperature: float,
     base_url: str,
     api_key: str,
+    *,
+    fmt: str | None = None,
+    schema: dict | None = None,
 ) -> dict:
     if not api_key:
         raise RuntimeError(
@@ -344,6 +377,15 @@ async def _openai_once(
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
+    elif schema is not None:
+        # json_schema response format (tools and response_format are mutually
+        # exclusive; a native tool call already yields structured arguments).
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": "decision", "schema": schema},
+        }
+    elif fmt == "json":
+        payload["response_format"] = {"type": "json_object"}
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
             f"{base_url}/chat/completions", json=payload, headers=_openai_headers(api_key)

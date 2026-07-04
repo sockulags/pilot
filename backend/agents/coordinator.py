@@ -397,7 +397,15 @@ async def _decide_step(
     tools = (
         registry.tool_schemas() + _meta_action_schemas(experts or {}) if use_tools else None
     )
-    msg = await providers.chat_once(messages, coordinator_model, tools=tools, temperature=0.1)
+    # The non-tools decision expects a JSON action object, so request structured
+    # output on that path (additive: extract_json_object still parses prose from an
+    # endpoint that ignores the hint). Tool-calling models drive via native
+    # function-calling and must NOT constrain to json_object — that would suppress
+    # their tool_calls (and OpenAI rejects response_format alongside tools).
+    fmt = None if use_tools else "json"
+    msg = await providers.chat_once(
+        messages, coordinator_model, tools=tools, temperature=0.1, fmt=fmt
+    )
 
     if not use_tools:
         return extract_json_object((msg.get("content") or "").strip(), ANSWER_DEFAULT)
@@ -420,6 +428,7 @@ async def _decide_step(
             ],
             coordinator_model,
             temperature=0.1,
+            fmt="json",
         )
     except Exception as exc:  # noqa: BLE001 — degrade, never escalate to a turn error
         logger.warning("forced re-decision failed (%s); keeping prose answer", exc)

@@ -24,10 +24,13 @@ class _ChatOnceStub:
 
     def __init__(self, responses):
         self._responses = list(responses)
-        self.calls = []  # (messages, tools) per call
+        self.calls = []  # (messages, tools, fmt) per call
 
-    async def __call__(self, messages, model=None, *, tools=None, temperature=0.1, backend=None):
-        self.calls.append((messages, tools))
+    async def __call__(
+        self, messages, model=None, *, tools=None, temperature=0.1, backend=None,
+        role=None, fmt=None, schema=None,
+    ):
+        self.calls.append((messages, tools, fmt))
         r = self._responses.pop(0)
         if isinstance(r, Exception):
             raise r
@@ -136,8 +139,10 @@ def test_retry_recovers_tool_call_when_forced(monkeypatch):
     assert decision["tool"] == "run_command"
     assert len(stub.calls) == 2  # one corrective re-ask
     # The retry drops the tools payload and strengthens the system prompt.
-    retry_messages, retry_tools = stub.calls[1]
+    retry_messages, retry_tools, retry_fmt = stub.calls[1]
     assert retry_tools is None
+    # No tools payload on the retry, so it requests JSON-constrained output.
+    assert retry_fmt == "json"
     assert coordinator._FORCE_DECISION_SUFFIX in retry_messages[0]["content"]
 
 
@@ -187,3 +192,19 @@ def test_non_tools_path_parses_json_content(monkeypatch):
     ))
     assert decision["action"] == "answer"
     assert len(stub.calls) == 1
+    # The non-tools decision path requests JSON-constrained output.
+    _messages, tools, fmt = stub.calls[0]
+    assert tools is None
+    assert fmt == "json"
+
+
+def test_tools_path_does_not_request_json_format(monkeypatch):
+    # A tool-calling model must NOT constrain to json_object — that would suppress
+    # its native tool_calls (and OpenAI rejects response_format alongside tools).
+    stub = _patch(monkeypatch, [_native_tool("list_dir", {"path": "."})])
+    coordinator_decision = asyncio.run(coordinator._decide_step(
+        "gemma4:12b", "sys", "ctx", experts={}, use_tools=True
+    ))
+    assert coordinator_decision["action"] == "tool"
+    _messages, _tools, fmt = stub.calls[0]
+    assert fmt is None

@@ -167,3 +167,81 @@ def test_openai_once_requires_key(monkeypatch):
     except RuntimeError as exc:
         with_err = str(exc)
     assert with_err and "OPENAI_API_KEY" in with_err
+
+
+# --------------------------------------------------------------------------- #
+# structured-output ("format" / response_format) passthrough
+# --------------------------------------------------------------------------- #
+
+
+def test_ollama_once_passes_json_format(monkeypatch):
+    client = _Client(_Resp({"message": {"content": '{"route": "chat"}'}}))
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+    out = asyncio.run(providers.chat_once(
+        [{"role": "user", "content": "hi"}], "gemma4:12b", backend="ollama", fmt="json",
+    ))
+    assert out["content"] == '{"route": "chat"}'
+    # /api/chat receives the "format" hint verbatim.
+    assert client.posted["url"].endswith("/api/chat")
+    assert client.posted["json"]["format"] == "json"
+
+
+def test_ollama_once_passes_json_schema(monkeypatch):
+    schema = {"type": "object", "properties": {"route": {"type": "string"}}}
+    client = _Client(_Resp({"message": {"content": "{}"}}))
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+    asyncio.run(providers.chat_once(
+        [{"role": "user", "content": "hi"}], "gemma4:12b", backend="ollama", schema=schema,
+    ))
+    # A schema wins over a plain fmt string and is sent as the format object.
+    assert client.posted["json"]["format"] == schema
+
+
+def test_ollama_once_omits_format_when_unset(monkeypatch):
+    client = _Client(_Resp({"message": {"content": "hi"}}))
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+    asyncio.run(providers.chat_once(
+        [{"role": "user", "content": "hi"}], "gemma4:12b", backend="ollama",
+    ))
+    # No structured request → payload stays exactly as before (no regression).
+    assert "format" not in client.posted["json"]
+
+
+def test_openai_once_maps_json_fmt_to_response_format(monkeypatch):
+    payload = {"choices": [{"message": {"content": "{}"}}], "usage": {}}
+    client = _Client(_Resp(payload))
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+    monkeypatch.setattr(providers, "OPENAI_API_KEY", "sk-test")
+    asyncio.run(providers.chat_once(
+        [{"role": "user", "content": "hi"}], backend="openai", fmt="json",
+    ))
+    assert client.posted["json"]["response_format"] == {"type": "json_object"}
+
+
+def test_openai_once_maps_schema_to_json_schema(monkeypatch):
+    schema = {"type": "object", "properties": {"route": {"type": "string"}}}
+    payload = {"choices": [{"message": {"content": "{}"}}], "usage": {}}
+    client = _Client(_Resp(payload))
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+    monkeypatch.setattr(providers, "OPENAI_API_KEY", "sk-test")
+    asyncio.run(providers.chat_once(
+        [{"role": "user", "content": "hi"}], backend="openai", schema=schema,
+    ))
+    rf = client.posted["json"]["response_format"]
+    assert rf["type"] == "json_schema"
+    assert rf["json_schema"]["schema"] == schema
+
+
+def test_openai_once_skips_response_format_when_tools_used(monkeypatch):
+    # tools and response_format are mutually exclusive; the tool call wins and the
+    # structured hint is dropped so the request stays valid.
+    payload = {"choices": [{"message": {"content": "ok"}}], "usage": {}}
+    client = _Client(_Resp(payload))
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+    monkeypatch.setattr(providers, "OPENAI_API_KEY", "sk-test")
+    asyncio.run(providers.chat_once(
+        [{"role": "user", "content": "hi"}], backend="openai", fmt="json",
+        tools=[{"type": "function", "function": {"name": "list_dir"}}],
+    ))
+    assert "response_format" not in client.posted["json"]
+    assert client.posted["json"]["tool_choice"] == "auto"

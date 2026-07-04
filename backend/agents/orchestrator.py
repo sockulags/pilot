@@ -176,8 +176,11 @@ async def classify_turn(
     ]
 
     try:
+        # Request JSON-constrained output so the route decision arrives as a JSON
+        # object, not prose. This is additive: a model/endpoint that ignores the
+        # hint still returns text that extract_json_object parses below.
         result = await providers.chat_once(
-            messages, OLLAMA_ROUTER_MODEL, temperature=0.1, role="classifier"
+            messages, OLLAMA_ROUTER_MODEL, temperature=0.1, role="classifier", fmt="json"
         )
         content = (result.get("content") or "").strip()
     except Exception as exc:
