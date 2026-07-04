@@ -3,7 +3,8 @@ from __future__ import annotations
 import base64
 import httpx
 
-from config import OLLAMA_BASE_URL, OLLAMA_VISION_MODEL
+import model_settings
+from config import OLLAMA_VISION_MODEL
 
 
 _ONE_PIXEL_PNG = base64.b64encode(
@@ -25,9 +26,13 @@ async def validate_vision_model() -> tuple[bool, str]:
         ],
         "stream": False,
     }
+    # Perception stays LOCAL by design: image input must never be sent to a cloud
+    # provider, so this validation probe is NOT routed through the provider layer.
+    # We only honour a custom Ollama URL via model_settings.ollama_base_url().
+    base_url = model_settings.ollama_base_url()
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload)
+            resp = await client.post(f"{base_url}/api/chat", json=payload)
         resp.raise_for_status()
     except Exception as exc:
         return (

@@ -2,8 +2,10 @@ import logging
 import os
 import platform
 import httpx
+import model_settings
+from agents import providers
 from agents.json_utils import extract_json_object
-from config import OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_VISION_MODEL
+from config import OLLAMA_MODEL, OLLAMA_VISION_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -139,19 +141,15 @@ async def route_next_action(
         task, history, failed_tools, screen_observation, conversation
     )
 
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            f"{OLLAMA_BASE_URL}/api/chat",
-            json={
-                "model": model or OLLAMA_MODEL,
-                "messages": messages,
-                "stream": False,
-                "options": {"temperature": 0.1},
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        content = data["message"]["content"].strip()
+    # Through the provider layer so per-role model settings and the OpenAI/cloud
+    # backend apply to router decisions too. The router has no dedicated role, so
+    # no role= is passed: an assigned "default_agent" (or the run-level backend
+    # override / a cloud model id) still routes it, otherwise this is the same
+    # local Ollama call as before (think stays off — this is the JSON decision).
+    result = await providers.chat_once(
+        messages, model or OLLAMA_MODEL, temperature=0.1
+    )
+    content = (result.get("content") or "").strip()
 
     return extract_json_object(content, PARSE_ERROR_DEFAULT)
 
@@ -179,9 +177,14 @@ async def vision_done_summary(task: str, image_b64: str) -> str:
             "images": [image_b64],
         },
     ]
+    # Perception stays LOCAL by design: raw screenshots must never be sent to a
+    # cloud provider, so this is NOT routed through providers.chat_once (which can
+    # dispatch to OpenAI/cloud). We only honour a custom Ollama URL via
+    # model_settings.ollama_base_url() instead of the hardcoded env default.
+    base_url = model_settings.ollama_base_url()
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
-            f"{OLLAMA_BASE_URL}/api/chat",
+            f"{base_url}/api/chat",
             json={"model": OLLAMA_VISION_MODEL, "messages": messages, "stream": False},
         )
         resp.raise_for_status()
@@ -207,9 +210,14 @@ async def analyze_screenshot(task: str, image_b64: str, history: list[dict]) -> 
         "images": [image_b64],
     })
 
+    # Perception stays LOCAL by design: raw screenshots must never leave the
+    # machine, so this is NOT routed through providers.chat_once (which can
+    # dispatch to a cloud backend). We only honour a custom Ollama URL via
+    # model_settings.ollama_base_url() instead of the hardcoded env default.
+    base_url = model_settings.ollama_base_url()
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
-            f"{OLLAMA_BASE_URL}/api/chat",
+            f"{base_url}/api/chat",
             json={
                 "model": OLLAMA_VISION_MODEL,
                 "messages": messages,
