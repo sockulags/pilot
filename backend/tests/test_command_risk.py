@@ -155,6 +155,24 @@ class CommandRiskClassifierTests(unittest.TestCase):
         # Read-only find stays safe.
         self._assert_safe("find . -name '*.py'")
 
+    def test_unrecognized_first_token_requires_confirmation(self):
+        # Default-DENY: an unknown binary/verb no rule classifies must confirm
+        # instead of running silently as read-only.
+        self._assert_risky("frobnicate --do-it", mentions=command_risk.UNKNOWN)
+        self._assert_risky("somebinary arg1 arg2", mentions=command_risk.UNKNOWN)
+        self._assert_risky("mysteryctl status", mentions=command_risk.UNKNOWN)
+        # In a compound, an unknown part gates the whole command.
+        self._assert_risky("ls && frobnicate", mentions=command_risk.UNKNOWN)
+
+    def test_verb_conditional_tools_gate_novel_subcommands(self):
+        # gh/ollama/dotnet: only their read/build/test verbs are auto-trusted;
+        # a novel or mutating subcommand still asks for confirmation.
+        self._assert_risky("ollama rm gemma4:12b", mentions=command_risk.UNKNOWN)
+        self._assert_risky("dotnet nuget push pkg.nupkg", mentions=command_risk.UNKNOWN)
+        # Explicit side-effecting gh subcommands keep their dedicated gating.
+        self._assert_risky("gh pr merge 5", mentions=command_risk.PROCESS_SPAWN)
+        self._assert_risky("gh issue close 3", mentions=command_risk.PROCESS_SPAWN)
+
     # ---- safe read-only -------------------------------------------------
 
     def test_low_risk_read_only(self):
@@ -167,6 +185,28 @@ class CommandRiskClassifierTests(unittest.TestCase):
         self._assert_safe("echo hello")
         self._assert_safe("pytest -q")
         self._assert_safe("Get-ChildItem backend")
+
+    def test_common_dev_commands_stay_ungated(self):
+        # The allowlist must keep normal dev/test/build/lint flows running
+        # without a confirmation halt, even under default-DENY.
+        self._assert_safe("uv run pytest -q")
+        self._assert_safe("uvx ruff check .")
+        self._assert_safe("ruff check .")
+        self._assert_safe("pnpm run build")
+        self._assert_safe("npm run test")
+        self._assert_safe("yarn test")
+        self._assert_safe("tsc --noEmit")
+        self._assert_safe("dotnet build")
+        self._assert_safe("dotnet test")
+        self._assert_safe("ollama list")
+        self._assert_safe("ollama show gemma4:12b")
+        self._assert_safe("ollama ps")
+        self._assert_safe("gh pr list")
+        self._assert_safe("gh issue list")
+        self._assert_safe("Get-Content report.md")
+        # PowerShell parenthesised inspection expressions resolve to their cmdlet.
+        self._assert_safe("(Get-ChildItem).Count")
+        self._assert_safe("(Get-ChildItem *.py).Count")
 
 
 class RegistryDelegationTests(unittest.TestCase):

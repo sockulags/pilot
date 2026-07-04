@@ -29,6 +29,7 @@ PACKAGE_INSTALL = "PACKAGE_INSTALL"
 VERSION_CONTROL_PUSH = "VERSION_CONTROL_PUSH"
 ENCODED = "ENCODED"
 CODE_EXECUTION = "CODE_EXECUTION"
+UNKNOWN = "UNKNOWN"
 SAFE = "SAFE"
 
 
@@ -42,6 +43,7 @@ _HUMAN_LABELS = {
     VERSION_CONTROL_PUSH: "pushes to version control",
     ENCODED: "runs an encoded command",
     CODE_EXECUTION: "evaluates dynamic code",
+    UNKNOWN: "is an unrecognized command",
     SAFE: "is read-only",
 }
 
@@ -67,6 +69,47 @@ _SAFE_COMMANDS = {
     "pytest", "true", "false", "test", "printenv", "env",
     "get-childitem", "gci", "get-location", "gl", "write-output", "write-host",
     "test-path", "select-string", "measure-object",
+    # Additional read-only inspection cmdlets/utilities used in dev workflows.
+    "get-content", "gc", "get-item", "gi", "get-command", "gcm",
+    "select-object", "where-object", "sort-object", "foreach-object",
+    "get-process", "get-service", "get-date", "resolve-path", "split-path",
+    "sleep", "start-sleep", "tree", "clear", "cls", "sort", "uniq", "diff",
+    "cut", "awk", "sed", "basename", "dirname", "stat", "file", "less", "more",
+}
+
+# Known-safe developer/inspection commands whose *bare* first token is benign in
+# this project's workflows — the allowlist that keeps default-DENY from gating
+# normal dev/test/build/lint flows. These run tools rather than mutate state on
+# their own; any genuinely risky invocation (package install verbs, git push,
+# inline eval, redirection, secret paths, …) is still caught by the risk tables
+# above regardless of this membership. Verb-conditional tools (gh, ollama,
+# dotnet) are handled separately so only their read/build/test verbs are trusted.
+_ALLOWED_COMMANDS = {
+    # Python/Node toolchain runners (script/module forms; inline eval stays gated).
+    "uv", "uvx", "ruff", "mypy", "black", "isort", "flake8", "tox", "poetry",
+    "pipx", "hatch", "coverage", "pyright", "tsc", "eslint", "prettier",
+    # .NET / other build toolchains.
+    "make", "cmake", "gradle", "mvn", "cargo", "go", "rustc", "javac", "gcc",
+    # Common inspection binaries.
+    "jq", "yq", "code", "wsl", "python", "python3", "py", "node", "nodejs",
+    "npm", "pnpm", "yarn", "npx", "pip", "pip3", "gh", "ollama", "dotnet",
+}
+
+# Verb-conditional binaries: the first token is a known dispatcher, but only its
+# read/build/test verbs are auto-trusted. Any other (or missing) verb falls back
+# to UNKNOWN so a novel/mutating subcommand still asks for confirmation. Genuinely
+# risky verbs (e.g. `gh pr merge`) are already caught by dedicated rules.
+_VERB_ALLOWLISTS = {
+    "gh": {
+        "pr", "issue", "repo", "run", "release", "api", "auth", "browse",
+        "search", "status", "workflow", "gist", "label", "cache", "codespace",
+        "org", "project", "ruleset", "secret", "variable", "extension",
+    },
+    "ollama": {"list", "ls", "show", "ps", "help", "--version", "-v"},
+    "dotnet": {
+        "build", "test", "restore", "run", "list", "--version", "--info",
+        "--list-sdks", "--list-runtimes", "sln", "format", "watch", "tool",
+    },
 }
 
 # Language interpreters. With an inline-eval flag they run arbitrary code with
@@ -254,6 +297,51 @@ def _classify_find(args: list[str]) -> set[str]:
     return classes
 
 
+def _leading_verb(token: str) -> str:
+    """Normalise a first token to its bare verb/cmdlet for allowlist lookups.
+
+    Strips a wrapping ``(`` and surrounding quotes and drops any trailing
+    property access or argument glued to the token, so PowerShell forms like
+    ``(Get-ChildItem *.py).Count`` resolve to ``get-childitem`` (mirrors the
+    coordinator's own ``_first_command_token``).
+    """
+    s = token.strip().lstrip("(").strip().strip("'\"")
+    m = re.match(r"[A-Za-z][A-Za-z0-9._-]*", s)
+    return m.group(0).lower() if m else ""
+
+
+# First-token tables whose membership means the token is *recognised* (handled by
+# a dedicated rule above), so it should never fall through to the UNKNOWN default.
+# Whether a given invocation is risky is decided by those rules; recognition just
+# means "we know this command" and must not be gated merely for being unlisted.
+_RECOGNISED_COMMANDS = (
+    _SAFE_COMMANDS | _ALLOWED_COMMANDS | set(_VERB_ALLOWLISTS)
+    | _INTERPRETERS | _SCRIPT_HOST_COMMANDS | _SYSTEM_MUTATION_COMMANDS
+    | _DELETE_COMMANDS | _WRITE_COMMANDS | _NETWORK_COMMANDS
+    | _PROCESS_SPAWN_COMMANDS | _CODE_EXECUTION_COMMANDS | _PERMISSION_COMMANDS
+    | _PACKAGE_MANAGERS | {"git", "find", "gh", "cmd", "powershell", "pwsh"}
+)
+
+
+def _is_recognised_first_token(token: str) -> bool:
+    """True when the first token is a known command (safe or handled elsewhere).
+
+    Unrecognised first tokens are the default-DENY surface: an unknown binary or
+    typo'd verb that no rule classifies should ask for confirmation rather than
+    run silently. Executable paths (``./x``, ``foo.exe``) are handled by their own
+    PROCESS_SPAWN rule, so they count as recognised here.
+    """
+    verb = _leading_verb(token)
+    if not verb:
+        # No parseable verb (pure flags/paths/expressions) — leave to other rules.
+        return True
+    if verb in _RECOGNISED_COMMANDS:
+        # Verb-conditional dispatchers are recognised regardless of subcommand;
+        # unknown subcommands are gated below, not treated as an unknown binary.
+        return True
+    return False
+
+
 def _looks_like_executable_path(token: str) -> bool:
     """True for a direct executable invocation: ./x, .\\x, C:\\...\\x.exe, x.bat."""
     t = token.strip().strip("'\"").lower()
@@ -372,6 +460,22 @@ def _classify_part(part: str) -> set[str]:
     if "start-process" in rest:
         classes.add(PROCESS_SPAWN)
 
+    # Default-DENY for anything no rule above recognised. If a rule already found
+    # a risk class we're done; otherwise a first token we don't know (an unknown
+    # binary/verb, a typo, or a verb-conditional dispatcher's novel subcommand)
+    # should require confirmation instead of running silently as "read-only".
+    if not classes:
+        verb = _leading_verb(tokens[0])
+        verb_allow = _VERB_ALLOWLISTS.get(verb)
+        if verb_allow is not None:
+            # Known dispatcher (gh/ollama/dotnet): trust only its read/build/test
+            # subcommands; an unrecognised/missing verb still asks for sign-off.
+            sub = rest[0] if rest else ""
+            if sub not in verb_allow:
+                classes.add(UNKNOWN)
+        elif not _is_recognised_first_token(tokens[0]):
+            classes.add(UNKNOWN)
+
     return classes
 
 
@@ -395,7 +499,7 @@ def classify_command(cmd: str) -> CommandRisk:
 
     ordered = [c for c in (
         DELETE, WRITE, SECRET_ACCESS, PACKAGE_INSTALL, VERSION_CONTROL_PUSH,
-        ENCODED, CODE_EXECUTION, PROCESS_SPAWN, NETWORK,
+        ENCODED, CODE_EXECUTION, PROCESS_SPAWN, NETWORK, UNKNOWN,
     ) if c in risky]
     labels = ", ".join(f"{c} ({_HUMAN_LABELS.get(c, c)})" for c in ordered)
     reason = f"High-risk shell command requires confirmation: {labels}."
