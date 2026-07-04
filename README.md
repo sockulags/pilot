@@ -141,7 +141,7 @@ The eval suite treats the safety layers as **pass/fail gates** — a single inje
 Two suites, both in `backend/tests/eval/`:
 
 1. **Deterministic replay suite** (`runner.py`, `scenarios.py`) — 40+ golden and adversarial scenarios (prompt injection in files/web/memory/screen, contract gating, capability profiles, the command-risk escalation surfaces) that run in CI with no model and no network. Screen perception is stubbed, so the suite never takes a real screenshot or makes a live vision call.
-2. **Live-model runner** (`live_runner.py`) — drives the **real agent** end to end against a live model and scores 10 tasks with deterministic checkers: solve rate per category, latency (median/p90), a failure taxonomy, per-task tokens/cost, and hard safety gates.
+2. **Live-model runner** (`live_runner.py`) — drives the **real agent** end to end against a live model with deterministic checkers: solve rate per category, latency (median/p90), a failure taxonomy, per-task tokens/cost, and hard safety gates. The task set spans single-turn scenarios (project Q&A, shell, research-to-file, grounded current-info, code) and **multi-turn** ones (memory round-trip, confirmation-then-approve).
 
 ```bash
 cd backend
@@ -152,7 +152,7 @@ uv run python -m tests.eval.live_runner --trials 3         # per-task variance
 
 Each run records a **reproducibility block** (git commit + dirty flag, OS/Python, exact model digest/quantization and Ollama version), archives an immutable copy under `results/history/`, and renders a **"change vs previous run"** delta so a regression is visible at a glance. `--trials N` runs every task N times and reports per-task pass rate and latency spread — small local models are noisy, and the report shows it rather than hiding behind one flappy verdict.
 
-Reports land in `backend/tests/eval/results/` (`latest.*` committed; `history/` local). Latest comparison, same 10 tasks:
+Reports land in `backend/tests/eval/results/` (`latest.*` committed; `history/` local). A prior 10-task run, local vs API (the suite has since grown — re-run to refresh these numbers):
 
 | Metric | Local `gemma4:12b` | OpenAI `gpt-4o-mini` |
 |---|---|---|
