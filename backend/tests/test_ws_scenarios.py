@@ -314,6 +314,66 @@ class WebSocketScenarioTests(unittest.TestCase):
         self.assertEqual("confirmation_required", result["meta"]["runtime_state"]["actions"][0]["decision"])
         self.assertEqual("high", result["meta"]["runtime_state"]["actions"][0]["risk_level"])
 
+    def test_history_replay_carries_real_turn_indices_for_reconnect(self):
+        # A reconnecting client needs the server's authoritative turn numbers so it
+        # can key streamed events to the right turn. Every persisted message (user
+        # and assistant) carries the turn it belongs to, and `hello` replays them.
+        from agents.loop import LoopOutcome
+        from agents.runtime_state import RuntimeState
+
+        import api.ws as ws_api
+        import store
+
+        app = FastAPI()
+
+        @app.websocket("/ws")
+        async def ws(websocket: WebSocket):
+            await ws_api.websocket_endpoint(websocket)
+
+        async def fake_classify_turn(prior, text, project=None, model_mode="auto"):
+            return {"route": "chat", "task": text, "thinking": "reconnect test", "model": "gemma4:12b"}
+
+        async def fake_run_coordinator(task, emit, abort, *args, **kwargs):
+            return LoopOutcome("done", "", runtime_state=RuntimeState())
+
+        async def fake_compose_reply(conversation, grounding=None, model=None, memories=""):
+            yield "svar"
+
+        async def fake_search_memories(text, *args, **kwargs):
+            return []
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(store, "SESSIONS_DIR", tmp), \
+             mock.patch.object(ws_api, "list_projects", return_value=[]), \
+             mock.patch.object(ws_api, "list_jobs", return_value=[]), \
+             mock.patch.object(ws_api, "append_turn_diagnostic"), \
+             mock.patch.object(ws_api, "classify_turn", new=fake_classify_turn), \
+             mock.patch.object(ws_api, "run_coordinator", new=fake_run_coordinator), \
+             mock.patch.object(ws_api, "compose_reply", new=fake_compose_reply), \
+             mock.patch.object(ws_api, "search_memories", new=fake_search_memories):
+            with TestClient(app) as client:
+                # First connection: run two turns.
+                with client.websocket_connect("/ws") as websocket:
+                    websocket.send_json({"type": "hello", "session_id": "scenario-reconnect"})
+                    self._drain_until(websocket, {"jobs"})
+                    websocket.send_json({"type": "message", "text": "första"})
+                    self._drain_until(websocket, {"done"})
+                    websocket.send_json({"type": "message", "text": "andra"})
+                    self._drain_until(websocket, {"done"})
+                # Reconnect: the history event replays messages with real turns.
+                with client.websocket_connect("/ws") as websocket:
+                    websocket.send_json({"type": "hello", "session_id": "scenario-reconnect"})
+                    events = self._drain_until(websocket, {"history"})
+
+        history = [e for e in events if e.get("type") == "history"][-1]
+        self.assertEqual(2, history["turn"])
+        messages = history["messages"]
+        # Two turns => user/assistant pairs keyed to turns 1 and 2, never all 0.
+        self.assertEqual(
+            [("user", 1), ("assistant", 1), ("user", 2), ("assistant", 2)],
+            [(m["role"], m["turn"]) for m in messages],
+        )
+
     def test_turn_exceeding_watchdog_timeout_is_terminated_and_client_notified(self):
         import asyncio
         import threading

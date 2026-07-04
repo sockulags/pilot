@@ -172,7 +172,7 @@ async def websocket_endpoint(websocket: WebSocket):
               "thinking": f"Schemalagt: {title}", "model": OLLAMA_MODEL})
         send({"type": "assistant_delta", "turn": t, "route": "chat", "content": content})
         send({"type": "done", "turn": t, "route": "chat"})
-        conversation.append({"role": "assistant", "content": content})
+        conversation.append({"role": "assistant", "content": content, "turn": t})
         persist()
 
     def persist():
@@ -317,7 +317,7 @@ async def websocket_endpoint(websocket: WebSocket):
             return
 
         prior = list(conversation)
-        conversation.append({"role": "user", "content": text})
+        conversation.append({"role": "user", "content": text, "turn": turn})
         task_context = build_task_context(prior, text)
         effective_task = tool_task(text, task_context)
 
@@ -453,6 +453,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 conversation.append({
                     "role": "assistant",
                     "content": outcome.detail,
+                    "turn": turn,
                     "meta": _turn_meta(
                         turn, route, coordinator_model, diagnostic_events,
                         outcome.status, task_context.intent,
@@ -517,6 +518,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 conversation.append({
                     "role": "assistant",
                     "content": reply or _fallback_visible_reply(outcome),
+                    "turn": turn,
                     "meta": _turn_meta(
                         turn, route, coordinator_model, diagnostic_events,
                         outcome.status, task_context.intent,
@@ -541,7 +543,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 msg = ("Välj en projektmapp först (dropdown ovanför inmatningen) för att "
                        "offloada till kodagenten.")
                 emit({"type": "assistant_delta", "content": msg})
-                conversation.append({"role": "assistant", "content": msg, "meta": code_meta})
+                conversation.append({"role": "assistant", "content": msg, "turn": turn, "meta": code_meta})
                 emit({"type": "done"})
             else:
                 # Refine/translate the instruction (English pivot) before the
@@ -1130,6 +1132,10 @@ async def _run_code_turn(
     }
     if meta:
         message["meta"] = dict(meta)
+        # Surface the turn index on the message itself so the history payload can
+        # key restored items to their real turn (reconnect reconciliation).
+        if meta.get("turn") is not None:
+            message["turn"] = meta["turn"]
 
     # Independently inspect the repo after the agent finishes: changed files,
     # unexpected changes outside the project, and (opt-in) a verification run.

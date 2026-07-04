@@ -4,7 +4,7 @@ One JSON file per session_id under SESSIONS_DIR. The conversation is the source
 of truth on the backend, so a reconnecting client (mobile drops the WebSocket
 often) or a backend restart can resume the same conversation.
 
-Stored shape: {"messages": [{"role", "content"}, ...], "turn": int,
+Stored shape: {"messages": [{"role", "content", "turn"}, ...], "turn": int,
 "cwd": str|None, "claude_session_id": str|None, "codex_session_id": str|None,
 "agent": "claude"|"codex", "model_mode": "auto"|<model id>}
 """

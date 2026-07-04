@@ -62,6 +62,7 @@ export type CodexTrace = {
 type StoredMessage = {
   role: string;
   content: string;
+  turn?: number;
   cwd?: string;
   code_session_id?: string;
   codex_trace?: CodexTrace;
@@ -200,6 +201,44 @@ function approximateTokens(transcript: TranscriptItem[]) {
     const text = item.kind === "user" ? item.text : `${item.text} ${item.summary ?? ""}`;
     return sum + Math.ceil(text.length / 4);
   }, 1600);
+}
+
+// Rebuild the transcript from the server's authoritative history. Each stored
+// message carries the real turn index it belongs to; sessions saved before that
+// field existed fall back to a positional counter so event matching still keys
+// consistently rather than collapsing every item onto turn 0.
+function historyToTranscript(messages: StoredMessage[], nextId: () => number): TranscriptItem[] {
+  let fallbackTurn = 0;
+  return messages.map((m) => {
+    if (typeof m.turn === "number") {
+      // User messages start a turn; assistant replies close the same one, so a
+      // real assistant turn number is the highest we've seen.
+      fallbackTurn = Math.max(fallbackTurn, m.turn);
+    } else if (m.role === "user") {
+      fallbackTurn += 1;
+    }
+    const turn = typeof m.turn === "number" ? m.turn : fallbackTurn;
+    return m.role === "user"
+      ? { kind: "user", id: nextId(), turn, text: m.content }
+      : {
+          kind: "assistant",
+          id: nextId(),
+          turn,
+          text: m.content,
+          events: [],
+          done: true,
+          cwd: m.cwd,
+          codeSessionId: m.code_session_id,
+          codexTrace: m.codex_trace,
+        };
+  });
+}
+
+// A cheap content signature of the finalized (done) part of a transcript, used
+// to decide whether the server's history actually differs from what we already
+// show. Ignores in-progress assistant turns the server hasn't persisted yet.
+function transcriptSignature(items: { role: string; content: string }[]): string {
+  return items.map((m) => `${m.role}:${m.content}`).join("\n\x1e");
 }
 
 function ContextModal({
@@ -605,26 +644,37 @@ function Workspace() {
           return;
         }
         if (msg.type === "history") {
+          // The server conversation is authoritative on (re)connect. Adopt it and
+          // assign each restored item its real turn so turn-keyed events match.
           turnRef.current = msg.turn ?? 0;
-          if (transcriptRef.current.length === 0 && msg.messages?.length) {
-            setTranscript(
-              msg.messages.map((m) =>
-                m.role === "user"
-                  ? { kind: "user", id: idRef.current++, turn: 0, text: m.content }
-                  : {
-                      kind: "assistant",
-                      id: idRef.current++,
-                      turn: 0,
-                      text: m.content,
-                      events: [],
-                      done: true,
-                      cwd: m.cwd,
-                      codeSessionId: m.code_session_id,
-                      codexTrace: m.codex_trace,
-                    }
-              )
+          const messages = msg.messages ?? [];
+          setTranscript((prev) => {
+            // Anything the server hasn't persisted yet (a turn still streaming, or
+            // a just-sent user prompt trailing the history) is preserved so a
+            // reconnect mid-stream doesn't drop live UI.
+            const serverSig = transcriptSignature(
+              messages.map((m) => ({ role: m.role, content: m.content }))
             );
-          }
+            const finalized = prev.filter(
+              (it) => it.kind === "user" || it.done
+            );
+            const localSig = transcriptSignature(
+              finalized.map((it) => ({
+                role: it.kind === "user" ? "user" : "assistant",
+                content: it.text,
+              }))
+            );
+            // Identical finalized history and nothing in flight: leave the UI as
+            // is (avoids remounting every message on a routine resume).
+            if (serverSig === localSig && finalized.length === prev.length) {
+              return prev;
+            }
+            const pending = prev.filter(
+              (it) => it.kind === "assistant" && !it.done
+            );
+            const restored = historyToTranscript(messages, () => idRef.current++);
+            return [...restored, ...pending];
+          });
           return;
         }
         if (msg.type === "projects") {
