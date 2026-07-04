@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { Route, TranscriptItem, TurnEvent } from "@/app/page";
+import type { Route, RouteInsight as RouteInsightData, TranscriptItem, TurnEvent } from "@/app/page";
 import Markdown from "@/components/Markdown";
 import Dialog from "@/components/Dialog";
 import { useToast } from "@/components/Toast";
@@ -410,6 +410,44 @@ function UserBubble({
   );
 }
 
+// Surfaces the routing/model rationale the backend already sends (turn_start +
+// routing_decision) as a compact, collapsed-by-default line. Additive only — it
+// stays out of the way until the user asks "why this route?".
+function RouteInsight({ insight }: { insight?: RouteInsightData }) {
+  const [open, setOpen] = useState(false);
+  if (!insight) return null;
+
+  const rows: { label: string; value: string }[] = [];
+  if (insight.executionEngine) rows.push({ label: t.routeInsight.engine, value: insight.executionEngine });
+  if (insight.agentRole) rows.push({ label: t.routeInsight.role, value: insight.agentRole });
+  if (insight.agentRoleModel) rows.push({ label: t.routeInsight.model, value: insight.agentRoleModel });
+  if (insight.reason) rows.push({ label: t.routeInsight.reason, value: insight.reason });
+  if (insight.agentRoleFallback) rows.push({ label: t.routeInsight.fallback, value: insight.agentRoleFallback });
+  if (insight.requiredPermissions?.length) {
+    rows.push({ label: t.routeInsight.permissions, value: insight.requiredPermissions.join(" · ") });
+  }
+  if (!rows.length) return null;
+
+  return (
+    <div className={`whyroute${open ? " open" : ""}`}>
+      <button className="whyroute-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+        <span className="chev">›</span>
+        <span>{t.routeInsight.toggle}</span>
+      </button>
+      {open && (
+        <dl className="whyroute-body">
+          {rows.map((row) => (
+            <div key={row.label} className="whyroute-row">
+              <dt>{row.label}</dt>
+              <dd>{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
+  );
+}
+
 function AssistantTurn({ item }: { item: Extract<TranscriptItem, { kind: "assistant" }> }) {
   const copy = useCopy();
   const memoryEvents = item.events.filter((event) => event.type === "memory" && event.content);
@@ -437,6 +475,7 @@ function AssistantTurn({ item }: { item: Extract<TranscriptItem, { kind: "assist
           {toolCount > 0 && <div className="rbadge">{toolCount} verktyg</div>}
           {expertCount > 0 && <div className="rbadge">{expertCount} experter</div>}
         </div>
+        <RouteInsight insight={item.insight} />
         {toolMeta.length > 0 && (
           <div className="toolstrip">
             {toolMeta.map((tool) => (

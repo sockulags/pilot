@@ -86,6 +86,16 @@ export const t = {
     code: "kod",
   },
 
+  routeInsight: {
+    toggle: "Varför den här rutten?",
+    engine: "Motor",
+    role: "Roll",
+    model: "Modell",
+    reason: "Skäl",
+    fallback: "Reserv",
+    permissions: "Behörigheter",
+  },
+
   routeModes: [
     { id: "auto", label: "Auto" },
     { id: "chat", label: "Chatt" },

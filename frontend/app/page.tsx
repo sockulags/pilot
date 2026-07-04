@@ -83,6 +83,7 @@ export type ServerEvent = {
     | "result"
     | "screenshot"
     | "jobs"
+    | "routing_decision"
     | "done"
     | "error"
     | "reset_ok";
@@ -105,6 +106,25 @@ export type ServerEvent = {
   agent_roles?: AgentRoleOption[];
   route_mode?: string;
   jobs?: Job[];
+  // Explainability: turn_start carries the picked agent role / model, and
+  // routing_decision explains which engine will act and what it may touch.
+  agent_role?: string;
+  agent_role_model?: string;
+  agent_role_fallback?: string | null;
+  execution_engine?: string;
+  reason?: string;
+  required_permissions?: string[];
+};
+
+// Why a turn took the route/model it did — populated from turn_start and
+// routing_decision, surfaced as a compact expandable line on the assistant turn.
+export type RouteInsight = {
+  agentRole?: string;
+  agentRoleModel?: string;
+  agentRoleFallback?: string;
+  executionEngine?: string;
+  reason?: string;
+  requiredPermissions?: string[];
 };
 
 export type TurnEvent = {
@@ -130,6 +150,7 @@ export type TranscriptItem =
       cwd?: string;
       codeSessionId?: string;
       codexTrace?: CodexTrace;
+      insight?: RouteInsight;
       done: boolean;
     };
 
@@ -486,7 +507,23 @@ function Workspace() {
         case "turn_start":
           updated.route = ev.route;
           if (ev.model) updated.model = ev.model;
+          // Fold the routing/model rationale onto the turn so the UI can offer a
+          // "why this route/model" affordance instead of discarding it.
+          updated.insight = {
+            ...updated.insight,
+            agentRole: ev.agent_role,
+            agentRoleModel: ev.agent_role_model,
+            agentRoleFallback: ev.agent_role_fallback ?? undefined,
+          };
           if (ev.thinking) updated.events.push({ id: idRef.current++, type: "thinking", content: ev.thinking });
+          break;
+        case "routing_decision":
+          updated.insight = {
+            ...updated.insight,
+            executionEngine: ev.execution_engine,
+            reason: ev.reason,
+            requiredPermissions: ev.required_permissions,
+          };
           break;
         case "assistant_delta":
           updated.text += ev.content ?? "";

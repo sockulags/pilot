@@ -91,6 +91,26 @@
 }
 .rbadge.clarify { color: var(--amber); }
 
+/* ── why-this-route (explainability affordance) ───────────── */
+.whyroute { margin: 2px 0 10px; }
+.whyroute-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: 11px var(--mono); color: var(--dim-2); cursor: pointer;
+  background: none; border: 0; padding: 0;
+}
+.whyroute-toggle:hover { color: var(--text); }
+.whyroute-toggle .chev { color: var(--dim-2); transition: .2s; }
+.whyroute.open .whyroute-toggle .chev { transform: rotate(90deg); }
+.whyroute-body {
+  margin: 8px 0 0; display: grid; gap: 4px 12px;
+  grid-template-columns: max-content 1fr;
+  padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: rgba(20,21,27,.45);
+}
+.whyroute-row { display: contents; }
+.whyroute-row dt { font: 10px var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--dim-2); }
+.whyroute-row dd { margin: 0; font: 12px var(--sans); color: var(--dim); word-break: break-word; }
+
 .toolstrip {
   display: flex;
   flex-wrap: wrap;
