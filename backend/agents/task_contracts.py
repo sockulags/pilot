@@ -255,7 +255,7 @@ _CONTRACTS: dict[str, TaskContract] = {
         required_evidence=(
             EvidenceRequirement("source_evidence", "source evidence from web_research"),
         ),
-        allowed_tools=frozenset({"web_research", "web_search", "fetch_url"}),
+        allowed_tools=frozenset({"web_research", "web_search", "fetch_url", "http_request"}),
         completion_criteria=(
             "Derive focused search queries, run web_research, fetch the requested "
             "minimum source count where possible, and preserve source URLs."
@@ -300,7 +300,10 @@ _CONTRACTS: dict[str, TaskContract] = {
                 "backend flow playbook files inspected",
             ),
         ),
-        allowed_tools=frozenset({"list_dir", "read_file", "search_files", "find_file", "run_command"}),
+        allowed_tools=frozenset({
+            "list_dir", "read_file", "search_files", "search_in_files",
+            "read_document", "find_file", "run_command",
+        }),
         completion_criteria=(
             "Relevant local project files have been inspected, including the backend "
             "flow playbook files when the user asks about backend/WebSocket/tool flow."

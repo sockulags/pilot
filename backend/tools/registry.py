@@ -326,6 +326,95 @@ REGISTRY: tuple[ToolSpec, ...] = (
         category="files",
         deterministic=True,
     ),
+    ToolSpec(
+        name="search_in_files",
+        summary="Search file CONTENTS for a pattern (grep)",
+        description="search_in_files(pattern, root?, glob?, regex?): search inside files "
+        "for text/regex, returning path + line number + matching line",
+        when_to_use="To find WHERE something lives in a codebase or set of files — a "
+        "function, an error string, a config key. Filename search (search_files) finds "
+        "files; this finds the lines. Pass glob='*.py' to limit file types, regex=true "
+        "for a pattern.",
+        params={
+            "pattern": {"type": "string", "description": "Text or regex to search for"},
+            "root": {"type": "string", "description": "Folder to search (default: project/home)"},
+            "glob": {"type": "string", "description": "Filename filter, e.g. *.py (optional)"},
+            "regex": {"type": "boolean", "description": "Treat pattern as a regex (optional)"},
+        },
+        required=("pattern",),
+        category="files",
+        deterministic=True,
+    ),
+    ToolSpec(
+        name="read_document",
+        summary="Extract text from a document (PDF or text file)",
+        description="read_document(path): extract readable text from a PDF (page by "
+        "page) or a text-like file",
+        when_to_use="To read a PDF (a CV, a report, a paper) or any document read_file "
+        "would mangle. Returns the actual text content.",
+        params={"path": {"type": "string", "description": "Path to the document"}},
+        required=("path",),
+        category="files",
+        deterministic=True,
+    ),
+    # --- HTTP / APIs ---------------------------------------------------------
+    ToolSpec(
+        name="http_request",
+        summary="Call an HTTP/JSON API",
+        description="http_request(url, method?, headers?, json_body?, params?): call a "
+        "JSON API and return status + parsed body",
+        when_to_use="To call a JSON API (weather, exchange rates, any REST endpoint). "
+        "Unlike fetch_url (page text), this speaks to APIs — set method, json_body, "
+        "headers, params. A non-GET method requires confirmation.",
+        params={
+            "url": {"type": "string", "description": "http(s) URL"},
+            "method": {"type": "string", "description": "GET|POST|PUT|PATCH|DELETE (default GET)"},
+            "headers": {"type": "object", "description": "Request headers (optional)"},
+            "json_body": {"type": "object", "description": "JSON request body (optional)"},
+            "params": {"type": "object", "description": "Query parameters (optional)"},
+        },
+        required=("url",),
+        category="web",
+        deterministic=True,
+        side_effects=True,
+    ),
+    # --- Processes / clipboard (OS grounding) --------------------------------
+    ToolSpec(
+        name="list_processes",
+        summary="List running processes",
+        description="list_processes(filter_name?): list running processes with pid and "
+        "memory, largest first",
+        when_to_use="To see what is running (e.g. 'is Ollama running?', 'what's using "
+        "memory?'). Read-only. Pass filter_name to match a substring of the image name.",
+        params={
+            "filter_name": {"type": "string", "description": "Only names containing this (optional)"},
+            "limit": {"type": "integer", "description": "Max processes (optional)"},
+        },
+        category="system",
+        deterministic=True,
+    ),
+    ToolSpec(
+        name="read_clipboard",
+        summary="Read the clipboard text",
+        description="read_clipboard(): return the current clipboard text",
+        when_to_use="When the user refers to something they copied ('summarize what I "
+        "copied', 'paste that here').",
+        params={},
+        category="system",
+        deterministic=True,
+    ),
+    ToolSpec(
+        name="write_clipboard",
+        summary="Copy text to the clipboard",
+        description="write_clipboard(text): put text on the clipboard",
+        when_to_use="When the user asks you to copy a result so they can paste it "
+        "elsewhere.",
+        params={"text": {"type": "string", "description": "Text to copy"}},
+        required=("text",),
+        category="system",
+        risk_level="medium",
+        side_effects=True,
+    ),
     # --- GitHub (gh CLI) -----------------------------------------------------
     ToolSpec(
         name="github_issues",
@@ -526,6 +615,11 @@ def confirmation_required(tool: str, args: dict | None = None) -> bool:
         return _path_requires_confirmation(str(args.get("path") or ""))
     if tool == "write_file":
         return _write_file_requires_confirmation(args)
+    if tool == "http_request":
+        # GET/HEAD are read-only; a mutating method can change external state, so
+        # it needs sign-off (the URL/body may be steered by gathered evidence).
+        method = str(args.get("method") or "GET").upper()
+        return method not in ("GET", "HEAD")
     return spec.risk_level == "high"
 
 
@@ -551,6 +645,9 @@ def confirmation_reason(tool: str, args: dict | None = None) -> str:
         if risk.requires_confirmation:
             return risk.reason
         return "High-risk shell command requires confirmation."
+    if tool == "http_request":
+        method = str((args or {}).get("method") or "GET").upper()
+        return f"{method} may change external state and requires confirmation."
     return f"High-risk tool {tool!r} requires confirmation."
 
 

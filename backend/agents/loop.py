@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from pathlib import Path
 from dataclasses import dataclass
@@ -14,6 +15,10 @@ from tools import (
     open_app, run_codex,
     active_window_title, list_dir, read_file, find_file, list_windows, focus_window,
     search_files, github_issues, github_prs, github_repo, web_search, fetch_url, web_research_result,
+)
+from tools.extras import (
+    search_in_files, http_request, read_document, list_processes,
+    read_clipboard, write_clipboard,
 )
 from tools.web import infer_requested_source_count, infer_web_query, task_requires_sources
 from tools import registry
@@ -291,7 +296,17 @@ def apply_project_cwd_to_args(tool: str, args: dict, project_cwd: str | None) ->
     if tool == "find_file" and not args.get("root"):
         return {**args, "root": project_cwd}
 
+    if tool == "search_in_files" and not args.get("root"):
+        # Content search defaults to the active project so "where is X" answers
+        # about the repo the user selected, not their whole home directory.
+        return {**args, "root": project_cwd}
+
     if tool == "read_file" and args.get("path"):
+        path = Path(str(args["path"]))
+        if not path.is_absolute():
+            return {**args, "path": str(Path(project_cwd) / path)}
+
+    if tool == "read_document" and args.get("path"):
         path = Path(str(args["path"]))
         if not path.is_absolute():
             return {**args, "path": str(Path(project_cwd) / path)}
@@ -558,6 +573,71 @@ async def _execute_tool_text(tool: str, args: dict, emit: Callable[[dict], None]
         if result.get("truncated"):
             lines.append("(more matches omitted)")
         return "\n".join(lines)
+
+    elif tool == "search_in_files":
+        result = await asyncio.to_thread(
+            search_in_files, args["pattern"], args.get("root"), args.get("glob"),
+            regex=bool(args.get("regex")),
+        )
+        if result.get("error"):
+            return f"search_in_files error: {result['error']}"
+        if not result["matches"]:
+            return f"No content matches for {args['pattern']!r} under {result['root']}."
+        lines = [f"Content matches for {args['pattern']!r} under {result['root']}:"]
+        for m in result["matches"]:
+            lines.append(f"{m['path']}:{m['line']}: {m['text'].strip()}")
+        if result.get("truncated"):
+            lines.append("(more matches omitted)")
+        return "\n".join(lines)
+
+    elif tool == "read_document":
+        result = await asyncio.to_thread(read_document, args["path"], args.get("max_chars", 20000))
+        if result.get("error"):
+            return f"read_document error: {result['error']}"
+        header = f"Document: {result['path']}"
+        if result.get("pages"):
+            header += f" ({result['pages']} pages)"
+        note = "\n[...truncated...]" if result.get("truncated") else ""
+        return f"{header}\nText:\n{result['text']}{note}"
+
+    elif tool == "http_request":
+        result = await asyncio.to_thread(
+            http_request, args["url"], args.get("method", "GET"),
+            headers=args.get("headers"), json_body=args.get("json_body"),
+            params=args.get("params"),
+        )
+        if result.get("error"):
+            return f"http_request error: {result['error']}"
+        body = json.dumps(result["json"], ensure_ascii=False)[:4000] if "json" in result else result.get("text", "")
+        return f"HTTP {result['status']} {result.get('content_type', '')}\n{body}"
+
+    elif tool == "list_processes":
+        result = await asyncio.to_thread(
+            list_processes, args.get("filter_name"), args.get("limit", 40)
+        )
+        if result.get("error"):
+            return f"list_processes error: {result['error']}"
+        rows = result["processes"]
+        if not rows:
+            return "No matching processes."
+        lines = [f"Processes ({result.get('total', len(rows))} total, showing {len(rows)}):"]
+        for r in rows:
+            mem = f"{r['memory_kb'] // 1024} MB" if r.get("memory_kb") else "?"
+            lines.append(f"{r['pid']:>7}  {mem:>8}  {r['name']}")
+        return "\n".join(lines)
+
+    elif tool == "read_clipboard":
+        result = await asyncio.to_thread(read_clipboard)
+        if result.get("error"):
+            return f"read_clipboard error: {result['error']}"
+        text = result["text"]
+        return f"Clipboard ({len(text)} chars):\n{text[:4000]}" if text else "Clipboard is empty."
+
+    elif tool == "write_clipboard":
+        result = await asyncio.to_thread(write_clipboard, args["text"])
+        if result.get("error"):
+            return f"write_clipboard error: {result['error']}"
+        return f"Copied {result['chars']} characters to the clipboard."
 
     elif tool == "github_issues":
         return await asyncio.to_thread(

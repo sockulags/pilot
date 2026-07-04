@@ -25,6 +25,9 @@ class RegistryDerivationTests(unittest.TestCase):
                 "web_research", "web_search", "fetch_url",
                 # First-class file output (2026-07-02 eval finding)
                 "write_file",
+                # Added tools (2026-07-04 audit gap analysis)
+                "search_in_files", "read_document", "http_request",
+                "list_processes", "read_clipboard", "write_clipboard",
             },
             registry.coordinator_tool_names(),
         )
@@ -46,6 +49,9 @@ class RegistryDerivationTests(unittest.TestCase):
                 "list_dir", "read_file", "find_file", "list_windows", "focus_window",
                 "search_files", "github_issues", "github_prs", "github_repo",
                 "web_research", "web_search", "fetch_url", "generate_image",
+                "search_in_files", "read_document", "http_request",
+                "list_processes", "read_clipboard",
+                # write_clipboard is a side-effecting action, not deterministic
             },
             registry.deterministic_tool_names(),
         )
