@@ -1,0 +1,74 @@
+name: Bug report
+description: Something behaves incorrectly or crashes.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Pilot is a local desktop agent, so the exact
+        environment matters — please fill in the details below.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What went wrong, and what did you expect instead?
+      placeholder: The turn claimed the file was written, but no file exists on disk.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The exact message/action, and anything special about the setup.
+      placeholder: |
+        1. Send "save a list of my downloads to notes.txt"
+        2. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Answering backend
+      description: Which model backend was in use (PILOT_ANSWER_BACKEND / settings)?
+      options:
+        - ollama (default, local)
+        - openai / cloud provider
+        - mixed (per-role settings)
+        - not sure
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model(s)
+      description: e.g. gemma4:12b, gpt-4o-mini. Include the role if you pinned one.
+      placeholder: gemma4:12b
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS version, Python (`uv run python --version`), Ollama version, Node/pnpm.
+      placeholder: |
+        - OS: Windows 11 26200
+        - Python: 3.12.x
+        - Ollama: 0.x
+        - Node/pnpm: 22 / 10
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / output
+      description: >
+        Relevant backend console output or diagnostics. Scrub any secrets
+        (tokens, API keys) and personal file contents first.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I reproduced this on a clean, default (local Ollama) config, or noted which non-default settings are required.
+          required: false
+        - label: I searched existing issues and this isn't a duplicate.
+          required: true

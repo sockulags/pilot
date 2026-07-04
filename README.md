@@ -8,6 +8,13 @@ Pilot runs on your machine, on local [Ollama](https://ollama.com) models by defa
 
 ![A grounded task end-to-end: Pilot reasons about the next step, runs a PowerShell command, and answers from the verified command output — on a local gemma4:12b model](docs/screenshots/grounded-task.png)
 
+<!-- DEMO PLACEHOLDER: a short screencast (GIF/MP4) of one live turn — classify →
+     route → tool call → grounded answer — still needs to be recorded on a real
+     machine and dropped in at docs/screenshots/demo.gif, then linked here.
+     A static screenshot stands in above until then. -->
+> **Demo clip coming soon.** A short screencast of a full live turn will land at
+> `docs/screenshots/demo.gif`; the static screenshot above stands in for now.
+
 **Trust model / intended user:** a technically comfortable person running Pilot on their own machine, who wants an assistant that can actually touch their files, shell and screen — not a cloud chatbot — and accepts "it runs on my machine with my permissions." Pilot is a working personal agent and a public code sample, **not** a hosted multi-user product, and this README never claims production-grade reliability: see [Evaluation](#evaluation--measured-not-claimed) for what is actually measured.
 
 ---
@@ -57,6 +64,30 @@ WebSocket (api/ws.py)
               • task contracts gate the answer on real evidence
               └─ compose_reply (agents/orchestrator.py)
                     final answer, grounded in (bounded) gathered evidence
+```
+
+The same turn as a flow — WebSocket in, grounded reply out, with the coordinator's
+in-turn loop over tools and specialist experts in the middle:
+
+```mermaid
+flowchart TD
+    WS["WebSocket<br/>api/ws.py"] --> C["classify_turn<br/>agents/orchestrator.py"]
+    C --> R["RoutingDecision<br/>agents/routing.py<br/><i>explainable engine choice</i>"]
+    R --> COORD["run_coordinator<br/>agents/coordinator.py<br/><i>the front brain</i>"]
+
+    subgraph loop["in-turn loop (bounded by COORDINATOR_MAX_STEPS)"]
+        direction LR
+        COORD -->|tool| TOOLS["OS / web / desktop tools<br/>tools/registry.py"]
+        COORD -->|consult| EXPERTS["specialist models<br/>code · research · reasoning"]
+        COORD -->|perceive| PERC["screen perception<br/>Set-of-Marks"]
+        TOOLS -->|evidence| COORD
+        EXPERTS -->|evidence| COORD
+        PERC -->|evidence| COORD
+    end
+
+    COORD --> GATE["task contracts<br/>agents/task_contracts.py<br/><i>gate answer on real evidence</i>"]
+    GATE --> COMPOSE["compose_reply<br/>agents/orchestrator.py"]
+    COMPOSE --> OUT["grounded reply → WebSocket"]
 ```
 
 - **Coordinator ("front brain")** — a fast local model drives an in-turn loop: `consult` a specialist (code → `devstral`/`qwen2.5-coder`, research → `gpt-oss`, hard reasoning → `deepseek-r1`), `perceive` the screen, run a tool, `remember` a durable fact, `clarify`, or `answer`. Only models actually installed in Ollama are offered as experts (fail-closed inventory, `agents/model_inventory.py`).
@@ -195,6 +226,12 @@ Everything side-effecting flows through the same layered safety model (command-r
 ## MCP integration
 
 The backend exposes computer-control tools over MCP (`http://localhost:3001/mcp`, SSE): `pilot_screenshot`, `pilot_click`, `pilot_type`, `pilot_run_command`, `pilot_open_app`, file tools and more. Guard it with `PILOT_MCP_AUTH_TOKEN` before exposing beyond loopback.
+
+## Contributing
+
+Setup, tests (`uv run pytest`, `ruff`), running the eval, code layout and commit
+conventions live in [CONTRIBUTING.md](CONTRIBUTING.md). A one-command Windows
+bring-up is in [`scripts/dev.ps1`](scripts/README.md).
 
 ## License
 

@@ -15,6 +15,11 @@ the coordinator loop, task contracts, safety layers, model backends — see the
 
 ## 2. Run it
 
+**Shortcut (Windows):** `./scripts/dev.ps1` preflights the toolchain and the
+default model, installs frontend deps on first run, and launches both servers.
+Add `-SingleOrigin` for one-port mode. The manual steps below are what it wraps
+(see [`scripts/README.md`](scripts/README.md)).
+
 There are two ways to run. Pick one.
 
 ### A) Dev mode — two servers (for development)
