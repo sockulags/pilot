@@ -24,7 +24,6 @@ import {
   Tabs,
   ToolChip,
   Tooltip,
-  type Tone,
 } from "@/components/ui";
 
 /* ── showcase scaffolding ─────────────────────────────────────────── */
@@ -91,7 +90,6 @@ const TYPE = [
   ["--font-meta", "route=kod · gemma4:12b · 3 verktyg", { fontFamily: "var(--mono)", fontSize: "var(--fs-meta)", color: "var(--dim)" }],
 ];
 const ELEV = ["--shadow-sm", "--shadow-md", "--shadow-lg", "--shadow-xl"];
-const TONES: Tone[] = ["dim", "accent", "cyan", "green", "violet", "amber", "red"];
 
 /* ── page ─────────────────────────────────────────────────────────── */
 

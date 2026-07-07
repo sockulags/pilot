@@ -80,7 +80,6 @@ export function useDialogA11y(onClose: () => void) {
       previouslyFocused?.focus?.();
     };
     // Runs once per overlay open — onClose is read through onCloseRef.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return ref;
