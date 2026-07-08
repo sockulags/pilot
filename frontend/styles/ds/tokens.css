@@ -1,0 +1,168 @@
+/* ═══════════════════════════════════════════════════════════════════
+   PILOT DESIGN SYSTEM · token enrichment
+   Layered ON TOP of styles/tokens.css (the shipped base). This adds the
+   semantic aliases, type/space/motion scales and glow/focus tokens that
+   the DS component library (components/ui/*) reaches for. Base values
+   (bg, panel, accent, grad, radii, shadows) already live in tokens.css
+   and are NOT redefined here — only extended.
+   Source: Pilot Design System handoff (tokens/{colors,typography,
+   spacing,elevation}.css). Kept in sync with that spec.
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Signature gradient (conic variant for the hero mark) ── */
+  --grad-conic: conic-gradient(from 140deg, #4fd6e0, #7c8cff, #b69cff, #4fd6e0);
+
+  /* ── Tinted fills — translucent accent washes for chips/badges/live ── */
+  --fill-accent: rgba(124, 140, 255, .10);
+  --fill-cyan:   rgba(79, 214, 224, .12);
+  --fill-green:  rgba(84, 217, 140, .12);
+  --fill-violet: rgba(182, 156, 255, .12);
+  --fill-red:    rgba(240, 133, 124, .12);
+  --fill-amber:  rgba(246, 196, 83, .12);
+
+  /* ── On-accent ink (text/icons sitting on a gradient) ── */
+  --on-accent: #08090d;
+
+  /* ── Semantic colour aliases (reach for these in product) ── */
+  --text-strong:    #ffffff;
+  --text-body:      var(--text);
+  --text-muted:     var(--dim);
+  --text-faint:     var(--dim-2);
+
+  --surface-canvas: var(--bg);
+  --surface-card:   var(--panel);
+  --surface-inset:  var(--panel-2);
+  --surface-rail:   var(--bg-soft);
+
+  --line:           var(--border);
+  --line-strong:    var(--border-2);
+
+  --brand:          var(--accent);
+  --brand-2:        var(--cyan);
+
+  /* ── Type: families ── */
+  --serif:     "Newsreader", Georgia, "Times New Roman", serif; /* agent prose (Riktningar v2 · 3a) */
+  --font-ui:   var(--sans);
+  --font-prose: var(--serif);
+  --font-meta: var(--mono);
+  --font-code: var(--mono);
+
+  /* ── Type: scale (px — UI is built in px) ── */
+  --fs-greet:  36px;
+  --fs-h1:     20px;
+  --fs-h2:     17px;
+  --fs-lg:     15.5px;
+  --fs-body:   15px;
+  --fs-ui:     13.5px;
+  --fs-sm:     13px;
+  --fs-meta:   12px;
+  --fs-micro:  11px;
+  --fs-label:  10px;
+
+  /* ── Type: weights / line-heights / tracking ── */
+  --fw-regular: 400;
+  --fw-medium:  500;
+  --fw-semi:    600;
+  --fw-bold:    700;
+  --fw-black:   900;
+
+  --lh-tight: 1.15;
+  --lh-snug:  1.25;
+  --lh-ui:    1.4;
+  --lh-body:  1.6;
+  --lh-prose: 1.7;
+
+  --ls-display: -1px;
+  --ls-tight:   -0.2px;
+  --ls-label:   0.1em;
+  --ls-badge:   0.06em;
+
+  /* ── Spacing scale (compact, IDE-adjacent) ── */
+  --sp-0:  0;
+  --sp-1:  2px;
+  --sp-2:  5px;
+  --sp-3:  8px;
+  --sp-4:  11px;
+  --sp-5:  14px;
+  --sp-6:  18px;
+  --sp-7:  22px;   /* page gutter */
+  --sp-8:  26px;
+  --sp-9:  34px;
+  --sp-10: 48px;
+
+  /* ── Semantic spacing ── */
+  --gutter:      22px;
+  --gap-inline:  8px;
+  --gap-stack:   12px;
+  --turn-gap:    22px;
+  --pad-card:    14px;
+  --pad-control: 8px 14px;
+
+  /* ── Extra radius (composer box) ── */
+  --r-3xl: 18px;
+
+  /* ── Layout widths ── */
+  --measure-chat:   760px;
+  --measure-hero:   600px;
+  --w-drawer:       288px;
+  --w-modal:        920px;
+  --w-modal-narrow: 560px;
+  --bp-mobile:      820px;
+
+  /* ── Border widths ── */
+  --bw-hair: 1px;
+  --bw-1:    1.5px;
+  --bw-2:    2px;
+
+  /* ── Z layers ── */
+  --z-hairline:     70;
+  --z-drawer-scrim: 85;
+  --z-drawer:       86;
+  --z-scrim:        90;
+
+  /* ── Glows (accent-tinted, for focus & live states) ── */
+  --glow-focus:  0 14px 50px rgba(124,140,255,.16);
+  --glow-orb:    0 0 8px rgba(124,140,255,.60);
+  --glow-cyan:   0 0 7px rgba(79,214,224,.55);
+  --glow-green:  0 0 7px rgba(84,217,140,.55);
+  --glow-violet: 0 0 22px rgba(182,156,255,.50);
+
+  --inset-top: inset 0 1px 0 rgba(255,255,255,.03);
+
+  /* ── Focus ring (keyboard a11y for custom controls) ── */
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(124,140,255,.7);
+
+  /* ── Backdrop blur ── */
+  --blur-scrim: blur(4px);
+
+  /* ── Motion ── */
+  --dur-fast: .12s;
+  --dur-base: .18s;
+  --dur-slow: .28s;
+  --dur-rise: .35s;
+
+  --ease-out: cubic-bezier(.2, .9, .3, 1);
+  --ease-std: ease;
+
+  --press-scale: .97;
+  --hover-lift:  translateY(-1px);
+}
+
+/* ── DS signature keyframes ────────────────────────────────────────
+   Namespaced (ds-*) so the component library is self-contained and does
+   not depend on the app's animations.css. The global reduced-motion
+   reset in animations.css already neutralises these. */
+@keyframes ds-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.45); } }
+@keyframes ds-spin    { to { transform: rotate(360deg); } }
+@keyframes ds-rise    { from { opacity: 0; transform: translateY(8px); } }
+@keyframes ds-blink   { 50% { opacity: 0; } }
+@keyframes ds-slide   { to { background-position: 200% 0; } }
+
+/* Local reduced-motion guard so the DS layer is portable on its own. */
+@media (prefers-reduced-motion: reduce) {
+  [class^="ds-"], [class*=" ds-"] {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

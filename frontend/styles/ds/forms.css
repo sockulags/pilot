@@ -1,0 +1,61 @@
+/* ── Pilot DS · form primitives ───────────────────────────────────
+   Field · Select · Switch --------------------------------------- */
+
+/* ═══ Field (input / textarea) ═════════════════════════════════════ */
+.ds-field {
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: var(--r-md); color: var(--text);
+  font: var(--fs-sm) var(--sans); padding: 8px 10px;
+  transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
+}
+.ds-field--full { width: 100%; }
+.ds-field::placeholder { color: var(--dim-2); }
+.ds-field:hover:not(:disabled) { border-color: var(--border-2); }
+.ds-field:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--fill-accent); }
+.ds-field:disabled { opacity: .55; cursor: not-allowed; }
+.ds-field[aria-invalid="true"] { border-color: var(--del); }
+textarea.ds-field { resize: vertical; line-height: var(--lh-body); }
+
+/* ═══ Select (native + custom chevron) ═════════════════════════════ */
+.ds-select { position: relative; display: inline-flex; }
+.ds-select--full { display: flex; width: 100%; }
+.ds-select__el {
+  appearance: none; -webkit-appearance: none;
+  width: 100%;
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: var(--r-md); color: var(--text);
+  font: var(--fs-sm) var(--sans); padding: 8px 30px 8px 10px;
+  cursor: pointer;
+  transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
+}
+.ds-select__el:hover:not(:disabled) { border-color: var(--border-2); }
+.ds-select__el:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--fill-accent); }
+.ds-select__el:disabled { opacity: .55; cursor: not-allowed; }
+.ds-select__chevron {
+  position: absolute; right: 11px; top: 50%; transform: translateY(-50%);
+  pointer-events: none; color: var(--dim); font-size: 10px;
+}
+
+/* ═══ Switch ═══════════════════════════════════════════════════════ */
+.ds-switch-wrap { display: inline-flex; align-items: center; gap: var(--sp-3); cursor: pointer; }
+.ds-switch-wrap.is-disabled { opacity: .55; cursor: not-allowed; }
+.ds-switch-label { font-size: var(--fs-sm); color: var(--dim); }
+.ds-switch {
+  position: relative; flex-shrink: 0;
+  width: 34px; height: 20px; border-radius: var(--r-pill);
+  background: var(--panel-2); border: 1px solid var(--border);
+  transition: background var(--dur-base), border-color var(--dur-base);
+}
+.ds-switch__knob {
+  position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--dim); transition: transform var(--dur-base) var(--ease-out), background var(--dur-base);
+}
+.ds-switch.is-on { background: var(--grad); border-color: transparent; }
+.ds-switch.is-on .ds-switch__knob { transform: translateX(14px); background: var(--on-accent); }
+.ds-switch:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+@media (max-width: 768px) {
+  .ds-field, .ds-select__el { font-size: 16px; padding: 10px 12px; }
+  .ds-select__el { padding-right: 32px; }
+}

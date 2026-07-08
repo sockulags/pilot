@@ -1,0 +1,135 @@
+/* ── Pilot DS · core primitives ───────────────────────────────────
+   Button · IconButton · Badge · Pill · Chip · SegControl
+   Class-based (ds-*) so components stay inline-style-free and the
+   whole library is inspectable in one stylesheet. ----------------- */
+
+/* ═══ Button ═══════════════════════════════════════════════════════ */
+.ds-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: var(--sp-3);
+  font-family: var(--sans); font-weight: var(--fw-semi);
+  line-height: 1.2; white-space: nowrap;
+  border: 1px solid transparent; border-radius: var(--r-md);
+  transition: background var(--dur-fast), border-color var(--dur-fast),
+              transform var(--dur-fast), opacity var(--dur-fast), color var(--dur-fast);
+}
+.ds-btn--full { width: 100%; }
+.ds-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* sizes */
+.ds-btn--sm { padding: 6px 12px; font-size: 12.5px; border-radius: var(--r-sm); }
+.ds-btn--md { padding: 8px 14px; font-size: 13px;   border-radius: var(--r-md); }
+.ds-btn--lg { padding: 10px 18px; font-size: 14px;  border-radius: var(--r-lg); }
+
+/* variants */
+.ds-btn--primary { background: var(--grad); color: var(--on-accent); font-weight: var(--fw-bold); }
+.ds-btn--primary:not(:disabled):hover { transform: var(--hover-lift); }
+
+.ds-btn--secondary { background: transparent; color: var(--text); border-color: var(--border-2); }
+.ds-btn--secondary:not(:disabled):hover { background: var(--panel-2); border-color: transparent; }
+
+.ds-btn--ghost { background: transparent; color: var(--dim); }
+.ds-btn--ghost:not(:disabled):hover { background: var(--panel-2); color: var(--text); }
+
+.ds-btn--danger { background: transparent; color: var(--text); border-color: var(--border-2); }
+.ds-btn--danger:not(:disabled):hover { border-color: var(--del); color: var(--del); }
+
+/* ═══ IconButton ═══════════════════════════════════════════════════ */
+.ds-iconbtn {
+  position: relative; flex-shrink: 0;
+  display: grid; place-items: center;
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  color: var(--dim);
+  transition: color var(--dur-fast), border-color var(--dur-fast), background var(--dur-fast);
+}
+.ds-iconbtn--sm { width: 28px; height: 28px; font-size: 13px; }
+.ds-iconbtn--md { width: 32px; height: 32px; font-size: 14px; }
+.ds-iconbtn--lg { width: 40px; height: 40px; font-size: 16px; }
+.ds-iconbtn:not(:disabled):hover { color: var(--text); border-color: var(--border-2); }
+.ds-iconbtn.is-active { color: var(--text); border-color: var(--border-2); background: var(--panel-2); }
+.ds-iconbtn:disabled { opacity: .5; cursor: not-allowed; }
+
+.ds-iconbtn__badge {
+  position: absolute; top: -5px; right: -5px;
+  min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px;
+  background: var(--accent); color: var(--on-accent);
+  font: var(--fw-bold) 9px var(--mono);
+  display: grid; place-items: center;
+}
+
+/* ═══ Badge ════════════════════════════════════════════════════════ */
+.ds-badge {
+  --tone: var(--dim); --tone-fill: transparent;
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--mono); font-size: var(--fs-micro); line-height: 1;
+  color: var(--tone);
+}
+.ds-badge--label {
+  padding: 3px 7px; border-radius: var(--r-xs);
+  border: 1px solid var(--border); background: rgba(20,21,27,.45);
+}
+.ds-badge--soft {
+  padding: 4px 10px; border-radius: var(--r-pill);
+  background: var(--tone-fill); border: 1px solid transparent;
+}
+
+.ds-badge.is-dim    { --tone: var(--dim);    --tone-fill: rgba(136,139,153,.10); }
+.ds-badge.is-accent { --tone: #aeb7ff;       --tone-fill: var(--fill-accent); }
+.ds-badge.is-cyan   { --tone: var(--cyan);   --tone-fill: var(--fill-cyan); }
+.ds-badge.is-green  { --tone: var(--green);  --tone-fill: var(--fill-green); }
+.ds-badge.is-violet { --tone: var(--violet); --tone-fill: var(--fill-violet); }
+.ds-badge.is-amber  { --tone: var(--amber);  --tone-fill: var(--fill-amber); }
+.ds-badge.is-red    { --tone: var(--red);    --tone-fill: var(--fill-red); }
+
+/* ═══ Pill ═════════════════════════════════════════════════════════ */
+.ds-pill {
+  display: inline-flex; align-items: center; gap: var(--sp-3);
+  font-family: var(--mono); font-size: 11.5px; color: var(--dim);
+  padding: 5px 11px; border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  transition: color var(--dur-fast), border-color var(--dur-fast);
+}
+button.ds-pill:hover { color: var(--text); border-color: var(--border-2); }
+.ds-pill__orb {
+  --orb: var(--grad);
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--orb); box-shadow: var(--glow-orb); flex-shrink: 0;
+}
+.ds-pill__orb.is-green  { --orb: var(--green);  box-shadow: var(--glow-green); }
+.ds-pill__orb.is-cyan   { --orb: var(--cyan);   box-shadow: var(--glow-cyan); }
+.ds-pill__orb.is-amber  { --orb: var(--amber);  box-shadow: 0 0 7px rgba(246,196,83,.55); }
+.ds-pill__orb.is-red    { --orb: var(--red);    box-shadow: 0 0 7px rgba(240,133,124,.55); }
+.ds-pill.is-busy .ds-pill__orb { animation: ds-breathe 1.1s infinite; }
+
+/* ═══ Chip ═════════════════════════════════════════════════════════ */
+.ds-chip {
+  font-size: var(--fs-sm);
+  border-radius: var(--r-pill); padding: 8px 15px;
+  border: 1px solid var(--border);
+  transition: color var(--dur-fast), border-color var(--dur-fast), transform var(--dur-fast), background var(--dur-fast);
+}
+.ds-chip--ghost { color: var(--dim); background: transparent; }
+.ds-chip--ghost:hover { color: var(--text); border-color: var(--border-2); transform: var(--hover-lift); }
+.ds-chip--reply { color: #cdd3ff; border-color: rgba(124,140,255,.3); background: rgba(20,21,27,.5); }
+.ds-chip--reply:hover { color: var(--text); border-color: var(--accent); transform: var(--hover-lift); }
+
+/* ═══ SegControl ═══════════════════════════════════════════════════ */
+.ds-seg {
+  display: inline-flex; gap: 3px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: var(--r-md); padding: 3px;
+}
+.ds-seg--wrap { flex-wrap: wrap; }
+.ds-seg__opt {
+  font-family: var(--mono); font-size: var(--fs-meta); color: var(--dim);
+  padding: 5px 10px; border-radius: 6px;
+  transition: background var(--dur-fast), color var(--dur-fast);
+}
+.ds-seg__opt:hover { color: var(--text); }
+.ds-seg__opt.is-active { background: var(--panel); color: var(--text); }
+
+@media (max-width: 768px) {
+  .ds-iconbtn--md { width: var(--tap); height: var(--tap); font-size: 16px; }
+  /* Comfortable thumb targets for the empty-state suggestion chips. */
+  .ds-chip { padding: 11px 16px; }
+}

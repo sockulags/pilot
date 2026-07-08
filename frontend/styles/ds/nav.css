@@ -1,0 +1,20 @@
+/* ── Pilot DS · navigation primitives ─────────────────────────────
+   Tabs ---------------------------------------------------------- */
+
+.ds-tabs {
+  display: flex; gap: 2px;
+  border-bottom: 1px solid var(--border);
+}
+.ds-tab {
+  position: relative;
+  font: var(--fs-sm) var(--sans); color: var(--dim);
+  padding: 9px 14px;
+  transition: color var(--dur-fast);
+}
+.ds-tab:hover { color: var(--text); }
+.ds-tab.is-active { color: var(--text); }
+.ds-tab.is-active::after {
+  content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px;
+  height: 2px; border-radius: 2px 2px 0 0; background: var(--grad);
+}
+.ds-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-xs); }

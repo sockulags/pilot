@@ -8,6 +8,7 @@ import JobsPanel from "@/components/JobsPanel";
 import SettingsPanel from "@/components/SettingsPanel";
 import { ToastProvider, useToast } from "@/components/Toast";
 import Dialog, { useDialogA11y } from "@/components/Dialog";
+import { Button, Chip } from "@/components/ui";
 import { t } from "@/app/strings";
 
 export type Route = "chat" | "computer" | "code";
@@ -281,9 +282,9 @@ function ContextModal({
           <p className="ctxhint">
             {compacted ? `Fokusvy aktiv. ${hiddenCount} äldre inlägg är dolda i UI:t, men finns kvar i den underliggande sessionen.` : "Fokusvy visar bara de senaste turerna för att minska visuellt brus utan att kasta bort sessionen."}
           </p>
-          <div className="ctxacts">
-            <button onClick={onCompactView}>{compacted ? "Uppdatera fokusvy" : "Kompaktera vy"}</button>
-            <button className="danger" onClick={onClearContext}>Ny konversation</button>
+          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            <Button variant="secondary" fullWidth onClick={onCompactView}>{compacted ? "Uppdatera fokusvy" : "Kompaktera vy"}</Button>
+            <Button variant="danger" fullWidth onClick={onClearContext}>Ny konversation</Button>
           </div>
         </div>
     </Dialog>
@@ -901,9 +902,9 @@ function Workspace() {
               <p className="tag">{t.hero.tagline}</p>
               <div className="ghosts">
                 {HERO_SUGGESTIONS.map((suggestion) => (
-                  <button key={suggestion} className="ghost" onClick={() => handleSend(suggestion)}>
+                  <Chip key={suggestion} onClick={() => handleSend(suggestion)}>
                     {suggestion}
-                  </button>
+                  </Chip>
                 ))}
               </div>
               <ChatInput onSend={handleSend} onAbort={handleAbort} onOpenContext={() => setContextOpen(true)} disabled={wsStatus !== "connected"} running={running} />
