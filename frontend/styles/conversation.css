@@ -157,6 +157,17 @@
 .prose code         { font: 13px var(--mono); background: var(--panel-2); padding: 1px 6px; border-radius: var(--r-xs); }
 .prose strong       { color: #fff; font-weight: 650; }
 
+/* ── agent answer: serif "typeset" prose (DS conversation-detail 3a) ──
+   The agent's spoken prose is set in the serif voice; identifiers/code stay
+   mono, user messages stay sans. Only the reading measure is capped so wide
+   code blocks and tables are unaffected. */
+.prose--answer            { font-family: var(--font-prose); font-size: 17px; line-height: 1.75; color: #e6e8f0; }
+.prose--answer p,
+.prose--answer li         { max-width: 64ch; }
+.prose--answer h1,
+.prose--answer h2,
+.prose--answer h3         { letter-spacing: -.2px; }
+
 /* streaming cursor */
 .cur {
   display: inline-block; width: 8px; height: 16px;
@@ -172,6 +183,7 @@
   .turn .rail { width: 20px; }
   .turn .rail .mk { width: 20px; height: 20px; font-size: 11px; }
   .prose { font-size: 14.5px; }
+  .prose--answer { font-size: 16px; line-height: 1.7; }
   .toolchip {
     width: 100%;
     justify-content: space-between;

@@ -44,8 +44,11 @@ const components: Components = {
 };
 
 export default function Markdown({ children }: { children: string }) {
+  // `prose--answer` sets the agent's spoken prose in the serif voice
+  // (--font-prose), per the DS conversation-detail iteration. Raw tool/text
+  // output uses the bare `.prose` class and stays sans.
   return (
-    <div className="prose">
+    <div className="prose prose--answer">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {children}
       </ReactMarkdown>

@@ -41,8 +41,14 @@
   --brand:          var(--accent);
   --brand-2:        var(--cyan);
 
-  /* ── Type: families ── */
-  --serif:     "Newsreader", Georgia, "Times New Roman", serif; /* agent prose (Riktningar v2 · 3a) */
+  /* ── Type: families ──
+     --font-newsreader / --font-jetbrains are injected by next/font in
+     app/layout.tsx. They lead the stacks so the DS brand faces render when
+     loaded and gracefully fall back to the shipped system stacks otherwise.
+     Overriding --mono here (defined in the base tokens.css) upgrades the
+     whole app's mono "meta voice" to JetBrains Mono. */
+  --mono:      var(--font-jetbrains), "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+  --serif:     var(--font-newsreader), "Newsreader", Georgia, "Times New Roman", serif; /* agent prose (Riktningar v2 · 3a) */
   --font-ui:   var(--sans);
   --font-prose: var(--serif);
   --font-meta: var(--mono);
