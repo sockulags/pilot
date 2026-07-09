@@ -1,0 +1,13 @@
+/* ═══════════════════════════════════════════════════════════════════
+   PILOT DESIGN SYSTEM · stylesheet entry point
+   Imported once from app/globals.css. Layers the DS token enrichment and
+   the component library CSS on top of the shipped base tokens. All classes
+   are namespaced ds-* and never collide with the app's product CSS.
+   ═══════════════════════════════════════════════════════════════════ */
+
+@import "./ds/tokens.css";
+@import "./ds/core.css";
+@import "./ds/forms.css";
+@import "./ds/feedback.css";
+@import "./ds/nav.css";
+@import "./ds/brand.css";

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Project, Agent, ModelOption, AgentRoleOption } from "@/app/page";
 import { useToast } from "@/components/Toast";
+import { Badge, Button, Card, CardHead, Field, SectionLabel, SegControl, Select } from "@/components/ui";
 import { t } from "@/app/strings";
 
 const RECENT_KEY = "pilot_recent_paths";
@@ -71,34 +72,39 @@ export default function ProjectBar({ projects, selected, agent, modelMode, model
 
   const submitAdd = () => addPath(path);
 
+  const projectOptions = [
+    { value: "", label: "— inget valt —" },
+    ...projects.map((p) => ({ value: p.id, label: p.name, title: p.path })),
+  ];
+  const modelOptions = [
+    { value: "auto", label: "Auto (väljer själv)" },
+    ...models.map((m) => ({ value: m.id, label: m.label, title: m.hint })),
+  ];
+  const unseenRecent = recent.filter((p) => !projects.some((proj) => proj.path === p));
+
   return (
     <div className="control-grid">
-      <section className="control-card">
-        <div className="control-head">
-          <span className="seclabel">Projekt</span>
+      <Card inset>
+        <CardHead>
+          <SectionLabel>Projekt</SectionLabel>
           {selectedProj && (
-            <button className="control-pill danger" onClick={() => onRemove(selectedProj.id)} title="Ta bort projekt">
+            <Button variant="danger" size="sm" onClick={() => onRemove(selectedProj.id)} title="Ta bort projekt">
               Ta bort
-            </button>
+            </Button>
           )}
-        </div>
-        <select
+        </CardHead>
+        <Select
+          options={projectOptions}
           value={selectedProj?.id ?? ""}
-          onChange={(e) => onSelect(e.target.value)}
-          className="fld"
-        >
-          <option value="">— inget valt —</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id} title={p.path}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+          onChange={onSelect}
+          fullWidth
+          aria-label="Projekt"
+        />
         {selectedProj && <div className="pathline" title={selectedProj.path}>{selectedProj.path}</div>}
         {adding ? (
           <>
-            <div className="addrow">
-              <input
+            <div className="addrow" style={{ marginTop: 10 }}>
+              <Field
                 value={path}
                 onChange={(e) => {
                   setPath(e.target.value);
@@ -114,101 +120,85 @@ export default function ProjectBar({ projects, selected, agent, modelMode, model
                     setError("");
                   }
                 }}
-                placeholder="C:\\sökväg\\till\\projekt"
+                placeholder="C:\sökväg\till\projekt"
                 autoFocus
-                aria-invalid={error ? true : undefined}
-                className="fld"
+                invalid={!!error}
+                fullWidth
               />
-              <button className="control-pill on" onClick={submitAdd}>Lägg till</button>
+              <Button variant="primary" size="sm" onClick={submitAdd}>Lägg till</Button>
             </div>
             {error && <div className="form-error" role="alert">{error}</div>}
-            {recent.filter((p) => !projects.some((proj) => proj.path === p)).length > 0 && (
+            {unseenRecent.length > 0 && (
               <div className="control-list">
-                <span className="seclabel">{t.projects.recentPaths}</span>
-                <div className="control-inline">
-                  {recent
-                    .filter((p) => !projects.some((proj) => proj.path === p))
-                    .map((p) => (
-                      <button key={p} className="control-pill" title={p} onClick={() => addPath(p)}>
-                        {p.split(/[\\/]/).filter(Boolean).at(-1) ?? p}
-                      </button>
-                    ))}
+                <SectionLabel>{t.projects.recentPaths}</SectionLabel>
+                <div className="control-inline" style={{ marginTop: 8 }}>
+                  {unseenRecent.map((p) => (
+                    <Button key={p} variant="secondary" size="sm" title={p} onClick={() => addPath(p)}>
+                      {p.split(/[\\/]/).filter(Boolean).at(-1) ?? p}
+                    </Button>
+                  ))}
                 </div>
               </div>
             )}
           </>
         ) : (
-          <button className="control-pill" onClick={() => setAdding(true)}>{t.projects.addProject}</button>
+          <Button variant="ghost" size="sm" onClick={() => setAdding(true)} style={{ marginTop: 10 }}>{t.projects.addProject}</Button>
         )}
-      </section>
+      </Card>
 
-      <section className="control-card">
-        <div className="control-head">
-          <span className="seclabel" title="Auto = Pilot väljer rutt per fråga. Annars tvingas läget.">Rutt</span>
-        </div>
-        <div className="control-inline">
-          {ROUTE_MODES.map((r) => (
-            <button
-              key={r.id}
-              onClick={() => onSelectRoute(r.id)}
-              className={`control-pill${routeMode === r.id ? " on" : ""}`}
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
-      </section>
+      <Card inset>
+        <CardHead>
+          <SectionLabel title="Auto = Pilot väljer rutt per fråga. Annars tvingas läget.">Rutt</SectionLabel>
+        </CardHead>
+        <SegControl
+          options={ROUTE_MODES.map((r) => ({ value: r.id, label: r.label }))}
+          value={routeMode}
+          onChange={onSelectRoute}
+          wrap
+          aria-label="Rutt"
+        />
+      </Card>
 
-      <section className="control-card">
-        <div className="control-head">
-          <span className="seclabel">Modell</span>
-        </div>
-        <select
+      <Card inset>
+        <CardHead>
+          <SectionLabel>Modell</SectionLabel>
+        </CardHead>
+        <Select
+          options={modelOptions}
           value={modelMode}
-          onChange={(e) => onSelectModel(e.target.value)}
+          onChange={onSelectModel}
+          fullWidth
           title="Auto = Pilot väljer bästa lokala modell per fråga. Annars låses modellen."
-          className="fld"
-        >
-          <option value="auto">Auto (väljer själv)</option>
-          {models.map((m) => (
-            <option key={m.id} value={m.id} title={m.hint}>
-              {m.label}
-            </option>
-          ))}
-        </select>
+          aria-label="Modell"
+        />
         <div className="control-list">
           {agentRoles.map((role) => (
             <div key={role.role} className="mrow">
               <div className="mi">{role.available ? "◔" : "!"}</div>
-              <div>
+              <div style={{ minWidth: 0, flex: 1 }}>
                 <div className="mt">{role.label}</div>
                 <div className="ms">
                   {role.model_label}
                   {!role.available && ` (${role.model} saknas)`}
                 </div>
               </div>
+              {!role.available && <Badge variant="soft" tone="amber">saknas</Badge>}
             </div>
           ))}
         </div>
-      </section>
+      </Card>
 
-      <section className="control-card">
-        <div className="control-head">
-          <span className="seclabel">Agent</span>
-        </div>
-        <div className="control-inline">
-          {AGENTS.map((a) => (
-            <button
-              key={a.id}
-              onClick={() => onSelectAgent(a.id as Agent)}
-              title={`Kör kod-uppgifter med ${a.label}`}
-              className={`control-pill${agent === a.id ? " on" : ""}`}
-            >
-              {a.label}
-            </button>
-          ))}
-        </div>
-      </section>
+      <Card inset>
+        <CardHead>
+          <SectionLabel>Agent</SectionLabel>
+        </CardHead>
+        <SegControl
+          options={AGENTS.map((a) => ({ value: a.id, label: a.label }))}
+          value={agent}
+          onChange={(v) => onSelectAgent(v as Agent)}
+          aria-label="Kodagent"
+        />
+      </Card>
     </div>
   );
 }

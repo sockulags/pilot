@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Job, JobSchedule } from "@/app/page";
 import Dialog from "@/components/Dialog";
 import { useToast } from "@/components/Toast";
+import { Button, cn, Field, SectionLabel, SegControl, Select } from "@/components/ui";
 import { t } from "@/app/strings";
 
 interface Props {
@@ -101,41 +102,61 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
             ))
           )}
 
-          <div className="seclabel">{t.jobs.newJob}</div>
-          <div className="seg2" style={{ marginBottom: 10 }}>
-            <button className={kind === "reminder" ? "on" : ""} onClick={() => setKind("reminder")}>{t.jobs.reminderKind}</button>
-            <button className={kind === "task" ? "on" : ""} onClick={() => setKind("task")}>{t.jobs.taskKind}</button>
+          <SectionLabel style={{ display: "block", margin: "16px 0 9px" }}>{t.jobs.newJob}</SectionLabel>
+          <div style={{ marginBottom: 10 }}>
+            <SegControl
+              options={[{ value: "reminder", label: t.jobs.reminderKind }, { value: "task", label: t.jobs.taskKind }]}
+              value={kind}
+              onChange={(v) => setKind(v as "reminder" | "task")}
+              aria-label="Jobbtyp"
+            />
           </div>
 
           <div className="jadd" style={{ marginBottom: 10 }}>
-            <select className="fld" value={stype} onChange={(e) => setStype(e.target.value as SType)}>
-              <option value="interval">Intervall</option>
-              <option value="daily">Dagligen</option>
-              <option value="weekly">Veckodagar</option>
-              <option value="once">En gång</option>
-            </select>
+            <Select
+              options={[
+                { value: "interval", label: "Intervall" },
+                { value: "daily", label: "Dagligen" },
+                { value: "weekly", label: "Veckodagar" },
+                { value: "once", label: "En gång" },
+              ]}
+              value={stype}
+              onChange={(v) => setStype(v as SType)}
+              aria-label="Schematyp"
+            />
 
             {stype === "interval" && (
               <>
-                <input className="fld" type="number" min={1} value={intervalN} onChange={(e) => setIntervalN(Number(e.target.value))} style={{ width: 90 }} />
-                <select className="fld" value={unit} onChange={(e) => setUnit(e.target.value as keyof typeof UNIT_SECONDS)}>
-                  <option value="min">min</option>
-                  <option value="h">timme</option>
-                  <option value="dygn">dygn</option>
-                </select>
+                <Field type="number" min={1} value={intervalN} onChange={(e) => setIntervalN(Number(e.target.value))} style={{ width: 90 }} aria-label="Antal" />
+                <Select
+                  options={[
+                    { value: "min", label: "min" },
+                    { value: "h", label: "timme" },
+                    { value: "dygn", label: "dygn" },
+                  ]}
+                  value={unit}
+                  onChange={(v) => setUnit(v as keyof typeof UNIT_SECONDS)}
+                  aria-label="Enhet"
+                />
               </>
             )}
 
-            {stype === "once" && <input className="fld" type="date" value={date} onChange={(e) => setDate(e.target.value)} />}
+            {stype === "once" && <Field type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Datum" />}
             {(stype === "daily" || stype === "weekly" || stype === "once") && (
-              <input className="fld" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+              <Field type="time" value={time} onChange={(e) => setTime(e.target.value)} aria-label="Tid" />
             )}
           </div>
 
           {stype === "weekly" && (
-            <div className="seg2" style={{ marginBottom: 10, flexWrap: "wrap" }}>
+            <div className="ds-seg ds-seg--wrap" role="group" aria-label="Veckodagar" style={{ marginBottom: 10 }}>
               {WEEKDAYS.map((label, idx) => (
-                <button key={label} className={weekdays.includes(idx) ? "on" : ""} onClick={() => toggleDay(idx)}>
+                <button
+                  key={label}
+                  type="button"
+                  className={cn("ds-seg__opt", weekdays.includes(idx) && "is-active")}
+                  aria-pressed={weekdays.includes(idx)}
+                  onClick={() => toggleDay(idx)}
+                >
                   {label}
                 </button>
               ))}
@@ -143,8 +164,7 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
           )}
 
           <div className="jadd">
-            <input
-              className="fld"
+            <Field
               value={payload}
               onChange={(e) => {
                 setPayload(e.target.value);
@@ -157,10 +177,10 @@ export default function JobsPanel({ jobs, onClose, onAdd, onPause, onResume, onD
                 }
               }}
               placeholder={kind === "task" ? t.jobs.instructionPlaceholder : t.jobs.reminderPlaceholder}
-              aria-invalid={error ? true : undefined}
+              invalid={!!error}
               style={{ flex: 1 }}
             />
-            <button className="addbtn" onClick={submit}>{t.common.add}</button>
+            <Button variant="primary" size="md" onClick={submit}>{t.common.add}</Button>
           </div>
           {error && <div className="form-error" role="alert">{error}</div>}
         </div>
