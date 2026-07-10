@@ -40,7 +40,9 @@ uv run ruff check .
 
 # Frontend (only if you touched frontend/)
 cd frontend
-pnpm build          # or `pnpm lint` for a type-check only
+pnpm lint           # tsc --noEmit + eslint (type-check and lint)
+pnpm test           # Vitest unit tests
+pnpm build          # production build
 ```
 
 ### Running the eval
