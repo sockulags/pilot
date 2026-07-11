@@ -134,6 +134,8 @@ Layered, each enforced in code and covered by tests:
 
 The eval suite treats the safety layers as **pass/fail gates** — a single injection or confirmation-gate failure fails the whole suite regardless of the average score.
 
+For how to report a suspected security issue, the trust model, and what counts as a security issue versus a deliberate limitation, see [SECURITY.md](SECURITY.md). The table above stays the source of truth for the layer detail; SECURITY.md summarizes it and links back here.
+
 ---
 
 ## Evaluation — measured, not claimed
