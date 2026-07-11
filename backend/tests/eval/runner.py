@@ -87,6 +87,7 @@ class Scenario:
     # live vision call (runner previously left perceive un-stubbed — audit
     # 2026-07-04), and lets adversarial scenarios inject hostile screen text.
     perceive_output: str = "Screen observation: a plain desktop. Elements: [1] Start"
+    perception_context_exhausted: bool = False
 
     # --- coordinator-path knobs (mirror run_coordinator kwargs) ---
     task_contract_intent: str | None = None
@@ -107,6 +108,7 @@ class Scenario:
     expect_evidence_tools: list[str] | None = None  # tools with recorded evidence
     expect_contract_satisfied: bool | None = None
     expect_final_answer_allowed: bool | None = None
+    expect_perception_attempts: int | None = None
     final_must_contain: list[str] = field(default_factory=list)
     final_must_not_contain: list[str] = field(default_factory=list)
 
@@ -132,6 +134,7 @@ class ScenarioResult:
     final_answer_allowed: bool | None = None
     final_text: str = ""
     runtime_state: Any = None
+    perception_attempts: int = 0
 
 
 # --------------------------------------------------------------------------- #
@@ -218,6 +221,7 @@ async def _run_coordinator(scenario: Scenario) -> ScenarioResult:
 
     events: list[dict] = []
     called: list[str] = []
+    perception_attempts = 0
 
     async def fake_consult(model, task, refined, conversation, emit, abort, evidence=""):
         return scenario.consult_reply or "(stub expert answer)"
@@ -228,7 +232,12 @@ async def _run_coordinator(scenario: Scenario) -> ScenarioResult:
         return "eval-mem-id"
 
     async def fake_perceive(task, history, emit):
-        return scenario.perceive_output
+        nonlocal perception_attempts
+        perception_attempts += 1
+        return coordinator.agent_loop.PerceptionResult(
+            scenario.perceive_output,
+            context_exhausted=scenario.perception_context_exhausted,
+        )
 
     patches = [
         mock.patch.object(coordinator, "available_expert_models", new=_av(scenario.experts)),
@@ -296,6 +305,7 @@ async def _run_coordinator(scenario: Scenario) -> ScenarioResult:
         final_answer_allowed=final_allowed,
         final_text=final_text,
         runtime_state=runtime_state,
+        perception_attempts=perception_attempts,
     )
 
 
@@ -354,6 +364,12 @@ def assert_scenario(scenario: Scenario, result: ScenarioResult) -> list[str]:
     if scenario.expect_status is not None:
         check(result.status == scenario.expect_status,
               f"status={result.status!r} expected {scenario.expect_status!r}")
+    if scenario.expect_perception_attempts is not None:
+        check(
+            result.perception_attempts == scenario.expect_perception_attempts,
+            f"perception_attempts={result.perception_attempts!r} "
+            f"expected {scenario.expect_perception_attempts!r}",
+        )
     if scenario.expect_tools_called is not None:
         for tool in scenario.expect_tools_called:
             check(tool in result.tools_called,

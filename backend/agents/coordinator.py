@@ -904,11 +904,25 @@ async def run_coordinator(
             continue
 
         if action == "perceive":
-            last_observation = await agent_loop.perceive(task, history, emit)
+            perception = agent_loop.normalize_perception(
+                await agent_loop.perceive(task, history, emit)
+            )
+            last_observation = perception.observation
             notes.append(f"Screen observation:\n{last_observation[:1200]}")
             # Record the observation as evidence so action+verify contracts (e.g.
             # desktop_action) can confirm a post-action screen check happened.
-            runtime_state.record_tool_result("perceive", {}, last_observation, ok=True)
+            runtime_state.record_tool_result(
+                "perceive", {}, last_observation,
+                ok=bool(last_observation) and not perception.context_exhausted,
+            )
+            if perception.context_exhausted:
+                error = (
+                    "Perception stopped: vision context overflow persisted after the single "
+                    "allowed compacted retry."
+                )
+                emit(make_event("error", content=error))
+                runtime_state.record_error(error, "perceive", {})
+                return LoopOutcome("error", _render_notes(notes), error, runtime_state)
             continue
 
         # action == "tool"
@@ -1039,9 +1053,23 @@ async def run_coordinator(
             if target:
                 written_paths.add(target)
         if tool in agent_loop.POST_ACTION_OBSERVE_TOOLS:
-            last_observation = await agent_loop.perceive(task, history, emit)
+            perception = agent_loop.normalize_perception(
+                await agent_loop.perceive(task, history, emit)
+            )
+            last_observation = perception.observation
             # Record the post-action observation as evidence (action+verify).
-            runtime_state.record_tool_result("perceive", {}, last_observation, ok=True)
+            runtime_state.record_tool_result(
+                "perceive", {}, last_observation,
+                ok=bool(last_observation) and not perception.context_exhausted,
+            )
+            if perception.context_exhausted:
+                error = (
+                    "Post-action perception stopped: vision context overflow persisted after "
+                    "the single allowed compacted retry."
+                )
+                emit(make_event("error", content=error))
+                runtime_state.record_error(error, "perceive", {})
+                return LoopOutcome("error", _render_notes(notes), error, runtime_state)
         await asyncio.sleep(0.2)
 
     return LoopOutcome(

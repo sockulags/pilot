@@ -4,11 +4,47 @@ import platform
 import httpx
 import model_settings
 from agents import providers
+from agents.context_manager import is_context_overflow, manage_request
 from agents.json_utils import extract_json_object
 from agents.model_inventory import resolve_context_budget
 from config import OLLAMA_MODEL, OLLAMA_VISION_MODEL
 
 logger = logging.getLogger(__name__)
+
+
+async def _post_local_vision(messages: list[dict], *, timeout: int) -> dict:
+    """Budget a local image request and retry one normalized overflow once."""
+    window = resolve_context_budget(OLLAMA_VISION_MODEL, "vision")
+    managed = manage_request(messages, context_window=window)
+    logger.info("local vision context plan: %s", managed.report)
+    payload = {
+        "model": OLLAMA_VISION_MODEL,
+        "messages": managed.messages,
+        "stream": False,
+        "think": False,
+        "options": {
+            "num_ctx": window,
+            "num_predict": managed.report.completion_reserve,
+        },
+    }
+    base_url = model_settings.ollama_base_url()
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(f"{base_url}/api/chat", json=payload)
+        try:
+            resp.raise_for_status()
+        except Exception as exc:
+            if not is_context_overflow(exc):
+                raise
+            retry = manage_request(
+                messages, context_window=window, force_compact=True, retry=True,
+                completion_reserve=managed.report.completion_reserve,
+            )
+            logger.info("local vision context retry plan: %s", retry.report)
+            payload["messages"] = retry.messages
+            payload["options"]["num_predict"] = retry.report.completion_reserve
+            resp = await client.post(f"{base_url}/api/chat", json=payload)
+            resp.raise_for_status()
+    return resp.json()
 
 PARSE_ERROR_DEFAULT = {"tool": "done", "args": {"summary": "parse error — agenten kunde inte tolka modellsvaret"}, "thinking": "parse error"}
 
@@ -183,23 +219,11 @@ async def vision_done_summary(task: str, image_b64: str) -> str:
     # cloud provider, so this is NOT routed through providers.chat_once (which can
     # dispatch to OpenAI/cloud). We only honour a custom Ollama URL via
     # model_settings.ollama_base_url() instead of the hardcoded env default.
-    base_url = model_settings.ollama_base_url()
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            f"{base_url}/api/chat",
-            json={
-                "model": OLLAMA_VISION_MODEL,
-                "messages": messages,
-                "stream": False,
-                "think": False,
-                "options": {"num_ctx": resolve_context_budget(OLLAMA_VISION_MODEL, "vision")},
-            },
-        )
-        resp.raise_for_status()
-        content = (resp.json().get("message", {}).get("content") or "").strip()
-        if not content:
-            raise RuntimeError("Vision model returned an empty visible answer")
-        return content
+    data = await _post_local_vision(messages, timeout=120)
+    content = (data.get("message", {}).get("content") or "").strip()
+    if not content:
+        raise RuntimeError("Vision model returned an empty visible answer")
+    return content
 
 
 async def analyze_screenshot(task: str, image_b64: str, history: list[dict]) -> str:
@@ -225,23 +249,8 @@ async def analyze_screenshot(task: str, image_b64: str, history: list[dict]) -> 
     # machine, so this is NOT routed through providers.chat_once (which can
     # dispatch to a cloud backend). We only honour a custom Ollama URL via
     # model_settings.ollama_base_url() instead of the hardcoded env default.
-    base_url = model_settings.ollama_base_url()
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            f"{base_url}/api/chat",
-            json={
-                "model": OLLAMA_VISION_MODEL,
-                "messages": messages,
-                "stream": False,
-                # Thinking-capable Ollama models may otherwise spend the whole
-                # response budget in message.thinking and leave content empty.
-                "think": False,
-                "options": {"num_ctx": resolve_context_budget(OLLAMA_VISION_MODEL, "vision")},
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        content = (data.get("message", {}).get("content") or "").strip()
-        if not content:
-            raise RuntimeError("Vision model returned an empty visual description")
-        return content
+    data = await _post_local_vision(messages, timeout=120)
+    content = (data.get("message", {}).get("content") or "").strip()
+    if not content:
+        raise RuntimeError("Vision model returned an empty visual description")
+    return content

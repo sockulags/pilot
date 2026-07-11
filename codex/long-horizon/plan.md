@@ -11,7 +11,7 @@ Touched areas: `backend/config.py`, `backend/agents/model_inventory.py`, `backen
 Acceptance criteria: all criteria in #62, including full-screen vision at >=8192, clamping, cloud-routing preservation, and deterministic tests.
 Validation commands: `cd backend; uv run pytest -q; uv run pytest -q -m eval; uv run ruff check .`; focused live Ollama vision smoke when available.
 Stop rule: do not add compaction, UI telemetry, or another runtime; repair all tests/review findings before PR/closure.
-Status: in_progress
+Status: completed
 
 ## Milestone 2: Issue #63 — Adaptive context manager
 
@@ -24,7 +24,7 @@ Touched areas: new context-management module, providers, coordinator/orchestrato
 Acceptance criteria: all criteria in #63, including deterministic pressure levels, media/tool costs, one retry, and no repeated-perceive loop.
 Validation commands: `cd backend; uv run pytest -q; uv run pytest -q -m eval; uv run ruff check .`.
 Stop rule: do not implement the UI meter or runtime adapters; repair before continuing.
-Status: pending
+Status: in_progress
 
 ## Milestone 3: Issue #64 — Context telemetry UI
 

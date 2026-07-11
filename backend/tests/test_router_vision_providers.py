@@ -16,6 +16,7 @@ import httpx
 
 import model_settings
 from agents import providers, router, vision
+from agents.context_manager import ContextBudgetError
 
 
 class _Recorder:
@@ -167,12 +168,30 @@ class VisionStaysLocalTests(unittest.TestCase):
             asyncio.run(router.analyze_screenshot("task", "b64img", []))
         self.assertEqual(recorder.calls[0][1]["options"]["num_ctx"], 6000)
 
+    def test_direct_vision_overflow_retries_once_without_reentering_agent_loop(self):
+        class OverflowRecorder(_Recorder):
+            async def post(self, url, json=None, headers=None, **kwargs):
+                self.calls.append((url, json or {}, headers or {}))
+                request = httpx.Request("POST", url)
+                if len(self.calls) == 1:
+                    return httpx.Response(
+                        400, text="prompt exceeds context size", request=request,
+                    )
+                return httpx.Response(200, json=_VISION_RESPONSE, request=request)
+
+        recorder = OverflowRecorder(_VISION_RESPONSE)
+        _patched_client(recorder)
+        out = asyncio.run(router.analyze_screenshot("task", "b64img", []))
+        self.assertEqual(out, "a login screen")
+        self.assertEqual(len(recorder.calls), 2)
+
     def test_custom_unknown_vision_model_uses_safe_startup_context(self):
         recorder = _Recorder(_VISION_RESPONSE)
         _patched_client(recorder)
         with mock.patch.object(router, "OLLAMA_VISION_MODEL", "custom-vision:model"):
-            asyncio.run(router.analyze_screenshot("task", "b64img", []))
-        self.assertEqual(recorder.calls[0][1]["options"]["num_ctx"], 4096)
+            with self.assertRaises(ContextBudgetError):
+                asyncio.run(router.analyze_screenshot("task", "b64img", []))
+        self.assertEqual(recorder.calls, [])
 
     def test_vision_done_summary_never_hits_cloud(self):
         model_settings.save_settings(self._cloud_default_settings("http://lan-box:11434"))
@@ -206,6 +225,20 @@ class VisionStaysLocalTests(unittest.TestCase):
 
         self.assertFalse(ok)
         self.assertIn("empty response", msg)
+
+    def test_unknown_vision_model_preflight_failure_is_actionable_health_result(self):
+        recorder = _Recorder({"message": {"content": "OK"}})
+        _patched_client(recorder)
+
+        with mock.patch.object(vision, "OLLAMA_VISION_MODEL", "custom-vision:model"):
+            ok, msg = asyncio.run(vision.validate_vision_model())
+
+        self.assertFalse(ok)
+        self.assertIn("custom-vision:model", msg)
+        self.assertIn("mandatory context requires", msg)
+        self.assertIn("ollama pull llama3.2-vision:11b", msg)
+        self.assertNotIn("\n", msg)
+        self.assertEqual(recorder.calls, [])
 
 
 if __name__ == "__main__":
