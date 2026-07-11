@@ -1,56 +1,6 @@
-/* ── artifact card ────────────────────────────────────────── */
-.art {
-  margin-top: 12px;
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: var(--r-xl); overflow: hidden;
-  animation: rise .35s cubic-bezier(.2,.9,.3,1);
-}
-
-.art .ah {
-  display: flex; align-items: center; gap: 8px;
-  padding: 9px 13px; border-bottom: 1px solid var(--border);
-  font: 11.5px var(--mono); color: var(--dim);
-}
-.art .ah .nm     { color: var(--text); }
-.art .ah .tg     { font-size: 10px; padding: 2px 7px; border-radius: var(--r-xs); }
-.art .ah .acts   { margin-left: auto; display: flex; gap: 5px; }
-.art .ah .acts button {
-  color: var(--dim); border: 1px solid var(--border);
-  border-radius: var(--r-sm); padding: 3px 8px;
-  font: 10.5px var(--mono); transition: .12s;
-}
-.art .ah .acts button:hover { color: var(--text); border-color: var(--border-2); }
-
-.art .ab { padding: 13px; max-height: 320px; overflow: auto; }
-.art .ab .artifact-prose { font-size: 13.5px; color: var(--dim); }
-
-/* ── diff view ────────────────────────────────────────────── */
-.diff         { font: 12px/1.55 var(--mono); }
-.diff .ln2    { padding: 1px 11px; white-space: pre-wrap; }
-.diff .ln2.add { background: rgba(84,217,140,.12); color: var(--add); }
-.diff .ln2.del { background: rgba(240,133,124,.12); color: var(--del); }
-.diff .ln2.ctx { color: var(--dim); }
-
-/* ── browser screenshot ───────────────────────────────────── */
-.shot-real {
-  border-radius: var(--r-md);
-  overflow: hidden;
-  border: 1px solid var(--border);
-  background: #0b1017;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
-}
-
-.shot              { border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--border); }
-.shot .bar         { background: #1c2230; padding: 6px 10px; display: flex; gap: 6px; align-items: center; }
-.shot .bar i       { width: 9px; height: 9px; border-radius: 50%; }
-.shot .bar i:nth-child(1) { background: #ff5f57; }
-.shot .bar i:nth-child(2) { background: #febc2e; }
-.shot .bar i:nth-child(3) { background: #28c840; }
-.shot .bar .u2     { margin-left: 8px; font: 10px var(--mono); color: var(--dim); background: #0f131c; padding: 2px 8px; border-radius: var(--r-xs); }
-.shot .win         { background: linear-gradient(160deg, #0e1422, #0b0f18); padding: 16px; min-height: 140px; position: relative; }
-.shot .note        { background: #f7f4e9; color: #222; border-radius: var(--r-xs); padding: 10px; font: 12px var(--mono); width: 70%; margin-top: 30px; box-shadow: 0 8px 20px rgba(0,0,0,.4); }
-.shot .mark        { position: absolute; border: 2px solid var(--cyan); border-radius: var(--r-xs); box-shadow: 0 0 0 3px rgba(79,214,224,.2); left: 16px; top: 16px; right: 16px; height: 42px; }
-.shot .mark .tagn  { position: absolute; top: -9px; left: -2px; background: var(--cyan); color: #042; font: 9px var(--mono); padding: 0 4px; border-radius: 3px; }
+/* Artifact cards, diff/terminal bodies and the browser-chrome screenshot
+   frame moved to the design system: styles/ds/artifacts.css (ds-art,
+   ds-diff, ds-term, ds-browser) rendered via components/ui/ArtifactCard. */
 
 /* ── file row ─────────────────────────────────────────────── */
 .frow      { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; }
@@ -58,16 +8,6 @@
 .frow .fi  { color: var(--cyan); }
 .frow .fn  { font: 12.5px var(--mono); }
 .frow .fm  { margin-left: auto; font: 11px var(--mono); color: var(--dim-2); }
-
-/* ── terminal output ──────────────────────────────────────── */
-.term {
-  font: 12px/1.6 var(--mono);
-  background: #070a10; border: 1px solid var(--border);
-  border-radius: var(--r-md); padding: 11px 13px;
-  color: var(--dim); white-space: pre-wrap;
-}
-.term .tl { color: var(--cyan); }
-.term .ok  { color: var(--green); }
 
 .artifact-modal {
   width: 860px;

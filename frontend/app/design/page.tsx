@@ -3,14 +3,21 @@
 import { useState } from "react";
 import "./design.css";
 import {
+  ArtifactCard,
   Badge,
+  BrainPopover,
+  BrowserFrame,
   Button,
   Card,
   CardHead,
   Chip,
+  CommandPalette,
+  Diff,
   EmptyState,
   Field,
   IconButton,
+  Inspector,
+  InspectorSection,
   Kbd,
   Logomark,
   Modal,
@@ -22,8 +29,10 @@ import {
   Stat,
   Switch,
   Tabs,
+  Terminal,
   ToolChip,
   Tooltip,
+  WorkflowCard,
 } from "@/components/ui";
 
 /* ── showcase scaffolding ─────────────────────────────────────────── */
@@ -101,6 +110,11 @@ export default function DesignSystem() {
   const [sel, setSel] = useState("gemma4:12b");
   const [field, setField] = useState("");
   const [modal, setModal] = useState<null | "wide" | "narrow">(null);
+  const [paletteDemo, setPaletteDemo] = useState(false);
+  const [inspTab, setInspTab] = useState("orkestrering");
+  const [brainMode, setBrainMode] = useState("auto");
+  const [brainModel, setBrainModel] = useState("auto");
+  const [brainAgent, setBrainAgent] = useState("claude");
 
   return (
     <div className="dz">
@@ -282,8 +296,36 @@ export default function DesignSystem() {
           </div>
         </Section>
 
+        {/* ── ARTIFACTS ── */}
+        <Section id="artifacts" title="Artefakter" desc="ArtifactCard med Terminal-, Diff- och BrowserFrame-bodies — verktygens inramade output.">
+          <div className="dz__grid">
+            <Spec name="ArtifactCard + Terminal" note="mono-header, tone-tag, copy/expand" col>
+              <ArtifactCard title="Kommandoutdata" tag="term" tone="green" onCopy={() => {}} onExpand={() => {}}>
+                <Terminal text={"$ pnpm test\n42 tests passed\nok · 3.2s"} />
+              </ArtifactCard>
+            </Spec>
+            <Spec name="ArtifactCard + Diff" col>
+              <ArtifactCard title="auth/token.py" tag="diff" tone="green" onCopy={() => {}}>
+                <Diff text={"@@ -12,7 +12,4 @@\n-def check_a(t):\n-def check_b(t):\n-def check_c(t):\n+def verify_token(t):\n     return t.valid"} />
+              </ArtifactCard>
+            </Spec>
+            <Spec name="ArtifactCard + BrowserFrame" note="skärmdumpar ramas i browser-chrome (traffic lights)" col>
+              <ArtifactCard title="run_command · skärmbild" tag="live" tone="cyan">
+                <BrowserFrame url="localhost:3000">
+                  <div style={{ padding: "26px 16px", font: "12px var(--mono)", color: "var(--dim)", textAlign: "center" }}>
+                    skärmdumpens innehåll
+                  </div>
+                </BrowserFrame>
+              </ArtifactCard>
+            </Spec>
+            <Spec name="Terminal · error" col>
+              <Terminal text={"Traceback (most recent call last):\n  ValueError: invalid token"} error />
+            </Spec>
+          </div>
+        </Section>
+
         {/* ── NAV ── */}
-        <Section id="nav" title="Navigation" desc="Tabs (SegControl för ömsesidigt uteslutande lägen).">
+        <Section id="nav" title="Navigation & skal" desc="Tabs, WorkflowCard, CommandPalette (⌘K), Inspector, BrainPopover.">
           <div className="dz__grid">
             <Spec name="Tabs" note="understruken flikrad, gradient-linje" col>
               <Tabs
@@ -293,6 +335,54 @@ export default function DesignSystem() {
                 aria-label="Inspector"
               />
               <div style={{ padding: "12px 4px", color: "var(--dim)", fontSize: 13 }}>Aktiv flik: {tab}</div>
+            </Spec>
+            <Spec name="WorkflowCard" note="snabbstarter på empty state" col>
+              <WorkflowCard glyph="▣" tone="cyan" title="Styr datorn" subtitle="se & klicka" />
+              <WorkflowCard glyph="⌘" tone="violet" title="Skriv kod" subtitle="expertmodeller" />
+              <WorkflowCard glyph="✦" tone="accent" title="Research" subtitle="djupdyk" />
+            </Spec>
+            <Spec name="CommandPalette" note="⌘K — sök, ↑/↓, Enter">
+              <Button onClick={() => setPaletteDemo(true)}>Öppna paletten</Button>
+            </Spec>
+            <Spec name="Inspector (inline)" note="höger-slide-in i appen; inline här" col>
+              <div style={{ height: 300, width: "100%" }}>
+                <Inspector
+                  title="Insyn"
+                  inline
+                  tabs={[{ value: "orkestrering", label: "Orkestrering" }, { value: "session", label: "Session" }]}
+                  activeTab={inspTab}
+                  onTab={setInspTab}
+                >
+                  {inspTab === "orkestrering" ? (
+                    <InspectorSection label="Senaste turen">
+                      <ToolChip name="run_command" args="cmd=pnpm test" />
+                    </InspectorSection>
+                  ) : (
+                    <InspectorSection label="Session">
+                      <Stat label="Status" value="Ansluten" />
+                      <Stat label="Turer" value={4} />
+                    </InspectorSection>
+                  )}
+                </Inspector>
+              </div>
+            </Spec>
+            <Spec name="BrainPopover" note="läge + modell + agent — ett klick från brain-pillen" col>
+              <BrainPopover
+                mode={brainMode}
+                modes={[{ value: "auto", label: "Auto" }, { value: "chat", label: "Chatt" }, { value: "computer", label: "Dator" }, { value: "code", label: "Kod" }]}
+                onMode={setBrainMode}
+                model={brainModel}
+                models={[
+                  { id: "auto", label: "Auto-orkestrering", orb: "grad" },
+                  { id: "qwen2.5-coder", label: "qwen2.5-coder:14b", orb: "violet", tag: "kod" },
+                  { id: "deepseek-r1", label: "deepseek-r1:14b", orb: "cyan", tag: "reasoning" },
+                ]}
+                onModel={setBrainModel}
+                agent={brainAgent}
+                agents={[{ value: "claude", label: "Claude Code" }, { value: "codex", label: "Codex" }]}
+                onAgent={setBrainAgent}
+                modelHint="Modell · auto rådfrågar experter per fråga"
+              />
             </Spec>
           </div>
         </Section>
@@ -349,6 +439,30 @@ export default function DesignSystem() {
           </div>
         </Section>
       </div>
+
+      {paletteDemo && (
+        <CommandPalette
+          onClose={() => setPaletteDemo(false)}
+          placeholder="byt projekt, modell, schemalägg jobb…"
+          groups={[
+            {
+              label: "Navigera",
+              items: [
+                { icon: "⟲", label: "Ny konversation", onSelect: () => {} },
+                { icon: "⏰", label: "Schemalagda jobb", hint: "2", onSelect: () => {} },
+                { icon: "⚙", label: "Modellinställningar", onSelect: () => {} },
+              ],
+            },
+            {
+              label: "Läge",
+              items: [
+                { icon: "›", label: "Auto", hint: "aktiv", onSelect: () => {} },
+                { icon: "›", label: "Kod", onSelect: () => {} },
+              ],
+            },
+          ]}
+        />
+      )}
 
       {modal && (
         <Modal

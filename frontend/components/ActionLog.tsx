@@ -5,6 +5,7 @@ import type { Route, RouteInsight as RouteInsightData, TranscriptItem, TurnEvent
 import Markdown from "@/components/Markdown";
 import Dialog from "@/components/Dialog";
 import { useToast } from "@/components/Toast";
+import { ArtifactCard as DsArtifactCard, BrowserFrame, Diff, Terminal } from "@/components/ui";
 import { t } from "@/app/strings";
 
 function useCopy() {
@@ -41,12 +42,12 @@ type ArtifactDescriptor = {
   body: React.ReactNode;
 };
 
-type ArtifactUnit = {
+export type ArtifactUnit = {
   event: TurnEvent;
   relatedAction?: TurnEvent;
 };
 
-type TimelineStep = {
+export type TimelineStep = {
   id: number;
   kind: "thinking" | "action" | "consult" | "result" | "error" | "context" | "expert";
   title: string;
@@ -64,47 +65,17 @@ function formatArgs(args?: Record<string, unknown>) {
   return entries.join(" · ");
 }
 
-function terminalBody(content: string) {
-  const lines = content.split(/\r?\n/);
-  return (
-    <div className="term">
-      {lines.map((line, index) => (
-        <div key={`${line}-${index}`} className={line.trim().startsWith("$") ? "tl" : line.toLowerCase().includes("ok") ? "ok" : undefined}>
-          {line || " "}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function diffBody(content: string) {
-  return (
-    <div className="diff">
-      {content.split(/\r?\n/).map((line, index) => {
-        const kind = line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "ctx";
-        return <div key={`${line}-${index}`} className={`ln2 ${kind}`}>{line || " "}</div>;
-      })}
-    </div>
-  );
-}
-
-function screenshotBody(source: string) {
-  return (
-    <div className="shot-real">
-      <img
-        src={source}
-        alt="screenshot"
-        style={{ width: "100%", display: "block" }}
-      />
-    </div>
-  );
+// Screenshots are framed in the DS browser-chrome window (traffic-light
+// dots, near-black canvas) — the one sanctioned "image" treatment.
+function screenshotBody(source: string, url?: string) {
+  return <BrowserFrame src={source} url={url} />;
 }
 
 function relatedActionForEvent(events: TurnEvent[], eventId: number) {
   return [...events].reverse().find((candidate) => candidate.type === "action" && candidate.id < eventId);
 }
 
-function collectArtifactUnits(events: TurnEvent[]) {
+export function collectArtifactUnits(events: TurnEvent[]) {
   const units: ArtifactUnit[] = [];
   const artifactEvents = events.filter((event) => event.type === "screenshot" || event.type === "result" || event.type === "error");
 
@@ -130,7 +101,7 @@ function collectArtifactUnits(events: TurnEvent[]) {
   return units.slice(-3);
 }
 
-function collectTimelineSteps(events: TurnEvent[]) {
+export function collectTimelineSteps(events: TurnEvent[]) {
   const steps: TimelineStep[] = [];
 
   for (const event of events) {
@@ -244,7 +215,7 @@ function artifactDetails(event: TurnEvent, relatedAction?: TurnEvent): ArtifactD
         tone: "green",
         copyText: event.content,
         expandText: event.content,
-        body: diffBody(event.content),
+        body: <Diff text={event.content} />,
       };
     }
     return {
@@ -253,7 +224,7 @@ function artifactDetails(event: TurnEvent, relatedAction?: TurnEvent): ArtifactD
       tone: isCommand ? "green" : "dim",
       copyText: event.content,
       expandText: event.content,
-      body: isCommand ? terminalBody(event.content) : <div className="prose artifact-prose">{event.content}</div>,
+      body: isCommand ? <Terminal text={event.content} /> : <div className="ds-art__prose">{event.content}</div>,
     };
   }
 
@@ -264,22 +235,15 @@ function artifactDetails(event: TurnEvent, relatedAction?: TurnEvent): ArtifactD
       tone: "red",
       copyText: event.content,
       expandText: event.content,
-      body: <div className="term" style={{ color: "var(--del)" }}>{event.content}</div>,
+      body: <Terminal text={event.content} error />,
     };
   }
 
   return null;
 }
 
-function toneStyle(tone: ArtifactDescriptor["tone"]) {
-  if (tone === "cyan") return { background: "rgba(79,214,224,.15)", color: "var(--cyan)" };
-  if (tone === "green") return { background: "rgba(84,217,140,.15)", color: "var(--green)" };
-  if (tone === "red") return { background: "rgba(240,133,124,.15)", color: "var(--del)" };
-  if (tone === "violet") return { background: "rgba(182,156,255,.15)", color: "var(--violet)" };
-  return { color: "var(--dim)" };
-}
-
-function ArtifactCard({
+// Exported so the Inspector's artifact tab can render the same cards.
+export function TurnArtifactCard({
   event,
   relatedAction,
 }: {
@@ -287,42 +251,34 @@ function ArtifactCard({
   relatedAction?: TurnEvent;
 }) {
   const artifact = artifactDetails(event, relatedAction);
-  const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
   if (!artifact) return null;
 
+  const expandable = Boolean(artifact.expandText) || event.type === "screenshot";
+
   return (
     <>
-      <div className="art">
-        <div className="ah">
-          <span>▣</span>
-          <span className="nm">{artifact.title}</span>
-          <span className="tg" style={toneStyle(artifact.tone)}>{artifact.tag}</span>
-          <div className="acts">
-            {artifact.copyText && (
-              <button
-                onClick={async () => {
-                  await copyText(artifact.copyText ?? "");
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1400);
-                }}
-              >
-                {copied ? "kopierat ✓" : "⎘ kopiera"}
-              </button>
-            )}
-            {(artifact.expandText || event.type === "screenshot") && <button onClick={() => setExpanded(true)}>⤢ expandera</button>}
-          </div>
-        </div>
-        <div className="ab">{artifact.body}</div>
-      </div>
+      <DsArtifactCard
+        title={artifact.title}
+        tag={artifact.tag}
+        tone={artifact.tone}
+        onCopy={artifact.copyText ? () => copyText(artifact.copyText ?? "") : undefined}
+        onExpand={expandable ? () => setExpanded(true) : undefined}
+      >
+        {artifact.body}
+      </DsArtifactCard>
       {expanded && (
         <Dialog icon="▣" title={artifact.title} className="narrow artifact-modal" onClose={() => setExpanded(false)}>
           <div className="mb">
             {event.type === "screenshot" && event.image ? (
               screenshotBody(`data:image/png;base64,${event.image}`)
             ) : artifact.expandText ? (
-              /^(@@|diff --git|\+[^+]|-[^-])/m.test(artifact.expandText) ? diffBody(artifact.expandText) : terminalBody(artifact.expandText)
+              /^(@@|diff --git|\+[^+]|-[^-])/m.test(artifact.expandText) ? (
+                <Diff text={artifact.expandText} />
+              ) : (
+                <Terminal text={artifact.expandText} error={event.type === "error"} />
+              )
             ) : (
               artifact.body
             )}
@@ -505,7 +461,7 @@ function AssistantTurn({ item }: { item: Extract<TranscriptItem, { kind: "assist
           <div className="artifact-stack">
             {artifactUnits.length > 1 && <div className="artifact-label">Artifacts</div>}
             {artifactUnits.map(({ event, relatedAction }) => (
-              <ArtifactCard
+              <TurnArtifactCard
                 key={`artifact-${event.id}`}
                 event={event}
                 relatedAction={relatedAction}

@@ -1,0 +1,82 @@
+/* ── Pilot DS · artifacts ─────────────────────────────────────────
+   ArtifactCard · Terminal · Diff · BrowserFrame
+   The framed outputs of tool calls. Cards rise in on mount; screenshots
+   are framed in a browser-chrome window (traffic-light dots, near-black
+   canvas) per the DS imagery guideline. --------------------------- */
+
+/* ═══ ArtifactCard ═════════════════════════════════════════════════ */
+.ds-art {
+  margin-top: 12px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--r-xl); overflow: hidden;
+  animation: ds-rise var(--dur-rise) var(--ease-out);
+}
+.ds-art__head {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: 9px 13px; border-bottom: 1px solid var(--border);
+  font: 11.5px var(--mono); color: var(--dim);
+}
+.ds-art__title { color: var(--text); }
+.ds-art__tag {
+  --tone: var(--dim); --tone-fill: transparent;
+  font-size: var(--fs-label); padding: 2px 7px; border-radius: var(--r-xs);
+  color: var(--tone); background: var(--tone-fill);
+}
+.ds-art__tag.is-cyan   { --tone: var(--cyan);   --tone-fill: var(--fill-cyan); }
+.ds-art__tag.is-green  { --tone: var(--green);  --tone-fill: var(--fill-green); }
+.ds-art__tag.is-red    { --tone: var(--red);    --tone-fill: var(--fill-red); }
+.ds-art__tag.is-violet { --tone: var(--violet); --tone-fill: var(--fill-violet); }
+
+.ds-art__acts { margin-left: auto; display: flex; gap: var(--sp-2); }
+.ds-art__act {
+  color: var(--dim); border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 3px 8px;
+  font: 10.5px var(--mono);
+  transition: color var(--dur-fast), border-color var(--dur-fast);
+}
+.ds-art__act:hover { color: var(--text); border-color: var(--border-2); }
+
+.ds-art__body { padding: 13px; max-height: 320px; overflow: auto; }
+.ds-art__body--flush { padding: 0; }
+.ds-art__prose { font-size: var(--fs-ui); color: var(--dim); white-space: pre-wrap; }
+
+/* ═══ Terminal ═════════════════════════════════════════════════════ */
+.ds-term {
+  font: 12px/1.6 var(--mono);
+  background: #070a10; border: 1px solid var(--border);
+  border-radius: var(--r-md); padding: 11px 13px;
+  color: var(--dim); white-space: pre-wrap;
+}
+.ds-term__cmd { color: var(--cyan); }
+.ds-term__ok  { color: var(--green); }
+.ds-term.is-error { color: var(--red); }
+
+/* ═══ Diff ═════════════════════════════════════════════════════════ */
+.ds-diff { font: 12px/1.55 var(--mono); }
+.ds-diff__ln { padding: 1px 11px; white-space: pre-wrap; }
+.ds-diff__ln.is-add { background: var(--fill-green); color: var(--green); }
+.ds-diff__ln.is-del { background: var(--fill-red); color: var(--red); }
+.ds-diff__ln.is-ctx { color: var(--dim); }
+
+/* ═══ BrowserFrame (screenshot chrome) ═════════════════════════════ */
+.ds-browser {
+  border-radius: var(--r-md); overflow: hidden;
+  border: 1px solid var(--border);
+  background: #0b1017;
+  box-shadow: var(--inset-top);
+}
+.ds-browser__bar {
+  background: #1c2230; padding: 6px 10px;
+  display: flex; gap: 6px; align-items: center;
+}
+.ds-browser__dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.ds-browser__dot:nth-child(1) { background: #ff5f57; }
+.ds-browser__dot:nth-child(2) { background: #febc2e; }
+.ds-browser__dot:nth-child(3) { background: #28c840; }
+.ds-browser__url {
+  margin-left: 8px; font: var(--fs-label) var(--mono); color: var(--dim);
+  background: #0f131c; padding: 2px 8px; border-radius: var(--r-xs);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.ds-browser__win { background: #0b0f18; }
+.ds-browser__win img { width: 100%; display: block; }

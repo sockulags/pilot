@@ -201,9 +201,12 @@ body.busy .hairline {
   .top .nm,
   .top .sp,
   .top .crumb.soft,
-  .top .brain.model,
+  .top .brain-wrap,
   .top .agent,
-  .top .ic.reset {
+  .top .ic.reset,
+  /* Inspector duplicates the inline insyn/artifacts on phones — hide the
+     trigger; the ⌘K palette (desktop) is the other entry point. */
+  .top .ic.insp {
     display: none;
   }
   .headpills { flex: 1; min-width: 0; }
@@ -230,7 +233,6 @@ body.busy .hairline {
   }
   .greet { font-size: clamp(24px, 7vw, 30px); letter-spacing: -0.6px; }
   .tag { margin: var(--space-3) 0 var(--space-5); font-size: 14px; }
-  .ghosts { gap: var(--space-2); }
 
   .drawer { width: min(92vw, 320px); }
   .drawer .dh { padding-top: max(16px, env(safe-area-inset-top)); }

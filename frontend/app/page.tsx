@@ -8,7 +8,8 @@ import JobsPanel from "@/components/JobsPanel";
 import SettingsPanel from "@/components/SettingsPanel";
 import { ToastProvider, useToast } from "@/components/Toast";
 import Dialog, { useDialogA11y } from "@/components/Dialog";
-import { Button, Chip } from "@/components/ui";
+import InspectorPanel from "@/components/InspectorPanel";
+import { BrainPopover, Button, CommandPalette, WorkflowCard, type PaletteGroup, type WorkflowTone } from "@/components/ui";
 import { t } from "@/app/strings";
 
 export type Route = "chat" | "computer" | "code";
@@ -160,7 +161,7 @@ type WsStatus = "disconnected" | "connecting" | "connected" | "error";
 
 const STATUS_LABEL: Record<WsStatus, string> = t.status;
 
-const HERO_SUGGESTIONS = t.hero.suggestions;
+const HERO_WORKFLOWS = t.hero.workflows;
 
 const RECONNECT_DELAY = 3000;
 
@@ -401,6 +402,9 @@ function Workspace() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [brainOpen, setBrainOpen] = useState(false);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const [focusView, setFocusView] = useState<number | null>(null);
   const [running, _setRunning] = useState(false);
@@ -411,6 +415,7 @@ function Workspace() {
   const [composerSeed, setComposerSeed] = useState("");
   const [composerKey, setComposerKey] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const brainBtnRef = useRef<HTMLButtonElement>(null);
   const atBottomRef = useRef(true);
   const wsRef = useRef<WebSocket | null>(null);
   const idRef = useRef(0);
@@ -428,13 +433,14 @@ function Workspace() {
     document.body.classList.toggle("busy", running);
   }, [running]);
 
-  // Global shortcut: Cmd/Ctrl+K opens the project/model/agent controls.
+  // Global shortcut: Cmd/Ctrl+K opens the command palette (DS: navigation
+  // lives in the ⌘K palette; the controls dialog is one palette entry).
   // (Escape-to-close for overlays is handled by the Dialog/drawer a11y hook.)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setControlsOpen(true);
+        setPaletteOpen((open) => !open);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -817,6 +823,56 @@ function Workspace() {
 
   const selectedProjectObject = projects.find((project) => project.path === selectedProject) ?? null;
   const hasConversation = transcript.length > 0;
+
+  // ⌘K command palette: navigation + the orchestration toggles, so every
+  // control is one keystroke away without visible chrome (DS shell).
+  const paletteGroups: PaletteGroup[] = [
+    {
+      label: t.palette.navigate,
+      items: [
+        { icon: "⟲", label: t.palette.newConversation, onSelect: requestReset },
+        { icon: "⌘", label: t.palette.controls, keywords: ["projekt", "kontroller"], onSelect: () => setControlsOpen(true) },
+        { icon: "⏰", label: t.palette.jobs, hint: jobs.length > 0 ? String(jobs.length) : undefined, onSelect: () => setJobsOpen(true) },
+        { icon: "⚙", label: t.palette.settings, keywords: ["inställningar", "modeller", "providers"], onSelect: () => setSettingsOpen(true) },
+        { icon: "◔", label: t.palette.context, keywords: ["kontext", "tokens"], onSelect: () => setContextOpen(true) },
+        { icon: "⊟", label: t.palette.inspector, keywords: ["insyn", "orkestrering"], onSelect: () => setInspectorOpen(true) },
+        { icon: "✦", label: t.palette.design, keywords: ["design", "komponenter"], onSelect: () => window.location.assign("/design") },
+      ],
+    },
+    {
+      label: t.palette.mode,
+      items: t.routeModes.map((mode) => ({
+        icon: "›",
+        label: mode.label,
+        hint: routeMode === mode.id ? t.palette.active : undefined,
+        keywords: ["läge", "rutt"],
+        onSelect: () => selectRoute(mode.id),
+      })),
+    },
+    {
+      label: t.palette.model,
+      items: [
+        { icon: "◆", label: "Auto", hint: modelMode === "auto" ? t.palette.active : undefined, keywords: ["modell"], onSelect: () => selectModel("auto") },
+        ...models.map((model) => ({
+          icon: "◆",
+          label: model.label,
+          hint: modelMode === model.id ? t.palette.active : undefined,
+          keywords: ["modell", model.id],
+          onSelect: () => selectModel(model.id),
+        })),
+      ],
+    },
+    {
+      label: t.palette.agent,
+      items: t.agents.map((option) => ({
+        icon: "⌘",
+        label: option.label,
+        hint: agent === option.id ? t.palette.active : undefined,
+        keywords: ["agent", "kodagent"],
+        onSelect: () => selectAgent(option.id as Agent),
+      })),
+    },
+  ];
   const liveAnnouncement = transcript.findLast((item) => item.kind === "assistant" && item.done)?.text ?? "";
   const visibleTranscript = focusView ? transcript.slice(-focusView) : transcript;
   const hiddenCount = transcript.length - visibleTranscript.length;
@@ -841,10 +897,52 @@ function Workspace() {
             </button>
           </div>
           <div className="sp" />
-          <button className="brain model" onClick={() => setContextOpen(true)}>
-            <span className="orb" />
-            <span id="brainTxt">{modelMode === "auto" ? t.header.autoOrchestration : modelLabel(modelMode, models)}</span>
-          </button>
+          <div
+            className="brain-wrap"
+            onKeyDown={(e) => {
+              // The popover is a disclosure, not a Dialog — close on Escape and
+              // hand focus back to the pill (APG popover contract).
+              if (e.key === "Escape" && brainOpen) {
+                e.stopPropagation();
+                setBrainOpen(false);
+                brainBtnRef.current?.focus();
+              }
+            }}
+          >
+            <button
+              ref={brainBtnRef}
+              className="brain model"
+              onClick={() => setBrainOpen((value) => !value)}
+              aria-expanded={brainOpen}
+              aria-haspopup="true"
+              title="Orkestrering — läge, modell och agent"
+            >
+              <span className="orb" />
+              <span id="brainTxt">{modelMode === "auto" ? t.header.autoOrchestration : modelLabel(modelMode, models)}</span>
+            </button>
+            {brainOpen && (
+              <>
+                <div className="brain-catch" onClick={() => setBrainOpen(false)} />
+                <div className="brain-pop">
+                  <BrainPopover
+                    mode={routeMode}
+                    modes={t.routeModes.map((r) => ({ value: r.id, label: r.label }))}
+                    onMode={selectRoute}
+                    model={modelMode}
+                    models={[
+                      { id: "auto", label: "Auto-orkestrering", orb: "grad" },
+                      ...models.map((m) => ({ id: m.id, label: m.label, orb: "violet" as const })),
+                    ]}
+                    onModel={selectModel}
+                    agent={agent}
+                    agents={t.agents.map((a) => ({ value: a.id, label: a.label }))}
+                    onAgent={(value) => selectAgent(value as Agent)}
+                    modelHint="Modell · auto rådfrågar experter per fråga"
+                  />
+                </div>
+              </>
+            )}
+          </div>
           <div className={`agent${agentMenuOpen ? " open" : ""}`}>
             <button className="agent-trigger" onClick={() => setAgentMenuOpen((value) => !value)}>
               {agentLabel(agent)}
@@ -861,6 +959,9 @@ function Workspace() {
               ))}
             </div>
           </div>
+          <button className="ic insp" onClick={() => setInspectorOpen(true)} title={t.inspector.open} aria-label={t.inspector.open}>
+            ⊟
+          </button>
           <button className="ic" onClick={() => setJobsOpen(true)} title={t.header.scheduledJobs} aria-label={t.header.scheduledJobs}>
             ⏰
             {jobs.length > 0 && <span className="badge">{jobs.length}</span>}
@@ -900,14 +1001,22 @@ function Workspace() {
                 {t.hero.titleLead}<span className="g">{t.hero.titleAccent}</span>.
               </h1>
               <p className="tag">{t.hero.tagline}</p>
-              <div className="ghosts">
-                {HERO_SUGGESTIONS.map((suggestion) => (
-                  <Chip key={suggestion} onClick={() => handleSend(suggestion)}>
-                    {suggestion}
-                  </Chip>
+              <ChatInput key={composerKey} initialValue={composerSeed} onSend={handleSend} onAbort={handleAbort} onOpenContext={() => setContextOpen(true)} disabled={wsStatus !== "connected"} running={running} />
+              <div className="ds-workflow-grid" style={{ marginTop: 14 }}>
+                {HERO_WORKFLOWS.map((workflow) => (
+                  <WorkflowCard
+                    key={workflow.title}
+                    glyph={workflow.glyph}
+                    tone={workflow.tone as WorkflowTone}
+                    title={workflow.title}
+                    subtitle={workflow.subtitle}
+                    // Seed the composer instead of firing the hidden prompt —
+                    // the user sees and can edit what is about to be sent
+                    // (review 2026-07-11).
+                    onClick={() => editPrompt(workflow.seed)}
+                  />
                 ))}
               </div>
-              <ChatInput onSend={handleSend} onAbort={handleAbort} onOpenContext={() => setContextOpen(true)} disabled={wsStatus !== "connected"} running={running} />
             </section>
           ) : (
             <section className="conv on">
@@ -985,6 +1094,29 @@ function Workspace() {
       )}
       {jobsOpen && <JobsPanel jobs={jobs} onClose={() => setJobsOpen(false)} onAdd={addJob} onPause={pauseJob} onResume={resumeJob} onDelete={deleteJob} />}
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
+
+      {paletteOpen && (
+        <CommandPalette
+          groups={paletteGroups}
+          onClose={() => setPaletteOpen(false)}
+          placeholder={t.palette.placeholder}
+          emptyText={t.palette.empty}
+        />
+      )}
+
+      {inspectorOpen && (
+        <InspectorPanel
+          transcript={transcript}
+          jobs={jobs}
+          selectedProject={selectedProjectObject}
+          agent={agent}
+          modelMode={modelMode}
+          models={models}
+          routeMode={routeMode}
+          statusLabel={STATUS_LABEL[wsStatus]}
+          onClose={() => setInspectorOpen(false)}
+        />
+      )}
     </>
   );
 }

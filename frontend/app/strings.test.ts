@@ -16,11 +16,12 @@ describe("strings copy table", () => {
     expect(t.messageActions.copied).toBe("Kopierat.");
   });
 
-  it("provides four hero suggestion prompts, all non-empty", () => {
-    expect(t.hero.suggestions).toHaveLength(4);
-    for (const s of t.hero.suggestions) {
-      expect(typeof s).toBe("string");
-      expect(s.trim().length).toBeGreaterThan(0);
+  it("provides three hero workflow quick-starts with non-empty seeds", () => {
+    expect(t.hero.workflows).toHaveLength(3);
+    for (const workflow of t.hero.workflows) {
+      expect(workflow.glyph.trim().length).toBeGreaterThan(0);
+      expect(workflow.title.trim().length).toBeGreaterThan(0);
+      expect(workflow.seed.trim().length).toBeGreaterThan(0);
     }
   });
 

@@ -36,10 +36,20 @@ export { Tooltip } from "./Tooltip";
 export type { TooltipProps } from "./Tooltip";
 export { Spinner } from "./Spinner";
 export type { SpinnerProps } from "./Spinner";
+export { ArtifactCard, Terminal, Diff, BrowserFrame } from "./ArtifactCard";
+export type { ArtifactCardProps, ArtifactTone } from "./ArtifactCard";
 
 // Navigation
 export { Tabs } from "./Tabs";
 export type { TabsProps, Tab } from "./Tabs";
+export { WorkflowCard } from "./WorkflowCard";
+export type { WorkflowCardProps, WorkflowTone } from "./WorkflowCard";
+export { CommandPalette } from "./CommandPalette";
+export type { CommandPaletteProps, PaletteGroup, PaletteItem } from "./CommandPalette";
+export { Inspector, InspectorSection } from "./Inspector";
+export type { InspectorProps } from "./Inspector";
+export { BrainPopover } from "./BrainPopover";
+export type { BrainPopoverProps, BrainModel } from "./BrainPopover";
 
 // Overlay
 export { Modal } from "./Modal";

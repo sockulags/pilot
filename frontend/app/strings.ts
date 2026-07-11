@@ -35,11 +35,12 @@ export const t = {
     titleLead: "Bygg, granska och kör ",
     titleAccent: "lokala agentflöden",
     tagline: "Pilot håller ihop chatt, kod, datorstyrning och modellval i ett enda arbetsflöde.",
-    suggestions: [
-      "Granska den här diffen och säg vad som är riskabelt",
-      "Kör igenom repo:t och föreslå nästa tekniska steg",
-      "Jämför lokala modeller och föreslå rätt standardstack",
-      "Öppna projektet, kör testerna och förklara vad som faller",
+    // Quick-start workflows on the empty state (DS WorkflowCard) — each seeds
+    // one of Pilot's core flows.
+    workflows: [
+      { glyph: "▣", tone: "cyan", title: "Styr datorn", subtitle: "se & klicka", seed: "Ta en skärmbild och beskriv vad som visas på skärmen" },
+      { glyph: "⌘", tone: "violet", title: "Skriv kod", subtitle: "expertmodeller", seed: "Öppna projektet, kör testerna och förklara vad som faller" },
+      { glyph: "✦", tone: "accent", title: "Research", subtitle: "djupdyk", seed: "Jämför lokala modeller och föreslå rätt standardstack" },
     ],
   },
 
@@ -158,6 +159,45 @@ export const t = {
     close: "Stäng",
     add: "Lägg till",
     remove: "Ta bort",
+  },
+
+  palette: {
+    placeholder: "byt projekt, modell, schemalägg jobb…",
+    empty: "Inga träffar.",
+    navigate: "Navigera",
+    mode: "Läge",
+    model: "Modell",
+    agent: "Agent",
+    active: "aktiv",
+    newConversation: "Ny konversation",
+    controls: "Projekt & kontroller",
+    jobs: "Schemalagda jobb",
+    settings: "Modellinställningar",
+    context: "Huvudagentens kontext",
+    inspector: "Inspector",
+    design: "Designsystem",
+  },
+
+  inspector: {
+    title: "Insyn",
+    open: "Öppna inspector",
+    tabs: {
+      orchestration: "Orkestrering",
+      artifacts: "Artefakter",
+      session: "Session",
+    },
+    emptyOrchestration: "Inga steg ännu — ställ en fråga så visas orkestreringen här.",
+    emptyArtifacts: "Inga artefakter i senaste turen.",
+    lastTurn: "Senaste turen",
+    sessionFacts: "Session",
+    jobsLabel: "Jobb",
+    project: "Projekt",
+    noProject: "Inget projekt",
+    model: "Modell",
+    route: "Rutt",
+    agent: "Agent",
+    status: "Status",
+    turns: "Turer",
   },
 
   settings: {
