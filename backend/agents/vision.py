@@ -4,6 +4,7 @@ import base64
 import httpx
 
 import model_settings
+from agents.model_inventory import resolve_context_budget
 from config import OLLAMA_VISION_MODEL
 
 
@@ -25,6 +26,9 @@ async def validate_vision_model() -> tuple[bool, str]:
             }
         ],
         "stream": False,
+        # The validation checks the user-visible answer, not hidden reasoning.
+        "think": False,
+        "options": {"num_ctx": resolve_context_budget(OLLAMA_VISION_MODEL, "vision")},
     }
     # Perception stays LOCAL by design: image input must never be sent to a cloud
     # provider, so this validation probe is NOT routed through the provider layer.
@@ -34,6 +38,9 @@ async def validate_vision_model() -> tuple[bool, str]:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(f"{base_url}/api/chat", json=payload)
         resp.raise_for_status()
+        content = (resp.json().get("message", {}).get("content") or "").strip()
+        if not content:
+            raise RuntimeError("vision model returned an empty response")
     except Exception as exc:
         return (
             False,

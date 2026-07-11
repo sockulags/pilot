@@ -28,7 +28,7 @@ class _ChatOnceStub:
 
     async def __call__(
         self, messages, model=None, *, tools=None, temperature=0.1, backend=None,
-        role=None, fmt=None, schema=None,
+        role=None, context_role=None, fmt=None, schema=None,
     ):
         self.calls.append((messages, tools, fmt))
         r = self._responses.pop(0)

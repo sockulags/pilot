@@ -42,6 +42,7 @@ import httpx
 
 import model_settings
 from agents.json_utils import extract_json_object
+from agents.model_inventory import resolve_context_budget
 from config import (
     ANSWER_BACKEND,
     OLLAMA_MODEL,
@@ -180,6 +181,7 @@ async def chat_once(
     temperature: float = 0.1,
     backend: str | None = None,
     role: str | None = None,
+    context_role: str | None = None,
     fmt: str | None = None,
     schema: dict | None = None,
 ) -> dict:
@@ -205,7 +207,9 @@ async def chat_once(
                 OPENAI_BASE_URL, OPENAI_API_KEY, fmt=fmt, schema=schema,
             )
         return await _ollama_once(
-            messages, answer_model(be, base), tools, temperature, fmt=fmt, schema=schema
+            messages, answer_model(be, base), tools, temperature,
+            role=context_role or role,
+            fmt=fmt, schema=schema
         )
 
     model = apply_role(model, role)
@@ -225,7 +229,9 @@ async def chat_once(
             OPENAI_BASE_URL, OPENAI_API_KEY, fmt=fmt, schema=schema,
         )
     return await _ollama_once(
-        messages, model or OLLAMA_MODEL, tools, temperature, fmt=fmt, schema=schema
+        messages, model or OLLAMA_MODEL, tools, temperature,
+        role=context_role or role,
+        fmt=fmt, schema=schema
     )
 
 
@@ -237,6 +243,7 @@ async def chat_stream(
     think: bool = False,
     backend: str | None = None,
     role: str | None = None,
+    context_role: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream content deltas. ``think`` only affects the Ollama backend."""
     if backend or backend_forced():
@@ -250,7 +257,8 @@ async def chat_stream(
                 yield piece
         else:
             async for piece in _ollama_stream(
-                messages, answer_model(be, base), temperature, think
+                messages, answer_model(be, base), temperature, think,
+                role=context_role or role
             ):
                 yield piece
         return
@@ -275,7 +283,10 @@ async def chat_stream(
         ):
             yield piece
         return
-    async for piece in _ollama_stream(messages, model or OLLAMA_MODEL, temperature, think):
+    async for piece in _ollama_stream(
+        messages, model or OLLAMA_MODEL, temperature, think,
+        role=context_role or role
+    ):
         yield piece
 
 
@@ -290,6 +301,7 @@ async def _ollama_once(
     tools: list[dict] | None,
     temperature: float,
     *,
+    role: str | None = None,
     fmt: str | None = None,
     schema: dict | None = None,
 ) -> dict:
@@ -297,7 +309,11 @@ async def _ollama_once(
         "model": model,
         "messages": messages,
         "stream": False,
-        "options": {"temperature": temperature},
+        "think": False,
+        "options": {
+            "temperature": temperature,
+            "num_ctx": resolve_context_budget(model, role),
+        },
     }
     if tools:
         payload["tools"] = tools
@@ -322,14 +338,18 @@ async def _ollama_once(
 
 
 async def _ollama_stream(
-    messages: list[dict], model: str, temperature: float, think: bool
+    messages: list[dict], model: str, temperature: float, think: bool,
+    *, role: str | None = None,
 ) -> AsyncGenerator[str, None]:
     payload = {
         "model": model,
         "messages": messages,
         "stream": True,
         "think": think,
-        "options": {"temperature": temperature},
+        "options": {
+            "temperature": temperature,
+            "num_ctx": resolve_context_budget(model, role),
+        },
     }
     base_url = model_settings.ollama_base_url()
     async with httpx.AsyncClient(timeout=180) as client:

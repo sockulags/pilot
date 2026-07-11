@@ -7,10 +7,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from agents import providers  # noqa: E402
+from agents import model_inventory  # noqa: E402
 
 
 def teardown_function(_):
     providers.set_backend(None)  # never leak an override between tests
+    model_inventory._DISCOVERED_CONTEXTS.clear()
 
 
 # --------------------------------------------------------------------------- #
@@ -205,6 +207,139 @@ def test_ollama_once_omits_format_when_unset(monkeypatch):
     ))
     # No structured request → payload stays exactly as before (no regression).
     assert "format" not in client.posted["json"]
+
+
+def test_ollama_tools_retry_retains_resolved_context(monkeypatch):
+    class RetryClient(_Client):
+        def __init__(self):
+            self.calls = []
+
+        async def post(self, url, json=None, headers=None):
+            self.calls.append(json.copy())
+            return _Resp({"message": {"content": "ok"}}, status=400 if len(self.calls) == 1 else 200)
+
+    client = RetryClient()
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+    asyncio.run(providers.chat_once(
+        [{"role": "user", "content": "hi"}], "gemma4:12b", backend="ollama",
+        role="classifier", tools=[{"type": "function", "function": {"name": "x"}}],
+    ))
+    assert len(client.calls) == 2
+    assert client.calls[0]["options"]["num_ctx"] == 4096
+    assert client.calls[1]["options"]["num_ctx"] == 4096
+
+
+def test_live_declared_limit_clamps_nonstream_and_tool_retry(monkeypatch):
+    model_inventory._DISCOVERED_CONTEXTS["gemma4:12b"] = 2048
+
+    class RetryClient(_Client):
+        def __init__(self):
+            self.calls = []
+        async def post(self, url, json=None, headers=None):
+            self.calls.append(json.copy())
+            return _Resp({"message": {"content": "ok"}}, status=400 if len(self.calls) == 1 else 200)
+
+    client = RetryClient()
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+    asyncio.run(providers.chat_once(
+        [{"role": "user", "content": "hi"}], "gemma4:12b", backend="ollama",
+        context_role="coordinator", tools=[{"type": "function", "function": {"name": "x"}}],
+    ))
+    assert [call["options"]["num_ctx"] for call in client.calls] == [2048, 2048]
+
+
+def test_unknown_model_payload_is_safe_before_and_expands_after_discovery(monkeypatch):
+    client = _Client(_Resp({"message": {"content": "ok"}}))
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+    asyncio.run(providers.chat_once(
+        [{"role": "user", "content": "x"}], "custom:model", backend="ollama",
+        context_role="code_agent",
+    ))
+    assert client.posted["json"]["options"]["num_ctx"] == 4096
+
+    model_inventory._DISCOVERED_CONTEXTS = {"custom:model": 12000}
+    asyncio.run(providers.chat_once(
+        [{"role": "user", "content": "x"}], "custom:model", backend="ollama",
+        context_role="synthesis",
+    ))
+    assert client.posted["json"]["options"]["num_ctx"] == 12000
+
+
+def test_failed_show_refresh_removes_stale_high_from_provider_payload(monkeypatch):
+    model_inventory._DISCOVERED_CONTEXTS = {"custom:model": 65536}
+
+    class FailedShowClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *exc): return False
+        async def post(self, *args, **kwargs): raise RuntimeError("show failed")
+
+    monkeypatch.setattr(
+        model_inventory.httpx, "AsyncClient", lambda *a, **k: FailedShowClient()
+    )
+    asyncio.run(model_inventory.discover_model_capabilities({"custom:model"}))
+
+    client = _Client(_Resp({"message": {"content": "ok"}}))
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+    asyncio.run(providers.chat_once(
+        [{"role": "user", "content": "x"}], "custom:model", backend="ollama",
+        context_role="synthesis",
+    ))
+    assert client.posted["json"]["options"]["num_ctx"] == 4096
+
+
+def test_ollama_stream_passes_explicit_context(monkeypatch):
+    class StreamResponse:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *exc):
+            return False
+        def raise_for_status(self):
+            return None
+        async def aiter_lines(self):
+            yield '{"message":{"content":"ok"},"done":true}'
+
+    class StreamClient(_Client):
+        def __init__(self):
+            self.posted = None
+        def stream(self, method, url, json=None):
+            self.posted = json
+            return StreamResponse()
+
+    client = StreamClient()
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+
+    async def collect():
+        return [part async for part in providers.chat_stream(
+            [{"role": "user", "content": "hi"}], "gemma4:12b",
+            backend="ollama", role="synthesis",
+        )]
+
+    assert asyncio.run(collect()) == ["ok"]
+    assert client.posted["options"]["num_ctx"] == 16384
+
+
+def test_live_declared_limit_clamps_stream(monkeypatch):
+    model_inventory._DISCOVERED_CONTEXTS["gemma4:12b"] = 3000
+
+    class StreamResponse:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *exc): return False
+        def raise_for_status(self): return None
+        async def aiter_lines(self): yield '{"done":true}'
+    class StreamClient(_Client):
+        def __init__(self): self.posted = None
+        def stream(self, method, url, json=None):
+            self.posted = json
+            return StreamResponse()
+    client = StreamClient()
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+    async def collect():
+        return [p async for p in providers.chat_stream(
+            [{"role": "user", "content": "x"}], "gemma4:12b",
+            backend="ollama", context_role="synthesis",
+        )]
+    asyncio.run(collect())
+    assert client.posted["options"]["num_ctx"] == 3000
 
 
 def test_openai_once_maps_json_fmt_to_response_format(monkeypatch):

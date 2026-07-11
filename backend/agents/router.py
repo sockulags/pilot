@@ -5,6 +5,7 @@ import httpx
 import model_settings
 from agents import providers
 from agents.json_utils import extract_json_object
+from agents.model_inventory import resolve_context_budget
 from config import OLLAMA_MODEL, OLLAMA_VISION_MODEL
 
 logger = logging.getLogger(__name__)
@@ -147,7 +148,8 @@ async def route_next_action(
     # override / a cloud model id) still routes it, otherwise this is the same
     # local Ollama call as before (think stays off — this is the JSON decision).
     result = await providers.chat_once(
-        messages, model or OLLAMA_MODEL, temperature=0.1
+        messages, model or OLLAMA_MODEL, temperature=0.1,
+        context_role="coordinator",
     )
     content = (result.get("content") or "").strip()
 
@@ -185,10 +187,19 @@ async def vision_done_summary(task: str, image_b64: str) -> str:
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
             f"{base_url}/api/chat",
-            json={"model": OLLAMA_VISION_MODEL, "messages": messages, "stream": False},
+            json={
+                "model": OLLAMA_VISION_MODEL,
+                "messages": messages,
+                "stream": False,
+                "think": False,
+                "options": {"num_ctx": resolve_context_budget(OLLAMA_VISION_MODEL, "vision")},
+            },
         )
         resp.raise_for_status()
-        return resp.json()["message"]["content"].strip()
+        content = (resp.json().get("message", {}).get("content") or "").strip()
+        if not content:
+            raise RuntimeError("Vision model returned an empty visible answer")
+        return content
 
 
 async def analyze_screenshot(task: str, image_b64: str, history: list[dict]) -> str:
@@ -222,8 +233,15 @@ async def analyze_screenshot(task: str, image_b64: str, history: list[dict]) -> 
                 "model": OLLAMA_VISION_MODEL,
                 "messages": messages,
                 "stream": False,
+                # Thinking-capable Ollama models may otherwise spend the whole
+                # response budget in message.thinking and leave content empty.
+                "think": False,
+                "options": {"num_ctx": resolve_context_budget(OLLAMA_VISION_MODEL, "vision")},
             },
         )
         resp.raise_for_status()
         data = resp.json()
-        return data["message"]["content"].strip()
+        content = (data.get("message", {}).get("content") or "").strip()
+        if not content:
+            raise RuntimeError("Vision model returned an empty visual description")
+        return content

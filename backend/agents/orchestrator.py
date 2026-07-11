@@ -21,6 +21,7 @@ from typing import AsyncGenerator
 
 from agents import providers
 from agents.json_utils import extract_json_object
+from agents.model_inventory import resolve_context_budget
 from agents.turn_policy import deterministic_route, sanitize_final_reply
 from agents.untrusted import UNTRUSTED_RULE, wrap_untrusted
 from config import (
@@ -290,7 +291,10 @@ def _chat_payload(messages: list[dict], model: str | None = None, stream: bool =
         "stream": stream,
         # Final answers should be user-visible content, not hidden thinking.
         "think": False,
-        "options": {"temperature": 0.2},
+        "options": {
+            "temperature": 0.2,
+            "num_ctx": resolve_context_budget(model or OLLAMA_MODEL, "synthesis"),
+        },
     }
 
 

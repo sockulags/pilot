@@ -71,6 +71,20 @@ class RoleRoutingTests(unittest.TestCase):
         url, payload, _ = recorder.calls[0]
         self.assertIn("/api/chat", url)
         self.assertEqual(payload["model"], "gemma4:12b")
+        self.assertEqual(payload["options"]["num_ctx"], 4096)
+        self.assertFalse(payload["think"])
+
+    def test_code_role_budget_is_clamped_to_model_declared_limit(self):
+        recorder = _Recorder(_OLLAMA_RESPONSE)
+        _run_chat_once(recorder, model="qwen2.5-coder:14b", role="code_agent")
+        _, payload, _ = recorder.calls[0]
+        self.assertEqual(payload["options"]["num_ctx"], 32768)
+
+    def test_unroled_local_chat_has_explicit_default_context(self):
+        recorder = _Recorder(_OLLAMA_RESPONSE)
+        _run_chat_once(recorder, model="gemma4:12b")
+        _, payload, _ = recorder.calls[0]
+        self.assertEqual(payload["options"]["num_ctx"], 8192)
 
     def test_cloud_model_id_routes_to_provider(self):
         model_settings.save_settings(_settings())
@@ -80,6 +94,8 @@ class RoleRoutingTests(unittest.TestCase):
         self.assertEqual(url, "https://cloudx.example/v1/chat/completions")
         self.assertEqual(payload["model"], "big-model")
         self.assertEqual(headers["Authorization"], "Bearer sk-cloudx")
+        self.assertNotIn("options", payload)
+        self.assertNotIn("think", payload)
 
     def test_role_assignment_overrides_caller_model(self):
         model_settings.save_settings(

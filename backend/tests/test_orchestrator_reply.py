@@ -20,6 +20,7 @@ class ComposeReplyFallbackTests(unittest.TestCase):
         self.assertIs(payload["think"], False)
         self.assertIs(payload["stream"], True)
         self.assertEqual("gemma4:12b", payload["model"])
+        self.assertEqual(16384, payload["options"]["num_ctx"])
 
     def test_empty_model_reply_falls_back_to_action_log(self):
         asyncio.run(self._empty_model_reply_falls_back_to_action_log())
