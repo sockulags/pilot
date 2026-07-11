@@ -39,6 +39,11 @@ class _Client:
             raise self._error
         return self._response
 
+    async def post(self, url, json=None):
+        if self._error is not None:
+            raise self._error
+        return self._response
+
 
 def _patch_httpx(module, response=None, error=None):
     def factory(*args, **kwargs):
@@ -48,6 +53,102 @@ def _patch_httpx(module, response=None, error=None):
 
 
 class ModelInventoryTests(unittest.TestCase):
+    def tearDown(self):
+        from agents import model_inventory as mi
+        mi._DISCOVERED_CONTEXTS.clear()
+
+    def test_show_metadata_discovers_declared_context_and_capabilities(self):
+        from agents import model_inventory as mi
+
+        tags = _Resp({"models": [{"name": "gemma4:12b"}]})
+        show = _Resp({
+            "model_info": {"gemma4.context_length": 65536},
+            "capabilities": ["completion", "tools", "thinking"],
+        })
+
+        class Client(_Client):
+            async def get(self, url):
+                return tags
+            async def post(self, url, json=None):
+                return show
+
+        with mock.patch.object(mi.httpx, "AsyncClient", lambda *a, **k: Client()):
+            inv = asyncio.run(mi.get_model_inventory())
+
+        caps = inv.capabilities["gemma4:12b"]
+        self.assertEqual(65536, caps.declared_context)
+        self.assertTrue(caps.tools)
+        self.assertTrue(caps.thinking)
+        self.assertEqual(65536, mi.declared_context_for("gemma4:12b"))
+
+    def test_lower_show_limit_becomes_request_time_authority(self):
+        from agents import model_inventory as mi
+
+        tags = _Resp({"models": [{"name": "gemma4:12b"}]})
+        show = _Resp({
+            "model_info": {"gemma4.context_length": 2048},
+            "capabilities": ["completion", "tools"],
+        })
+
+        class Client(_Client):
+            async def get(self, url): return tags
+            async def post(self, url, json=None): return show
+
+        with mock.patch.object(mi.httpx, "AsyncClient", lambda *a, **k: Client()):
+            asyncio.run(mi.get_model_inventory())
+
+        self.assertEqual(2048, mi.resolve_context_budget("gemma4:12b", "synthesis"))
+
+    def test_failed_refresh_atomically_removes_stale_live_authority(self):
+        from agents import model_inventory as mi
+
+        mi._DISCOVERED_CONTEXTS = {"custom:model": 65536, "removed:model": 65536}
+        with _patch_httpx(mi, error=RuntimeError("show unavailable")):
+            result = asyncio.run(mi.discover_model_capabilities({"custom:model"}))
+
+        self.assertEqual({}, result)
+        self.assertEqual({}, mi._DISCOVERED_CONTEXTS)
+        self.assertEqual(4096, mi.resolve_context_budget("custom:model", "synthesis"))
+
+    def test_tags_failure_clears_prior_authority(self):
+        from agents import model_inventory as mi
+
+        mi._DISCOVERED_CONTEXTS = {"custom:model": 65536}
+        with _patch_httpx(mi, error=RuntimeError("ollama down")):
+            inv = asyncio.run(mi.get_model_inventory())
+
+        self.assertFalse(inv.discovery_ok)
+        self.assertEqual({}, mi._DISCOVERED_CONTEXTS)
+
+    def test_unknown_model_uses_safe_baseline_until_discovered(self):
+        from agents import model_inventory as mi
+
+        self.assertEqual(4096, mi.resolve_context_budget("custom:model", "code_agent"))
+        self.assertEqual(4096, mi.resolve_context_budget("custom:model", "synthesis"))
+        mi._DISCOVERED_CONTEXTS = {"custom:model": 12000}
+        self.assertEqual(12000, mi.resolve_context_budget("custom:model", "synthesis"))
+        self.assertEqual(12000, mi.resolve_context_budget("custom:model", "code_agent"))
+    def test_inventory_exposes_declared_effective_limits_and_capabilities(self):
+        from agents import model_inventory as mi
+
+        inv = mi.build_inventory({"gemma4:12b", "qwen3.5:9b"})
+
+        gemma = inv.capabilities["gemma4:12b"]
+        self.assertEqual(262144, gemma.declared_context)
+        self.assertEqual(8192, gemma.effective_context)
+        self.assertEqual(4096, gemma.effective_contexts["classifier"])
+        self.assertEqual(16384, gemma.effective_contexts["synthesis"])
+        self.assertTrue(gemma.tools)
+        self.assertFalse(gemma.embedding)
+        vision = inv.capabilities["qwen3.5:9b"]
+        self.assertTrue(vision.vision)
+        self.assertTrue(vision.thinking)
+
+    def test_runtime_budget_resolution_clamps_to_declared_maximum(self):
+        from agents.model_inventory import resolve_context_budget
+
+        self.assertEqual(2048, resolve_context_budget("tiny", "classifier", declared_max=2048))
+
     def test_discovery_success_classifies_installed_tools_and_vision(self):
         from agents import model_inventory as mi
 

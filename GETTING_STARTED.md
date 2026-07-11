@@ -80,6 +80,11 @@ defaults live in `backend/config.py`. The most common ones:
 | `OLLAMA_MODEL` | `gemma4:12b` | Default coordinator/answer model |
 | `OLLAMA_VISION_MODEL` | `qwen3.5:9b` | Vision model (optional) |
 | `OLLAMA_VISION_ENABLED` | `true` | Enable image vision (needs a multimodal model) |
+| `OLLAMA_VISION_NUM_CTX` | `8192` | Vision context; sized for a full-screen image plus task text |
+| `OLLAMA_DEFAULT_NUM_CTX` | `8192` | Conservative context for unroled local chat calls |
+| `OLLAMA_CLASSIFIER_NUM_CTX` / `OLLAMA_GATEWAY_NUM_CTX` | `4096` | Context for short structured routing stages |
+| `OLLAMA_SYNTHESIS_NUM_CTX` | `16384` | Context for coordinator and final synthesis |
+| `OLLAMA_CODE_NUM_CTX` | `32768` | Context for code roles; clamped to the model maximum |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama endpoint |
 | `PILOT_ANSWER_BACKEND` | `ollama` | `ollama` (fully local) or `openai` — see the README's [Model backends](README.md#model-backends-local-first-api-optional) |
 | `BACKEND_PORT` / `MCP_PORT` | `8000` / `3001` | Server ports |

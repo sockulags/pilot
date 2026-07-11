@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 from pathlib import Path
 from dataclasses import dataclass
@@ -25,6 +26,8 @@ from tools import registry
 from tools.comfyui import generate_image
 from tool_results import ToolResult
 from config import MAX_AGENT_STEPS, OLLAMA_VISION_ENABLED, PERCEPTION_ENABLED
+
+logger = logging.getLogger(__name__)
 
 # Behaviour sets are derived from the single tool registry (tools/registry.py),
 # so a tool's streaming / observe-after / deterministic nature is declared once.
@@ -258,8 +261,13 @@ async def perceive(task: str, history: list[dict], emit: Callable[[dict], None])
             try:
                 description = await analyze_screenshot(task, annotated, history)
                 observation = f"{observation}\n\nVisual description:\n{description}"
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("vision analysis unavailable: %s", exc)
+                message = "Vision analysis unavailable: the local vision model returned no usable description."
+                emit(make_event("error", content=message))
+                # Give the coordinator explicit evidence about the degraded
+                # observation so it does not invent a capability limitation.
+                observation = f"{observation}\n\n{message}"
 
         history.append({"type": "screen_observation", "content": observation})
         return observation

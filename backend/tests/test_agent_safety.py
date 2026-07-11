@@ -13,6 +13,27 @@ async def _async_value(value):
 
 
 class AgentSafetyTests(unittest.TestCase):
+    def test_perceive_surfaces_vision_failure_to_coordinator_and_ui(self):
+        from agents import loop
+
+        events = []
+
+        async def failed_vision(*_args, **_kwargs):
+            raise RuntimeError("empty visual description")
+
+        with mock.patch.object(
+            loop, "perceive_screen", return_value=("b64img", [], "Elements: [1] Browser")
+        ), mock.patch.object(loop, "analyze_screenshot", new=failed_vision), mock.patch.object(
+            loop, "OLLAMA_VISION_ENABLED", True
+        ):
+            observation = asyncio.run(loop.perceive("Review the UI", [], events.append))
+
+        self.assertIn("Vision analysis unavailable", observation)
+        self.assertTrue(any(
+            event["type"] == "error" and "no usable description" in event["content"]
+            for event in events
+        ))
+
     def test_blocks_desktop_input_without_visual_context(self):
         from agents.safety import unsafe_tool_block_reason
 

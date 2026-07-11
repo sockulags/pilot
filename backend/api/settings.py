@@ -16,6 +16,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 import model_settings
+from agents.model_inventory import build_inventory, discover_model_capabilities
 from config import ANSWER_BACKEND, OLLAMA_MODEL, OLLAMA_MODELS, PILOT_AUTH_TOKEN
 from config import AGENT_ROLE_MODELS
 
@@ -68,11 +69,17 @@ async def _fetch_ollama_models(base_url: str) -> tuple[bool, list[dict], str]:
     except Exception as exc:  # noqa: BLE001 — connectivity result, not a crash
         return False, [], f"{type(exc).__name__}: {exc}"
     models = []
+    names = {
+        str(m["name"]) for m in raw
+        if isinstance(m, dict) and m.get("name")
+    }
+    inventory = build_inventory(names, await discover_model_capabilities(names))
     for m in raw:
         if not isinstance(m, dict) or not m.get("name"):
             continue
         name = str(m["name"])
         registry = OLLAMA_MODELS.get(name)
+        caps = inventory.capabilities.get(name)
         models.append({
             "id": name,
             "size": m.get("size"),
@@ -80,6 +87,15 @@ async def _fetch_ollama_models(base_url: str) -> tuple[bool, list[dict], str]:
             "hint": registry["hint"] if registry else "",
             "tools": registry.get("tools", True) if registry else True,
             "in_registry": registry is not None,
+            "declared_context": caps.declared_context if caps else None,
+            "effective_context": caps.effective_context if caps else None,
+            "effective_contexts": caps.effective_contexts if caps else {},
+            "capabilities": {
+                "tools": caps.tools,
+                "thinking": caps.thinking,
+                "vision": caps.vision,
+                "embedding": caps.embedding,
+            } if caps else {},
         })
     return True, models, f"{len(models)} modeller installerade"
 

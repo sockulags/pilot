@@ -141,7 +141,38 @@ class VisionStaysLocalTests(unittest.TestCase):
         self.assertIn("/api/chat", url)
         # Ollama image format: base64 lives on the user message, not top-level.
         self.assertEqual(payload["messages"][-1]["images"], ["b64img"])
+        self.assertFalse(payload["think"])
+        self.assertGreaterEqual(payload["options"]["num_ctx"], 8192)
         self.assertEqual(out, "a login screen")
+
+    def test_analyze_screenshot_rejects_empty_visible_answer(self):
+        recorder = _Recorder({
+            "message": {"content": "", "thinking": "I can see the desktop"},
+            "done_reason": "length",
+        })
+        _patched_client(recorder)
+
+        with self.assertRaisesRegex(RuntimeError, "empty visual description"):
+            asyncio.run(router.analyze_screenshot("task", "b64img", []))
+
+    def test_analyze_screenshot_uses_live_declared_context_limit(self):
+        from agents import model_inventory
+
+        recorder = _Recorder(_VISION_RESPONSE)
+        _patched_client(recorder)
+        with mock.patch.dict(
+            model_inventory._DISCOVERED_CONTEXTS,
+            {router.OLLAMA_VISION_MODEL: 6000}, clear=True,
+        ):
+            asyncio.run(router.analyze_screenshot("task", "b64img", []))
+        self.assertEqual(recorder.calls[0][1]["options"]["num_ctx"], 6000)
+
+    def test_custom_unknown_vision_model_uses_safe_startup_context(self):
+        recorder = _Recorder(_VISION_RESPONSE)
+        _patched_client(recorder)
+        with mock.patch.object(router, "OLLAMA_VISION_MODEL", "custom-vision:model"):
+            asyncio.run(router.analyze_screenshot("task", "b64img", []))
+        self.assertEqual(recorder.calls[0][1]["options"]["num_ctx"], 4096)
 
     def test_vision_done_summary_never_hits_cloud(self):
         model_settings.save_settings(self._cloud_default_settings("http://lan-box:11434"))
@@ -152,6 +183,7 @@ class VisionStaysLocalTests(unittest.TestCase):
         self.assertNotIn("cloudx", url)
         self.assertTrue(url.startswith("http://lan-box:11434/"))
         self.assertEqual(payload["messages"][-1]["images"], ["b64img"])
+        self.assertGreaterEqual(payload["options"]["num_ctx"], 8192)
         self.assertEqual(out, "a login screen")
 
     def test_validate_vision_model_honours_custom_url(self):
@@ -159,10 +191,21 @@ class VisionStaysLocalTests(unittest.TestCase):
         recorder = _Recorder({"message": {"content": "OK"}})
         _patched_client(recorder)
         ok, _msg = asyncio.run(vision.validate_vision_model())
-        url, _, _ = recorder.calls[0]
+        url, payload, _ = recorder.calls[0]
         self.assertTrue(ok)
         self.assertNotIn("cloudx", url)
         self.assertTrue(url.startswith("http://lan-box:11434/"))
+        self.assertFalse(payload["think"])
+        self.assertGreaterEqual(payload["options"]["num_ctx"], 8192)
+
+    def test_validate_vision_model_rejects_empty_visible_answer(self):
+        recorder = _Recorder({"message": {"content": "", "thinking": "OK"}})
+        _patched_client(recorder)
+
+        ok, msg = asyncio.run(vision.validate_vision_model())
+
+        self.assertFalse(ok)
+        self.assertIn("empty response", msg)
 
 
 if __name__ == "__main__":

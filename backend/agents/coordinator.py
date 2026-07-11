@@ -404,7 +404,8 @@ async def _decide_step(
     # their tool_calls (and OpenAI rejects response_format alongside tools).
     fmt = None if use_tools else "json"
     msg = await providers.chat_once(
-        messages, coordinator_model, tools=tools, temperature=0.1, fmt=fmt
+        messages, coordinator_model, tools=tools, temperature=0.1, fmt=fmt,
+        context_role="coordinator",
     )
 
     if not use_tools:
@@ -429,6 +430,7 @@ async def _decide_step(
             coordinator_model,
             temperature=0.1,
             fmt="json",
+            context_role="coordinator",
         )
     except Exception as exc:  # noqa: BLE001 — degrade, never escalate to a turn error
         logger.warning("forced re-decision failed (%s); keeping prose answer", exc)
@@ -625,7 +627,10 @@ async def _consult_expert(
     ]
     parts: list[str] = []
     try:
-        async for piece in providers.chat_stream(messages, model, temperature=0.2, think=False):
+        async for piece in providers.chat_stream(
+            messages, model, temperature=0.2, think=False,
+            context_role="synthesis",
+        ):
             if abort.is_set():
                 break
             if piece:
@@ -1238,7 +1243,9 @@ async def _author_code(
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     parts: list[str] = []
     try:
-        async for piece in providers.chat_stream(messages, model, temperature=0.1):
+        async for piece in providers.chat_stream(
+            messages, model, temperature=0.1, context_role="code_agent"
+        ):
             if abort.is_set():
                 break
             if piece:

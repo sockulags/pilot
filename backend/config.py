@@ -7,6 +7,21 @@ load_env_file()
 
 logger = logging.getLogger(__name__)
 
+
+def _positive_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r is not an integer; using %s", name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("%s=%r must be positive; using %s", name, raw, default)
+        return default
+    return value
+
 # Directory where chat sessions are persisted (one JSON file per session_id).
 # Defaults to backend/data/sessions relative to this file.
 SESSIONS_DIR = os.getenv(
@@ -60,7 +75,21 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "qwen3.5:9b")
+# Full-screen images consume roughly 4k input tokens in current Ollama vision
+# models before task text is counted. Keep enough room for the actual request
+# and a useful answer; 4096 makes realistic screen-analysis prompts fail.
+OLLAMA_VISION_NUM_CTX = _positive_int_env("OLLAMA_VISION_NUM_CTX", 8192)
 OLLAMA_FALLBACK_MODEL = os.getenv("OLLAMA_FALLBACK_MODEL", "gpt-oss:20b")
+
+# Conservative runtime context policy.  Model-declared maxima describe what the
+# architecture can address; they are not a promise that the local GPU can run
+# that window efficiently.  Every local chat request resolves one of these
+# role budgets and clamps it to the selected model's declared maximum.
+OLLAMA_DEFAULT_NUM_CTX = _positive_int_env("OLLAMA_DEFAULT_NUM_CTX", 8192)
+OLLAMA_CLASSIFIER_NUM_CTX = _positive_int_env("OLLAMA_CLASSIFIER_NUM_CTX", 4096)
+OLLAMA_GATEWAY_NUM_CTX = _positive_int_env("OLLAMA_GATEWAY_NUM_CTX", 4096)
+OLLAMA_SYNTHESIS_NUM_CTX = _positive_int_env("OLLAMA_SYNTHESIS_NUM_CTX", 16384)
+OLLAMA_CODE_NUM_CTX = _positive_int_env("OLLAMA_CODE_NUM_CTX", 32768)
 
 # --- Long-term memory (semantic retrieval) ----------------------------------
 # Embeddings model for the cross-session memory store (agents-agnostic facts and
@@ -110,31 +139,44 @@ OLLAMA_MODELS: dict[str, dict] = {
         "label": "Gemma 4 12B",
         "hint": "Standardmodell för svensk chatt, gateway och stabila svar",
         "tools": True,
+        "context_length": 262144,
+        "thinking": True,
     },
     "gpt-oss:20b": {
         "label": "GPT-OSS 20B",
         "hint": "Starkt allmänt resonemang, research och sammanvägning",
         "tools": True,
+        "context_length": 131072,
+        "thinking": True,
     },
     "qwen3.5:9b": {
         "label": "Qwen3.5 9B",
         "hint": "Snabb tools-capable modell med fungerande vision",
         "tools": True,
+        "context_length": 262144,
+        "thinking": True,
+        "vision": True,
     },
     "deepseek-r1:14b": {
         "label": "DeepSeek-R1 14B",
         "hint": "Manuellt djupt resonemang, matematik och klurig analys",
         "tools": False,
+        "context_length": 131072,
+        "thinking": True,
     },
     "devstral:latest": {
         "label": "Devstral",
         "hint": "Agentiskt repoarbete och längre koduppgifter",
         "tools": True,
+        "context_length": 131072,
+        "thinking": False,
     },
     "qwen2.5-coder:14b": {
         "label": "Qwen2.5 Coder",
         "hint": "Snabb kod, teknik och programmeringsfrågor",
         "tools": True,
+        "context_length": 32768,
+        "thinking": False,
     },
 }
 
