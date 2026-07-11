@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import "./design.css";
 import {
   ArtifactCard,
@@ -125,9 +126,9 @@ export default function DesignSystem() {
             <div className="dz__title">Pilot Design System</div>
             <div className="dz__sub">Near-black, calm, developer-adjacent · svenskt UI · mono bär all meta</div>
           </div>
-          <a className="dz__back" href="/">
+          <Link className="dz__back" href="/">
             <Button variant="secondary" size="sm">← Till appen</Button>
-          </a>
+          </Link>
         </header>
 
         {/* ── FOUNDATIONS ── */}
