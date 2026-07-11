@@ -1,6 +1,7 @@
 """Unit tests for the model backend provider (agents/providers.py). No network."""
 
 import asyncio
+import pytest
 import os
 import sys
 
@@ -229,6 +230,86 @@ def test_ollama_tools_retry_retains_resolved_context(monkeypatch):
     assert client.calls[1]["options"]["num_ctx"] == 4096
 
 
+def test_ollama_overflow_gets_exactly_one_compacted_retry(monkeypatch):
+    class RetryClient(_Client):
+        def __init__(self): self.calls = []
+        async def post(self, url, json=None, headers=None):
+            self.calls.append(json.copy())
+            if len(self.calls) == 1:
+                return _Resp({"error": "prompt exceeds context size"}, status=400)
+            return _Resp({"message": {"content": "ok"}})
+    client = RetryClient()
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+    providers.reset_usage()
+    out = asyncio.run(providers.chat_once(
+        [{"role": "user", "content": "hi"}], backend="ollama",
+        tools=[{"type": "function", "function": {"name": "x"}}],
+    ))
+    assert out["content"] == "ok"
+    assert len(client.calls) == 2
+    assert "tools" in client.calls[1]
+    assert providers.get_context_reports()[-1].retry is True
+
+
+def test_tools_compatibility_and_overflow_never_stack_to_third_call(monkeypatch):
+    class RetryClient(_Client):
+        def __init__(self): self.calls = []
+        async def post(self, url, json=None, headers=None):
+            self.calls.append(json.copy())
+            if len(self.calls) == 1:
+                return _Resp({"error": "tools unsupported"}, status=400)
+            return _Resp({"error": "prompt exceeds context size"}, status=400)
+    client = RetryClient()
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+    try:
+        asyncio.run(providers.chat_once(
+            [{"role": "user", "content": "hi"}], backend="ollama",
+            tools=[{"type": "function", "function": {"name": "x"}}],
+        ))
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("second provider failure must surface")
+    assert len(client.calls) == 2
+
+
+def test_openai_overflow_gets_exactly_one_retry(monkeypatch):
+    class RetryClient(_Client):
+        def __init__(self): self.calls = []
+        async def post(self, url, json=None, headers=None):
+            self.calls.append(json.copy())
+            if len(self.calls) == 1:
+                return _Resp({"error": {"message": "maximum context length exceeded"}}, status=400)
+            return _Resp({"choices": [{"message": {"content": "ok"}}], "usage": {}})
+    client = RetryClient()
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+    monkeypatch.setattr(providers, "OPENAI_API_KEY", "sk-test")
+    out = asyncio.run(providers.chat_once([{"role": "user", "content": "hi"}], backend="openai"))
+    assert out["content"] == "ok"
+    assert len(client.calls) == 2
+
+
+@pytest.mark.parametrize("role", ["classifier", "coordinator", "synthesis", "code_agent"])
+def test_openai_uses_requested_role_budget_for_payload_planning(monkeypatch, role):
+    client = _Client(_Resp({"choices": [{"message": {"content": "ok"}}], "usage": {}}))
+    seen = []
+    real_resolve = providers.resolve_context_budget
+
+    def capture(model, requested_role=None, **kwargs):
+        seen.append((model, requested_role))
+        return real_resolve(model, requested_role, **kwargs)
+
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+    monkeypatch.setattr(providers, "OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(providers, "resolve_context_budget", capture)
+    asyncio.run(providers.chat_once(
+        [{"role": "user", "content": "hi"}], backend="openai", context_role=role
+    ))
+    assert seen == [(providers.OLLAMA_MODEL, role)]
+    expected = real_resolve(providers.OLLAMA_MODEL, role)
+    assert client.posted["json"]["max_tokens"] == min(2048, max(256, expected // 4))
+
+
 def test_live_declared_limit_clamps_nonstream_and_tool_retry(monkeypatch):
     model_inventory._DISCOVERED_CONTEXTS["gemma4:12b"] = 2048
 
@@ -340,6 +421,74 @@ def test_live_declared_limit_clamps_stream(monkeypatch):
         )]
     asyncio.run(collect())
     assert client.posted["options"]["num_ctx"] == 3000
+
+
+def test_ollama_stream_retries_overflow_only_before_first_delta(monkeypatch):
+    request = providers.httpx.Request("POST", "http://local/api/chat")
+
+    class StreamResponse:
+        def __init__(self, attempt): self.attempt = attempt
+        async def __aenter__(self): return self
+        async def __aexit__(self, *exc): return False
+        def raise_for_status(self):
+            if self.attempt == 1:
+                response = providers.httpx.Response(
+                    400, text="prompt exceeds context size", request=request,
+                )
+                raise providers.httpx.HTTPStatusError("overflow", request=request, response=response)
+        async def aiter_lines(self):
+            yield '{"message":{"content":"ok"},"done":true}'
+
+    class StreamClient(_Client):
+        def __init__(self): self.calls = 0
+        def stream(self, method, url, json=None):
+            self.calls += 1
+            return StreamResponse(self.calls)
+
+    client = StreamClient()
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+    async def collect():
+        return [p async for p in providers.chat_stream(
+            [{"role": "user", "content": "x"}], backend="ollama",
+        )]
+    assert asyncio.run(collect()) == ["ok"]
+    assert client.calls == 2
+
+
+def test_openai_stream_does_not_retry_after_content_delta(monkeypatch):
+    request = providers.httpx.Request("POST", "https://example/chat/completions")
+
+    class StreamResponse:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *exc): return False
+        def raise_for_status(self): return None
+        async def aiter_lines(self):
+            yield 'data: {"choices":[{"delta":{"content":"partial"}}]}'
+            response = providers.httpx.Response(
+                400, text="maximum context length exceeded", request=request,
+            )
+            raise providers.httpx.HTTPStatusError("overflow", request=request, response=response)
+
+    class StreamClient(_Client):
+        def __init__(self): self.calls = 0
+        def stream(self, method, url, json=None, headers=None):
+            self.calls += 1
+            return StreamResponse()
+
+    client = StreamClient()
+    monkeypatch.setattr(providers.httpx, "AsyncClient", lambda *a, **k: client)
+    monkeypatch.setattr(providers, "OPENAI_API_KEY", "sk-test")
+    async def collect():
+        return [p async for p in providers.chat_stream(
+            [{"role": "user", "content": "x"}], backend="openai",
+        )]
+    try:
+        asyncio.run(collect())
+    except providers.httpx.HTTPStatusError:
+        pass
+    else:
+        raise AssertionError("post-delta overflow must surface")
+    assert client.calls == 1
 
 
 def test_openai_once_maps_json_fmt_to_response_format(monkeypatch):

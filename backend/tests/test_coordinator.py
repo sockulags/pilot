@@ -13,6 +13,49 @@ class CoordinatorTests(unittest.TestCase):
     def test_simple_question_answers_immediately_without_gathering(self):
         asyncio.run(self._simple_question_answers_immediately())
 
+    def test_preflight_context_exhaustion_stops_after_one_real_perception(self):
+        asyncio.run(self._preflight_context_exhaustion_stops_after_one_real_perception())
+
+    async def _preflight_context_exhaustion_stops_after_one_real_perception(self):
+        from agents import coordinator
+        from agents.context_manager import ContextBudgetError
+
+        attempts = 0
+
+        async def exhausted(*_args, **_kwargs):
+            nonlocal attempts
+            attempts += 1
+            raise ContextBudgetError("mandatory context cannot fit")
+
+        decisions = [
+            {"action": "perceive", "thinking": "inspect"},
+            {"action": "perceive", "thinking": "repeat"},
+        ]
+        with mock.patch.object(
+            coordinator, "available_expert_models", new=_av(self._experts())
+        ), mock.patch.object(
+            coordinator, "_decide_step", new=_seq(decisions)
+        ), mock.patch.object(
+            coordinator.agent_loop, "perceive_screen",
+            return_value=("b64img", [], "Elements: [1] Browser"),
+        ), mock.patch.object(
+            coordinator.agent_loop, "analyze_screenshot", new=exhausted
+        ), mock.patch.object(
+            coordinator.agent_loop, "OLLAMA_VISION_ENABLED", True
+        ):
+            outcome = await coordinator.run_coordinator(
+                "Inspect screen", lambda _event: None, asyncio.Event(),
+                coordinator_model="gemma4:12b",
+            )
+
+        self.assertEqual(1, attempts)
+        self.assertEqual("error", outcome.status)
+        successful_perceptions = [
+            item for item in outcome.runtime_state.evidence_items
+            if item.get("tool") == "perceive" and item.get("ok")
+        ]
+        self.assertEqual([], successful_perceptions)
+
     def test_consults_expert_and_grounds_outcome(self):
         asyncio.run(self._consults_expert_and_grounds_outcome())
 

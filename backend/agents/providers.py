@@ -35,6 +35,7 @@ without threading counters through the agent.
 from __future__ import annotations
 
 import contextvars
+import json
 import logging
 from typing import Any, AsyncGenerator
 
@@ -42,6 +43,7 @@ import httpx
 
 import model_settings
 from agents.json_utils import extract_json_object
+from agents.context_manager import ContextReport, is_context_overflow, manage_request
 from agents.model_inventory import resolve_context_budget
 from config import (
     ANSWER_BACKEND,
@@ -147,10 +149,14 @@ def _cloud_route(model: str | None) -> tuple[dict, str] | None:
 # --------------------------------------------------------------------------- #
 
 _usage: contextvars.ContextVar[dict | None] = contextvars.ContextVar("llm_usage", default=None)
+_context_reports: contextvars.ContextVar[list[ContextReport] | None] = contextvars.ContextVar(
+    "context_reports", default=None
+)
 
 
 def reset_usage() -> None:
     _usage.set({"prompt_tokens": 0, "completion_tokens": 0, "calls": 0, "backend": None})
+    _context_reports.set([])
 
 
 def record_usage(prompt_tokens: int, completion_tokens: int, backend: str) -> None:
@@ -166,6 +172,34 @@ def record_usage(prompt_tokens: int, completion_tokens: int, backend: str) -> No
 def get_usage() -> dict:
     u = _usage.get()
     return dict(u) if u else {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0, "backend": None}
+
+
+def get_context_reports() -> list[ContextReport]:
+    """Safe per-request diagnostics; reports contain counts, never removed text."""
+    return list(_context_reports.get() or [])
+
+
+def _record_context_report(report: ContextReport) -> None:
+    reports = _context_reports.get()
+    if reports is not None:
+        reports.append(report)
+
+
+def _response_is_overflow(response: httpx.Response) -> bool:
+    if response.status_code < 400:
+        return False
+    body = getattr(response, "text", "") or ""
+    try:
+        body += " " + json.dumps(response.json(), sort_keys=True)
+    except Exception:  # noqa: BLE001 - compatible response doubles vary
+        pass
+    if is_context_overflow(RuntimeError(body)):
+        return True
+    try:
+        response.raise_for_status()
+    except Exception as exc:  # test doubles and compatible clients may wrap HTTP errors
+        return is_context_overflow(exc)
+    return False
 
 
 # --------------------------------------------------------------------------- #
@@ -204,7 +238,8 @@ async def chat_once(
         if be == OPENAI:
             return await _openai_once(
                 messages, answer_model(be, base), tools, temperature,
-                OPENAI_BASE_URL, OPENAI_API_KEY, fmt=fmt, schema=schema,
+                OPENAI_BASE_URL, OPENAI_API_KEY, role=context_role or role,
+                fmt=fmt, schema=schema,
             )
         return await _ollama_once(
             messages, answer_model(be, base), tools, temperature,
@@ -219,7 +254,8 @@ async def chat_once(
         return await _openai_once(
             messages, model_name, tools, temperature,
             str(entry.get("base_url") or OPENAI_BASE_URL),
-            model_settings.provider_api_key(entry), fmt=fmt, schema=schema,
+            model_settings.provider_api_key(entry), role=context_role or role,
+            fmt=fmt, schema=schema,
         )
     if model_settings.is_cloud_model_id(model):
         model = None  # unresolvable cloud id — fall back to the local default
@@ -227,6 +263,7 @@ async def chat_once(
         return await _openai_once(
             messages, answer_model(OPENAI, model), tools, temperature,
             OPENAI_BASE_URL, OPENAI_API_KEY, fmt=fmt, schema=schema,
+            role=context_role or role,
         )
     return await _ollama_once(
         messages, model or OLLAMA_MODEL, tools, temperature,
@@ -253,6 +290,7 @@ async def chat_stream(
             async for piece in _openai_stream(
                 messages, answer_model(be, base), temperature,
                 OPENAI_BASE_URL, OPENAI_API_KEY,
+                role=context_role or role,
             ):
                 yield piece
         else:
@@ -271,6 +309,7 @@ async def chat_stream(
             messages, model_name, temperature,
             str(entry.get("base_url") or OPENAI_BASE_URL),
             model_settings.provider_api_key(entry),
+            role=context_role or role,
         ):
             yield piece
         return
@@ -280,6 +319,7 @@ async def chat_stream(
         async for piece in _openai_stream(
             messages, answer_model(OPENAI, model), temperature,
             OPENAI_BASE_URL, OPENAI_API_KEY,
+            role=context_role or role,
         ):
             yield piece
         return
@@ -305,18 +345,22 @@ async def _ollama_once(
     fmt: str | None = None,
     schema: dict | None = None,
 ) -> dict:
+    context_window = resolve_context_budget(model, role)
+    managed = manage_request(messages, context_window=context_window, tools=tools)
+    _record_context_report(managed.report)
     payload: dict = {
         "model": model,
-        "messages": messages,
+        "messages": managed.messages,
         "stream": False,
         "think": False,
         "options": {
             "temperature": temperature,
-            "num_ctx": resolve_context_budget(model, role),
+            "num_ctx": context_window,
+            "num_predict": managed.report.completion_reserve,
         },
     }
-    if tools:
-        payload["tools"] = tools
+    if managed.tools:
+        payload["tools"] = managed.tools
     # Structured-output hint: /api/chat "format" is either "json" or a JSON schema
     # (schema wins when both are given). A model/endpoint that ignores it still
     # returns prose the caller's extract_json_object fallback parses.
@@ -327,9 +371,24 @@ async def _ollama_once(
     base_url = model_settings.ollama_base_url()
     async with httpx.AsyncClient(timeout=90) as client:
         resp = await client.post(f"{base_url}/api/chat", json=payload)
-        if tools and resp.status_code >= 400:
+        used_compat_retry = False
+        if tools and resp.status_code >= 400 and not _response_is_overflow(resp):
             # Endpoint/model rejected the tools payload — retry as plain JSON.
             payload.pop("tools", None)
+            resp = await client.post(f"{base_url}/api/chat", json=payload)
+            used_compat_retry = True
+        # Strict two-attempt bound: compatibility fallback and overflow recovery
+        # never stack into a third provider call. Overflow classification always
+        # wins when deciding the first retry.
+        if not used_compat_retry and resp.status_code >= 400 and _response_is_overflow(resp):
+            retry = manage_request(
+                messages, context_window=context_window, tools=payload.get("tools"),
+                force_compact=True, retry=True,
+                completion_reserve=managed.report.completion_reserve,
+            )
+            _record_context_report(retry.report)
+            payload["messages"] = retry.messages
+            payload["options"]["num_predict"] = retry.report.completion_reserve
             resp = await client.post(f"{base_url}/api/chat", json=payload)
         resp.raise_for_status()
         data = resp.json()
@@ -341,31 +400,50 @@ async def _ollama_stream(
     messages: list[dict], model: str, temperature: float, think: bool,
     *, role: str | None = None,
 ) -> AsyncGenerator[str, None]:
+    context_window = resolve_context_budget(model, role)
+    managed = manage_request(messages, context_window=context_window)
+    _record_context_report(managed.report)
     payload = {
         "model": model,
-        "messages": messages,
+        "messages": managed.messages,
         "stream": True,
         "think": think,
         "options": {
             "temperature": temperature,
-            "num_ctx": resolve_context_budget(model, role),
+            "num_ctx": context_window,
+            "num_predict": managed.report.completion_reserve,
         },
     }
     base_url = model_settings.ollama_base_url()
+    emitted = False
     async with httpx.AsyncClient(timeout=180) as client:
-        async with client.stream("POST", f"{base_url}/api/chat", json=payload) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line.strip():
-                    continue
-                chunk = extract_json_object(line, {})
-                piece = chunk.get("message", {}).get("content", "")
-                if piece:
-                    yield piece
-                if chunk.get("done"):
-                    record_usage(
-                        chunk.get("prompt_eval_count", 0), chunk.get("eval_count", 0), OLLAMA
-                    )
+        for attempt in range(2):
+            try:
+                async with client.stream("POST", f"{base_url}/api/chat", json=payload) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if not line.strip():
+                            continue
+                        chunk = extract_json_object(line, {})
+                        piece = chunk.get("message", {}).get("content", "")
+                        if piece:
+                            emitted = True
+                            yield piece
+                        if chunk.get("done"):
+                            record_usage(
+                                chunk.get("prompt_eval_count", 0), chunk.get("eval_count", 0), OLLAMA
+                            )
+                return
+            except httpx.HTTPStatusError as exc:
+                if attempt or emitted or not is_context_overflow(exc):
+                    raise
+                retry = manage_request(
+                    messages, context_window=context_window, force_compact=True, retry=True,
+                    completion_reserve=managed.report.completion_reserve,
+                )
+                _record_context_report(retry.report)
+                payload["messages"] = retry.messages
+                payload["options"]["num_predict"] = retry.report.completion_reserve
 
 
 # --------------------------------------------------------------------------- #
@@ -385,6 +463,7 @@ async def _openai_once(
     base_url: str,
     api_key: str,
     *,
+    role: str | None = None,
     fmt: str | None = None,
     schema: dict | None = None,
 ) -> dict:
@@ -393,9 +472,15 @@ async def _openai_once(
             "no API key configured for the OpenAI-compatible backend "
             "(set OPENAI_API_KEY or add a cloud provider on the settings page)"
         )
-    payload: dict = {"model": model, "messages": messages, "temperature": temperature}
-    if tools:
-        payload["tools"] = tools
+    context_window = resolve_context_budget(OLLAMA_MODEL, role)
+    managed = manage_request(messages, context_window=context_window, tools=tools)
+    _record_context_report(managed.report)
+    payload: dict = {
+        "model": model, "messages": managed.messages, "temperature": temperature,
+        "max_tokens": managed.report.completion_reserve,
+    }
+    if managed.tools:
+        payload["tools"] = managed.tools
         payload["tool_choice"] = "auto"
     elif schema is not None:
         # json_schema response format (tools and response_format are mutually
@@ -410,6 +495,18 @@ async def _openai_once(
         resp = await client.post(
             f"{base_url}/chat/completions", json=payload, headers=_openai_headers(api_key)
         )
+        if resp.status_code >= 400 and _response_is_overflow(resp):
+            retry = manage_request(
+                messages, context_window=context_window, tools=tools,
+                force_compact=True, retry=True,
+                completion_reserve=managed.report.completion_reserve,
+            )
+            _record_context_report(retry.report)
+            payload["messages"] = retry.messages
+            payload["max_tokens"] = retry.report.completion_reserve
+            resp = await client.post(
+                f"{base_url}/chat/completions", json=payload, headers=_openai_headers(api_key)
+            )
         resp.raise_for_status()
         data = resp.json()
     usage = data.get("usage", {}) or {}
@@ -424,43 +521,64 @@ async def _openai_stream(
     temperature: float,
     base_url: str,
     api_key: str,
+    *,
+    role: str | None = None,
 ) -> AsyncGenerator[str, None]:
     if not api_key:
         raise RuntimeError(
             "no API key configured for the OpenAI-compatible backend "
             "(set OPENAI_API_KEY or add a cloud provider on the settings page)"
         )
+    context_window = resolve_context_budget(OLLAMA_MODEL, role)
+    managed = manage_request(messages, context_window=context_window)
+    _record_context_report(managed.report)
     payload = {
         "model": model,
-        "messages": messages,
+        "messages": managed.messages,
         "temperature": temperature,
+        "max_tokens": managed.report.completion_reserve,
         "stream": True,
         "stream_options": {"include_usage": True},
     }
+    emitted = False
     async with httpx.AsyncClient(timeout=180) as client:
-        async with client.stream(
-            "POST", f"{base_url}/chat/completions", json=payload,
-            headers=_openai_headers(api_key),
-        ) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                line = line.strip()
-                if not line or not line.startswith("data:"):
-                    continue
-                body = line[len("data:"):].strip()
-                if body == "[DONE]":
-                    break
-                chunk = extract_json_object(body, {})
-                usage = chunk.get("usage")
-                if usage:
-                    record_usage(
-                        usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), OPENAI
-                    )
-                choices = chunk.get("choices") or []
-                if choices:
-                    piece = (choices[0].get("delta", {}) or {}).get("content", "")
-                    if piece:
-                        yield piece
+        for attempt in range(2):
+            try:
+                async with client.stream(
+                    "POST", f"{base_url}/chat/completions", json=payload,
+                    headers=_openai_headers(api_key),
+                ) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        line = line.strip()
+                        if not line or not line.startswith("data:"):
+                            continue
+                        body = line[len("data:"):].strip()
+                        if body == "[DONE]":
+                            break
+                        chunk = extract_json_object(body, {})
+                        usage = chunk.get("usage")
+                        if usage:
+                            record_usage(
+                                usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), OPENAI
+                            )
+                        choices = chunk.get("choices") or []
+                        if choices:
+                            piece = (choices[0].get("delta", {}) or {}).get("content", "")
+                            if piece:
+                                emitted = True
+                                yield piece
+                return
+            except httpx.HTTPStatusError as exc:
+                if attempt or emitted or not is_context_overflow(exc):
+                    raise
+                retry = manage_request(
+                    messages, context_window=context_window, force_compact=True, retry=True,
+                    completion_reserve=managed.report.completion_reserve,
+                )
+                _record_context_report(retry.report)
+                payload["messages"] = retry.messages
+                payload["max_tokens"] = retry.report.completion_reserve
 
 
 # --------------------------------------------------------------------------- #

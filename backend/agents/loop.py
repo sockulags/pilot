@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Callable
 from agents.router import route_next_action, analyze_screenshot
 from agents.perception import perceive_screen
+from agents.context_manager import ContextBudgetError, is_context_overflow
 from agents.safety import unsafe_tool_block_reason
 from agents.runtime_state import RuntimeState
 from agents.turn_policy import build_task_context, web_query
@@ -55,6 +56,19 @@ class LoopOutcome:
     action_log: str = ""
     detail: str = ""
     runtime_state: RuntimeState | None = None
+
+
+@dataclass(frozen=True)
+class PerceptionResult:
+    """Trusted control status kept separate from untrusted screen text."""
+
+    observation: str
+    context_exhausted: bool = False
+
+
+def normalize_perception(value: PerceptionResult | str) -> PerceptionResult:
+    """Compatibility boundary for existing test doubles and custom integrations."""
+    return value if isinstance(value, PerceptionResult) else PerceptionResult(str(value or ""))
 
 
 def render_action_log(history: list[dict]) -> str:
@@ -117,7 +131,12 @@ async def run_agent_loop(
         # pick the right click_element id. Runs without a vision model — the
         # element list alone is enough.
         if tool in DESKTOP_TOOLS and not screen_observation and PERCEPTION_ENABLED:
-            screen_observation = await perceive(task, history, emit)
+            perception = normalize_perception(await perceive(task, history, emit))
+            if perception.context_exhausted:
+                message = "Perception stopped after context recovery was exhausted."
+                runtime_state.record_error(message, "perceive", {})
+                return LoopOutcome("error", render_action_log(history), message, runtime_state)
+            screen_observation = perception.observation
             last_observation = screen_observation
             try:
                 decision = await route_next_action(
@@ -226,7 +245,12 @@ async def run_agent_loop(
             return LoopOutcome("done", render_action_log(history), completion_summary, runtime_state)
 
         if tool in POST_ACTION_OBSERVE_TOOLS:
-            last_observation = await perceive(task, history, emit)
+            perception = normalize_perception(await perceive(task, history, emit))
+            if perception.context_exhausted:
+                message = "Post-action perception stopped after context recovery was exhausted."
+                runtime_state.record_error(message, "perceive", {})
+                return LoopOutcome("error", render_action_log(history), message, runtime_state)
+            last_observation = perception.observation
 
         if abort_event.is_set():
             return LoopOutcome("aborted", render_action_log(history), runtime_state=runtime_state)
@@ -240,7 +264,9 @@ async def run_agent_loop(
     )
 
 
-async def perceive(task: str, history: list[dict], emit: Callable[[dict], None]) -> str:
+async def perceive(
+    task: str, history: list[dict], emit: Callable[[dict], None]
+) -> PerceptionResult:
     """Observe the screen as a Set-of-Marks: enumerate interactive elements, draw
     numbered marks, and return a text observation the router can act on.
 
@@ -249,7 +275,7 @@ async def perceive(task: str, history: list[dict], emit: Callable[[dict], None])
     appended. Returns "" only if perception is disabled or fails.
     """
     if not PERCEPTION_ENABLED:
-        return ""
+        return PerceptionResult("")
 
     try:
         emit(make_event("thinking", content="Observerar skärmen (element + bild)..."))
@@ -257,23 +283,31 @@ async def perceive(task: str, history: list[dict], emit: Callable[[dict], None])
         annotated, _elements, observation = await asyncio.to_thread(perceive_screen)
         emit(make_event("screenshot", image=annotated))
 
+        context_exhausted = False
         if OLLAMA_VISION_ENABLED:
             try:
                 description = await analyze_screenshot(task, annotated, history)
                 observation = f"{observation}\n\nVisual description:\n{description}"
             except Exception as exc:
                 logger.warning("vision analysis unavailable: %s", exc)
-                message = "Vision analysis unavailable: the local vision model returned no usable description."
+                context_exhausted = isinstance(exc, ContextBudgetError) or is_context_overflow(exc)
+                if context_exhausted:
+                    message = (
+                        "Vision context recovery exhausted after one compacted retry; "
+                        "the screen was not visually analyzed."
+                    )
+                else:
+                    message = "Vision analysis unavailable: the local vision model returned no usable description."
                 emit(make_event("error", content=message))
                 # Give the coordinator explicit evidence about the degraded
                 # observation so it does not invent a capability limitation.
                 observation = f"{observation}\n\n{message}"
 
         history.append({"type": "screen_observation", "content": observation})
-        return observation
+        return PerceptionResult(observation, context_exhausted=context_exhausted)
     except Exception as e:
         emit(make_event("error", content=f"Perception error: {e}"))
-        return ""
+        return PerceptionResult("")
 
 
 def normalize_command_key(args: dict) -> tuple[str, str]:

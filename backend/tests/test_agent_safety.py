@@ -28,11 +28,31 @@ class AgentSafetyTests(unittest.TestCase):
         ):
             observation = asyncio.run(loop.perceive("Review the UI", [], events.append))
 
-        self.assertIn("Vision analysis unavailable", observation)
+        self.assertIn("Vision analysis unavailable", observation.observation)
         self.assertTrue(any(
             event["type"] == "error" and "no usable description" in event["content"]
             for event in events
         ))
+
+    def test_perceive_types_preflight_context_exhaustion(self):
+        from agents import loop
+        from agents.context_manager import ContextBudgetError
+
+        events = []
+
+        async def exhausted(*_args, **_kwargs):
+            raise ContextBudgetError("mandatory context cannot fit")
+
+        with mock.patch.object(
+            loop, "perceive_screen", return_value=("b64img", [], "Elements: [1] Browser")
+        ), mock.patch.object(loop, "analyze_screenshot", new=exhausted), mock.patch.object(
+            loop, "OLLAMA_VISION_ENABLED", True
+        ):
+            result = asyncio.run(loop.perceive("Review the UI", [], events.append))
+
+        self.assertTrue(result.context_exhausted)
+        self.assertIn("Elements: [1] Browser", result.observation)
+        self.assertTrue(any("context recovery exhausted" in e.get("content", "") for e in events))
 
     def test_blocks_desktop_input_without_visual_context(self):
         from agents.safety import unsafe_tool_block_reason
