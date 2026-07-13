@@ -46,6 +46,7 @@ import model_settings
 from agents.json_utils import extract_json_object
 from agents.context_manager import ContextReport, is_context_overflow, manage_request
 from agents.model_inventory import declared_context_for, resolve_context_budget
+from agents import local_runtime
 from config import (
     ANSWER_BACKEND,
     OLLAMA_MODEL,
@@ -313,6 +314,13 @@ async def chat_once(
             OPENAI_BASE_URL, OPENAI_API_KEY, fmt=fmt, schema=schema,
             role=context_role or role,
         )
+    runtime = model_settings.local_runtime_snapshot()
+    if runtime.kind == "openai_compatible":
+        local_model = runtime.chat_model if not model or model in OLLAMA_MODELS else model
+        return await _local_openai_once(
+            runtime, messages, local_model, tools, temperature,
+            role=context_role or role, fmt=fmt, schema=schema,
+        )
     return await _ollama_once(
         messages, model or OLLAMA_MODEL, tools, temperature,
         role=context_role or role,
@@ -371,6 +379,15 @@ async def chat_stream(
         ):
             yield piece
         return
+    runtime = model_settings.local_runtime_snapshot()
+    if runtime.kind == "openai_compatible":
+        local_model = runtime.chat_model if not model or model in OLLAMA_MODELS else model
+        async for piece in _local_openai_stream(
+            runtime, messages, local_model, temperature,
+            role=context_role or role,
+        ):
+            yield piece
+        return
     async for piece in _ollama_stream(
         messages, model or OLLAMA_MODEL, temperature, think,
         role=context_role or role
@@ -393,6 +410,12 @@ async def _ollama_once(
     fmt: str | None = None,
     schema: dict | None = None,
 ) -> dict:
+    runtime = model_settings.local_runtime_snapshot()
+    if runtime.kind != "ollama":
+        raise local_runtime.LocalRuntimeError("provider_error", "Ollama adapter requires an Ollama runtime")
+    base_url = local_runtime.validate_local_endpoint(runtime)
+    if tools:
+        await local_runtime.ensure_capability(runtime, model, "tools")
     context_window = resolve_context_budget(model, role)
     managed = manage_request(messages, context_window=context_window, tools=tools)
     active_report = _record_context_report(_tag_context_report(managed.report, model, role))
@@ -416,14 +439,14 @@ async def _ollama_once(
         payload["format"] = schema
     elif fmt:
         payload["format"] = fmt
-    base_url = model_settings.ollama_base_url()
-    async with httpx.AsyncClient(timeout=90) as client:
-        resp = await client.post(f"{base_url}/api/chat", json=payload)
+    async with local_runtime.client(90) as client:
+        headers = local_runtime.runtime_headers(runtime)
+        resp = await client.post(f"{base_url}/api/chat", json=payload, headers=headers)
         used_compat_retry = False
         if tools and resp.status_code >= 400 and not _response_is_overflow(resp):
             # Endpoint/model rejected the tools payload — retry as plain JSON.
             payload.pop("tools", None)
-            resp = await client.post(f"{base_url}/api/chat", json=payload)
+            resp = await client.post(f"{base_url}/api/chat", json=payload, headers=headers)
             used_compat_retry = True
         # Strict two-attempt bound: compatibility fallback and overflow recovery
         # never stack into a third provider call. Overflow classification always
@@ -437,7 +460,7 @@ async def _ollama_once(
             active_report = _record_context_report(_tag_context_report(retry.report, model, role))
             payload["messages"] = retry.messages
             payload["options"]["num_predict"] = retry.report.completion_reserve
-            resp = await client.post(f"{base_url}/api/chat", json=payload)
+            resp = await client.post(f"{base_url}/api/chat", json=payload, headers=headers)
         resp.raise_for_status()
         data = resp.json()
     record_usage(data.get("prompt_eval_count", 0), data.get("eval_count", 0), OLLAMA)
@@ -451,6 +474,10 @@ async def _ollama_stream(
     messages: list[dict], model: str, temperature: float, think: bool,
     *, role: str | None = None,
 ) -> AsyncGenerator[str, None]:
+    runtime = model_settings.local_runtime_snapshot()
+    if runtime.kind != "ollama":
+        raise local_runtime.LocalRuntimeError("provider_error", "Ollama adapter requires an Ollama runtime")
+    base_url = local_runtime.validate_local_endpoint(runtime)
     context_window = resolve_context_budget(model, role)
     managed = manage_request(messages, context_window=context_window)
     active_report = _record_context_report(_tag_context_report(managed.report, model, role))
@@ -465,12 +492,17 @@ async def _ollama_stream(
             "num_predict": managed.report.completion_reserve,
         },
     }
-    base_url = model_settings.ollama_base_url()
     emitted = False
-    async with httpx.AsyncClient(timeout=180) as client:
+    async with local_runtime.client(180) as client:
         for attempt in range(2):
             try:
-                async with client.stream("POST", f"{base_url}/api/chat", json=payload) as resp:
+                stream_response = client.stream(
+                    "POST", f"{base_url}/api/chat", json=payload,
+                    headers=local_runtime.runtime_headers(runtime),
+                ) if runtime.effective_key else client.stream(
+                    "POST", f"{base_url}/api/chat", json=payload,
+                )
+                async with stream_response as resp:
                     resp.raise_for_status()
                     async for line in resp.aiter_lines():
                         if not line.strip():
@@ -509,6 +541,89 @@ async def _ollama_stream(
 # --------------------------------------------------------------------------- #
 
 
+def _local_context_window(config: local_runtime.LocalRuntimeConfig, model: str, role: str | None) -> int:
+    override = config.context_overrides.get(model)
+    # Generic endpoints do not inherit Ollama discovery/registry metadata.
+    return resolve_context_budget("__unknown_local_openai__", role, declared_max=override)
+
+
+async def _local_openai_once(
+    config: local_runtime.LocalRuntimeConfig,
+    messages: list[dict], model: str, tools: list[dict] | None, temperature: float,
+    *, role: str | None = None, fmt: str | None = None, schema: dict | None = None,
+) -> dict:
+    if not model:
+        raise local_runtime.LocalRuntimeError("model_missing", "No local chat model is configured")
+    if tools:
+        local_runtime.require_capability(config, "tools")
+    if schema is not None or fmt == "json":
+        local_runtime.require_capability(config, "structured_output")
+    if any(message.get("images") for message in messages):
+        local_runtime.require_capability(config, "vision")
+    context_window = _local_context_window(config, model, role)
+    managed = manage_request(messages, context_window=context_window, tools=tools)
+    active_report = _record_context_report(_tag_context_report(managed.report, model, role))
+    payload: dict = {
+        "model": model,
+        "messages": local_runtime.openai_messages(managed.messages),
+        "temperature": temperature,
+        "max_tokens": managed.report.completion_reserve,
+    }
+    if managed.tools:
+        payload.update({"tools": managed.tools, "tool_choice": "auto"})
+    elif schema is not None:
+        payload["response_format"] = {
+            "type": "json_schema", "json_schema": {"name": "decision", "schema": schema}
+        }
+    elif fmt == "json":
+        payload["response_format"] = {"type": "json_object"}
+    try:
+        message, usage = await local_runtime.openai_chat_once(config, payload)
+    except local_runtime.LocalRuntimeError as exc:
+        if exc.code != "context_overflow":
+            raise
+        retry = manage_request(
+            messages, context_window=context_window, tools=tools, force_compact=True,
+            retry=True, completion_reserve=managed.report.completion_reserve,
+        )
+        active_report = _record_context_report(_tag_context_report(retry.report, model, role))
+        payload["messages"] = local_runtime.openai_messages(retry.messages)
+        payload["max_tokens"] = retry.report.completion_reserve
+        message, usage = await local_runtime.openai_chat_once(config, payload)
+    record_usage(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), "local_openai")
+    _record_report_usage(active_report, usage.get("prompt_tokens"), usage.get("completion_tokens"))
+    return _normalize_message(message)
+
+
+async def _local_openai_stream(
+    config: local_runtime.LocalRuntimeConfig,
+    messages: list[dict], model: str, temperature: float, *, role: str | None = None,
+) -> AsyncGenerator[str, None]:
+    if not model:
+        raise local_runtime.LocalRuntimeError("model_missing", "No local chat model is configured")
+    context_window = _local_context_window(config, model, role)
+    managed = manage_request(messages, context_window=context_window)
+    active_report = _record_context_report(_tag_context_report(managed.report, model, role))
+    payload = {
+        "model": model,
+        "messages": local_runtime.openai_messages(managed.messages),
+        "temperature": temperature,
+        "max_tokens": managed.report.completion_reserve,
+        "stream": True,
+        # Intentionally no stream_options: llama.cpp/LM Studio versions vary.
+    }
+    async for chunk in local_runtime.openai_chat_stream(config, payload):
+        usage = chunk.get("usage") or {}
+        if usage:
+            record_usage(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), "local_openai")
+            _record_report_usage(active_report, usage.get("prompt_tokens"), usage.get("completion_tokens"))
+        choices = chunk.get("choices") or []
+        if choices:
+            piece = (choices[0].get("delta") or {}).get("content") or ""
+            if piece:
+                yield piece
+
+
 def _openai_headers(api_key: str) -> dict:
     return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
@@ -530,7 +645,9 @@ async def _openai_once(
             "no API key configured for the OpenAI-compatible backend "
             "(set OPENAI_API_KEY or add a cloud provider on the settings page)"
         )
-    context_window = resolve_context_budget(OLLAMA_MODEL, role)
+    # Cloud providers have no Ollama /api/show authority. Until the provider
+    # exposes a configured limit, use the conservative unknown-model budget.
+    context_window = resolve_context_budget("__unknown_openai_cloud__", role)
     managed = manage_request(messages, context_window=context_window, tools=tools)
     active_report = _record_context_report(_tag_context_report(managed.report, model, role))
     payload: dict = {
@@ -590,7 +707,7 @@ async def _openai_stream(
             "no API key configured for the OpenAI-compatible backend "
             "(set OPENAI_API_KEY or add a cloud provider on the settings page)"
         )
-    context_window = resolve_context_budget(OLLAMA_MODEL, role)
+    context_window = resolve_context_budget("__unknown_openai_cloud__", role)
     managed = manage_request(messages, context_window=context_window)
     active_report = _record_context_report(_tag_context_report(managed.report, model, role))
     payload = {
@@ -599,7 +716,6 @@ async def _openai_stream(
         "temperature": temperature,
         "max_tokens": managed.report.completion_reserve,
         "stream": True,
-        "stream_options": {"include_usage": True},
     }
     emitted = False
     async with httpx.AsyncClient(timeout=180) as client:

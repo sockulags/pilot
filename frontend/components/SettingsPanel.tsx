@@ -23,6 +23,19 @@ type RoleAssignment = { provider: string; model: string } | null;
 type Settings = {
   version: number;
   ollama: { base_url: string };
+  local_runtime: {
+    kind: "ollama" | "openai_compatible";
+    base_url: string;
+    api_key: string;
+    has_key?: boolean;
+    key_hint?: string;
+    allow_private_network: boolean;
+    chat_model: string;
+    vision_model: string;
+    embedding_model: string;
+    context_overrides: Record<string, number>;
+    capabilities: Record<"tools" | "vision" | "embeddings" | "structured_output", "supported" | "unsupported" | "unknown">;
+  };
   cloud_providers: CloudProvider[];
   roles: Record<string, RoleAssignment>;
 };
@@ -44,6 +57,7 @@ type OllamaModelInfo = {
 
 type Availability = {
   ollama: { ok: boolean; base_url: string; detail: string; models: OllamaModelInfo[] };
+  local_runtime?: { ok: boolean; kind: string; base_url: string; detail: string; models: OllamaModelInfo[] };
   cloud: { id: string; label: string; enabled: boolean; has_key: boolean; models: string[] }[];
 };
 
@@ -155,11 +169,11 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
   }, [settings, toast]);
 
   const testProvider = useCallback(
-    async (providerId: string, baseUrl: string, apiKey?: string) => {
+    async (providerId: string, baseUrl: string, apiKey?: string, localOptions?: { kind: string; allow_private_network: boolean }) => {
       setTestStatus((s) => ({ ...s, [providerId]: t.settings.testing }));
       const resp = await apiFetch("/api/settings/test-provider", {
         method: "POST",
-        body: JSON.stringify({ provider: providerId, base_url: baseUrl, api_key: apiKey || "" }),
+        body: JSON.stringify({ provider: providerId, base_url: baseUrl, api_key: apiKey || "", ...localOptions }),
       });
       const detail = resp.data?.detail ?? t.settings.testFailed;
       setTestStatus((s) => ({ ...s, [providerId]: `${resp.data?.ok ? "✓" : "✗"} ${detail}` }));
@@ -184,7 +198,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
     });
   }, [newPreset, update]);
 
-  const localModels = available?.ollama.models ?? [];
+  const localModels = available?.local_runtime?.models ?? available?.ollama.models ?? [];
 
   // Options a role can be assigned to: every installed local model + every
   // model declared on a cloud provider (in the CURRENT edited state, so a
@@ -278,34 +292,108 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
               ))}
             </section>
 
-            {/* ── Ollama ────────────────────────────────────────────── */}
+            {/* ── Local runtime ─────────────────────────────────────── */}
             <section className="control-card settings-block">
               <div className="control-head">
-                <span className="seclabel">{t.settings.ollamaTitle}</span>
+                <span className="seclabel">{t.settings.localRuntimeTitle}</span>
                 {available && (
-                  <span className={`settings-status${available.ollama.ok ? " ok" : " bad"}`}>
-                    {available.ollama.ok
-                      ? `✓ ${available.ollama.detail}`
-                      : `✗ ${t.settings.ollamaDown}`}
+                  <span className={`settings-status${(available.local_runtime?.ok ?? available.ollama.ok) ? " ok" : " bad"}`}>
+                    {(available.local_runtime?.ok ?? available.ollama.ok)
+                      ? `✓ ${available.local_runtime?.detail ?? available.ollama.detail}`
+                      : `✗ ${t.settings.localRuntimeDown}`}
                   </span>
                 )}
               </div>
+              <p className="settings-note">{t.settings.localRuntimePrivacy}</p>
+              <select
+                className="fld"
+                value={settings.local_runtime.kind}
+                aria-label={t.settings.localRuntimeType}
+                onChange={(e) => update((d) => {
+                  d.local_runtime.kind = e.target.value as "ollama" | "openai_compatible";
+                  d.local_runtime.base_url = e.target.value === "ollama"
+                    ? "http://localhost:11434" : "http://127.0.0.1:1234/v1";
+                })}
+              >
+                <option value="ollama">Ollama</option>
+                <option value="openai_compatible">OpenAI-kompatibel (LM Studio / llama.cpp)</option>
+              </select>
               <div className="addrow">
                 <input
                   className="fld"
-                  value={settings.ollama.base_url}
-                  onChange={(e) => update((d) => { d.ollama.base_url = e.target.value; })}
-                  placeholder="http://localhost:11434"
-                  aria-label={t.settings.ollamaUrl}
+                  value={settings.local_runtime.base_url}
+                  onChange={(e) => update((d) => { d.local_runtime.base_url = e.target.value; })}
+                  placeholder={settings.local_runtime.kind === "ollama" ? "http://localhost:11434" : "http://127.0.0.1:1234/v1"}
+                  aria-label={t.settings.localRuntimeUrl}
                 />
                 <button
                   className="control-pill"
-                  onClick={() => testProvider("ollama", settings.ollama.base_url)}
+                  onClick={() => testProvider("local", settings.local_runtime.base_url, settings.local_runtime.api_key, {
+                    kind: settings.local_runtime.kind,
+                    allow_private_network: settings.local_runtime.allow_private_network,
+                  })}
                 >
                   {t.settings.test}
                 </button>
               </div>
-              {testStatus["ollama"] && <div className="settings-note">{testStatus["ollama"]}</div>}
+              <div className="addrow">
+                <input className="fld" value={settings.local_runtime.chat_model}
+                  aria-label={t.settings.localChatModel} placeholder="Modell-id"
+                  onChange={(e) => update((d) => { d.local_runtime.chat_model = e.target.value; })} />
+                <input className="fld" type="password" value={settings.local_runtime.api_key}
+                  aria-label={t.settings.localRuntimeKey}
+                  placeholder={settings.local_runtime.has_key ? `${t.settings.keySaved} ${settings.local_runtime.key_hint ?? ""}` : t.settings.localRuntimeKey}
+                  onChange={(e) => update((d) => { d.local_runtime.api_key = e.target.value; })} />
+              </div>
+              <div className="addrow">
+                <input className="fld" value={settings.local_runtime.vision_model}
+                  aria-label={t.settings.localVisionModel} placeholder={t.settings.localVisionModel}
+                  onChange={(e) => update((d) => { d.local_runtime.vision_model = e.target.value; })} />
+                <input className="fld" value={settings.local_runtime.embedding_model}
+                  aria-label={t.settings.localEmbeddingModel} placeholder={t.settings.localEmbeddingModel}
+                  onChange={(e) => update((d) => { d.local_runtime.embedding_model = e.target.value; })} />
+              </div>
+              <div className="addrow">
+                <input className="fld" type="number" min={256}
+                  value={settings.local_runtime.context_overrides[settings.local_runtime.chat_model] ?? ""}
+                  aria-label={t.settings.localChatContext} placeholder={t.settings.localChatContext}
+                  onChange={(e) => update((d) => {
+                    const model = d.local_runtime.chat_model;
+                    if (model && e.target.value) d.local_runtime.context_overrides[model] = Number(e.target.value);
+                    else if (model) delete d.local_runtime.context_overrides[model];
+                  })} />
+                <input className="fld" type="number" min={256}
+                  value={settings.local_runtime.context_overrides[settings.local_runtime.vision_model] ?? ""}
+                  aria-label={t.settings.localVisionContext} placeholder={t.settings.localVisionContext}
+                  onChange={(e) => update((d) => {
+                    const model = d.local_runtime.vision_model;
+                    if (model && e.target.value) d.local_runtime.context_overrides[model] = Number(e.target.value);
+                    else if (model) delete d.local_runtime.context_overrides[model];
+                  })} />
+              </div>
+              {settings.local_runtime.kind === "openai_compatible" && (
+                <>
+                  <label className="settings-toggle">
+                    <input type="checkbox" checked={settings.local_runtime.allow_private_network}
+                      onChange={(e) => update((d) => { d.local_runtime.allow_private_network = e.target.checked; })} />
+                    {t.settings.allowPrivateNetwork}
+                  </label>
+                  <div className="settings-subhead">{t.settings.capabilities}</div>
+                  <div className="addrow">
+                    {(["tools", "vision", "embeddings", "structured_output"] as const).map((cap) => (
+                      <label key={cap} className="settings-rolemeta">{cap}
+                        <select className="fld" value={settings.local_runtime.capabilities[cap]}
+                          onChange={(e) => update((d) => { d.local_runtime.capabilities[cap] = e.target.value as "supported" | "unsupported" | "unknown"; })}>
+                          <option value="unknown">unknown</option>
+                          <option value="supported">supported</option>
+                          <option value="unsupported">unsupported</option>
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+              {testStatus["local"] && <div className="settings-note">{testStatus["local"]}</div>}
             </section>
 
             {/* ── Cloud providers ───────────────────────────────────── */}

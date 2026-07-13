@@ -2,7 +2,7 @@
 
 ## Current Milestone
 
-Milestone 3 / issue #64 — context telemetry UI. A previously validated but uncommitted implementation was lost during an unrelated worktree branch switch; its exact patch sequence was recovered from the original Codex rollout and is being adapted to current `master` before independent review.
+Milestone 4 / issue #65 — pluggable local inference runtimes. Implementation, repair, independent review, broad validation, live Ollama smoke, and browser QA are complete; publication/CI/merge is next.
 
 ## Completed
 
@@ -22,6 +22,10 @@ Milestone 3 / issue #64 — context telemetry UI. A previously validated but unc
 - #64 was reconstructed from the recovered patch record, adapted to current `master`, and completed through three independent two-pass review cycles.
 - #64 final independent spec-compliance and code-quality review is APPROVED with no actionable findings.
 - Browser QA passed for legacy, normal, persisted reconnect, synthetic near-limit (4096 effective denominator), desktop and 375px mobile states with no console errors.
+- PR #76 merged to `master` at `2ed4263`; backend/frontend CI passed and issue #64 closed.
+- #65 now centralizes local endpoint policy and runtime snapshots, preserves stock Ollama, adds the generic local OpenAI-compatible contract for LM Studio/llama.cpp, and routes local chat/tools/vision/embeddings through the privacy boundary.
+- #65 independent review found and repaired a DNS-rebinding hostname gap plus missing authenticated-Ollama headers; the re-review is APPROVED with no remaining findings.
+- #65 browser QA passed for stock Ollama discovery/test, unsaved OpenAI-compatible controls, 375px mobile layout, persisted-settings protection, and console diagnostics.
 
 ## Active Blockers
 
@@ -36,6 +40,8 @@ None.
 - Final controller validation: 669 full backend tests, 40 evals, Ruff clean, `git diff --check` clean apart from expected line-ending notices.
 - #63 final reviewer validation: 705 full backend tests, 42 evals, 131 focused tests, Ruff and diff check clean apart from expected line-ending notices.
 - #64 final controller validation: 715 full backend tests, 42 evals, Ruff clean, Pyright 0 errors, 18 frontend tests, TypeScript/ESLint 0 errors (3 unrelated pre-existing warnings), and production build green.
+- #65 final controller validation: 749 full backend tests, 42 evals, Ruff clean, Pyright 0 errors, 18 frontend tests, TypeScript/ESLint 0 errors (3 pre-existing warnings), production build green, and `git diff --check` clean apart from the existing `backend/memory.py` line-ending notice.
+- #65 live Ollama smoke: 7 models discovered, `gemma4:12b` returned a non-empty chat response, and `nomic-embed-text:latest` returned a 768-dimensional embedding. LM Studio and llama.cpp remain honestly unverified live because neither runtime is listening; their contracts are deterministic mocked tests only.
 
 ## Subagents
 
@@ -50,6 +56,9 @@ None.
 - `issue64_recovery`: DONE_WITH_CONCERNS; recovered the complete patch sequence from the original rollout, with no reachable commit available.
 - `issue64_implementer_v2`: DONE after adapting the recovered implementation and two review-driven repair rounds.
 - `issue64_reviewer_v2`: final APPROVED after three explicit spec-compliance and code-quality passes.
+- `issue65_investigator`: DONE_WITH_CONCERNS; delivered the local-runtime/privacy call-site audit and validation matrix.
+- `issue65_implementer`: DONE after one review-driven security/authentication repair loop.
+- `issue65_reviewer3`: final APPROVED after explicit spec/privacy and code-quality passes plus repair re-review.
 
 ## Known Issues
 
@@ -59,4 +68,4 @@ None.
 
 ## Next Action
 
-Reconstruct #64 on current `master`, run independent spec and quality review, complete browser QA and full validation, then publish/merge #64 before starting #65.
+Commit and publish #65, wait for GitHub CI, merge and close it, then begin serialized issue #66 work from updated `master`.

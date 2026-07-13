@@ -117,6 +117,23 @@ The env variables above set the **default** model chain, but the settings page (
 
 The settings page is fed by live discovery (`GET /api/models/available`): the installed Ollama models and each configured cloud provider's reachability, with a per-provider "Test" button.
 
+### Alternative local runtimes
+
+Ollama remains the zero-configuration default. In **Modellinställningar → Lokal
+modellruntime**, you can instead select an OpenAI-compatible runtime:
+
+- LM Studio: `http://127.0.0.1:1234/v1`
+- llama.cpp server: `http://127.0.0.1:8080/v1`
+
+Set the exact loaded chat model id. Tools, structured output, vision and
+embeddings vary by server/model and are fail-closed: mark a capability supported
+only after verifying it. `/models` proves model presence, not capability. A
+runtime on a private LAN address requires an explicit private-network opt-in and
+its own runtime credential; `PILOT_AUTH_TOKEN` never grants outbound access.
+Public, ambiguous and unsafe endpoints are rejected. Screenshots and embeddings
+are never sent to a cloud-classified provider. LM Studio and llama.cpp contract
+paths are covered by mocks; no live installation is claimed by this document.
+
 ---
 
 ## Safety boundaries

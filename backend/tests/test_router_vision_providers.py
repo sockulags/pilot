@@ -104,12 +104,12 @@ class RouterProviderTests(unittest.TestCase):
 
     def test_route_honours_custom_ollama_url(self):
         model_settings.save_settings({
-            "version": 1, "ollama": {"base_url": "http://lan-box:11434"},
+            "version": 1, "ollama": {"base_url": "http://127.0.0.2:11434"},
         })
         recorder = _Recorder(_OLLAMA_ROUTER_RESPONSE)
         self._route(recorder, model="gemma4:12b")
         url, _, _ = recorder.calls[0]
-        self.assertTrue(url.startswith("http://lan-box:11434/"))
+        self.assertTrue(url.startswith("http://127.0.0.2:11434/"))
 
 
 class VisionStaysLocalTests(unittest.TestCase):
@@ -134,13 +134,13 @@ class VisionStaysLocalTests(unittest.TestCase):
         return settings
 
     def test_analyze_screenshot_never_hits_cloud(self):
-        model_settings.save_settings(self._cloud_default_settings("http://lan-box:11434"))
+        model_settings.save_settings(self._cloud_default_settings("http://127.0.0.2:11434"))
         recorder = _Recorder(_VISION_RESPONSE)
         _patched_client(recorder)
         out = asyncio.run(router.analyze_screenshot("task", "b64img", []))
         url, payload, _ = recorder.calls[0]
         self.assertNotIn("cloudx", url)
-        self.assertTrue(url.startswith("http://lan-box:11434/"))
+        self.assertTrue(url.startswith("http://127.0.0.2:11434/"))
         self.assertIn("/api/chat", url)
         # Ollama image format: base64 lives on the user message, not top-level.
         self.assertEqual(payload["messages"][-1]["images"], ["b64img"])
@@ -226,26 +226,26 @@ class VisionStaysLocalTests(unittest.TestCase):
         self.assertEqual(recorder.calls, [])
 
     def test_vision_done_summary_never_hits_cloud(self):
-        model_settings.save_settings(self._cloud_default_settings("http://lan-box:11434"))
+        model_settings.save_settings(self._cloud_default_settings("http://127.0.0.2:11434"))
         recorder = _Recorder(_VISION_RESPONSE)
         _patched_client(recorder)
         out = asyncio.run(router.vision_done_summary("task", "b64img"))
         url, payload, _ = recorder.calls[0]
         self.assertNotIn("cloudx", url)
-        self.assertTrue(url.startswith("http://lan-box:11434/"))
+        self.assertTrue(url.startswith("http://127.0.0.2:11434/"))
         self.assertEqual(payload["messages"][-1]["images"], ["b64img"])
         self.assertGreaterEqual(payload["options"]["num_ctx"], 8192)
         self.assertEqual(out, "a login screen")
 
     def test_validate_vision_model_honours_custom_url(self):
-        model_settings.save_settings(self._cloud_default_settings("http://lan-box:11434"))
+        model_settings.save_settings(self._cloud_default_settings("http://127.0.0.2:11434"))
         recorder = _Recorder({"message": {"content": "OK"}})
         _patched_client(recorder)
         ok, _msg = asyncio.run(vision.validate_vision_model())
         url, payload, _ = recorder.calls[0]
         self.assertTrue(ok)
         self.assertNotIn("cloudx", url)
-        self.assertTrue(url.startswith("http://lan-box:11434/"))
+        self.assertTrue(url.startswith("http://127.0.0.2:11434/"))
         self.assertFalse(payload["think"])
         self.assertGreaterEqual(payload["options"]["num_ctx"], 8192)
 

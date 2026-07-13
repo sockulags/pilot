@@ -295,7 +295,7 @@ def test_openai_overflow_gets_exactly_one_retry(monkeypatch):
 
 
 @pytest.mark.parametrize("role", ["classifier", "coordinator", "synthesis", "code_agent"])
-def test_openai_uses_requested_role_budget_for_payload_planning(monkeypatch, role):
+def test_openai_uses_conservative_non_ollama_budget_for_payload_planning(monkeypatch, role):
     client = _Client(_Resp({"choices": [{"message": {"content": "ok"}}], "usage": {}}))
     seen = []
     real_resolve = providers.resolve_context_budget
@@ -310,8 +310,8 @@ def test_openai_uses_requested_role_budget_for_payload_planning(monkeypatch, rol
     asyncio.run(providers.chat_once(
         [{"role": "user", "content": "hi"}], backend="openai", context_role=role
     ))
-    assert seen == [(providers.OLLAMA_MODEL, role)]
-    expected = real_resolve(providers.OLLAMA_MODEL, role)
+    assert seen == [("__unknown_openai_cloud__", role)]
+    expected = real_resolve("__unknown_openai_cloud__", role)
     assert client.posted["json"]["max_tokens"] == min(2048, max(256, expected // 4))
 
 

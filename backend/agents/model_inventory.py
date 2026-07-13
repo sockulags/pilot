@@ -21,9 +21,10 @@ import logging
 import asyncio
 from dataclasses import dataclass, field
 
-import httpx
+import httpx  # noqa: F401 - compatibility patch point for existing callers/tests
 
 import model_settings
+from agents import local_runtime
 from config import (
     OLLAMA_CLASSIFIER_NUM_CTX,
     OLLAMA_CODE_NUM_CTX,
@@ -62,13 +63,18 @@ _ROLE_BUDGETS = {
     "code": OLLAMA_CODE_NUM_CTX,
     "code_agent": OLLAMA_CODE_NUM_CTX,
 }
-_DISCOVERED_CONTEXTS: dict[str, int] = {}
+_DISCOVERED_CONTEXTS: dict[str | tuple[str, str], int] = {}
 _UNKNOWN_MODEL_NUM_CTX = 4096
 
 
 def declared_context_for(model: str) -> int | None:
+    fingerprint = model_settings.local_runtime_snapshot().fingerprint
+    if (fingerprint, model) in _DISCOVERED_CONTEXTS:
+        return _DISCOVERED_CONTEXTS[(fingerprint, model)]
+    # Transitional in-process compatibility for the pre-fingerprint cache
+    # shape. New discovery never writes this shape.
     if model in _DISCOVERED_CONTEXTS:
-        return _DISCOVERED_CONTEXTS[model]
+        return _DISCOVERED_CONTEXTS[model]  # type: ignore[index]
     value = OLLAMA_MODELS.get(model, {}).get("context_length")
     return int(value) if value else None
 
@@ -129,6 +135,9 @@ class ModelInventory:
         When discovery failed we cannot verify anything, so the primary model is
         the single least-surprising choice.
         """
+        runtime = model_settings.local_runtime_snapshot()
+        if runtime.kind == "openai_compatible" and runtime.chat_model:
+            return runtime.chat_model
         if self.is_healthy(OLLAMA_MODEL):
             return OLLAMA_MODEL
         return OLLAMA_MODEL
@@ -142,16 +151,14 @@ async def _fetch_installed_names() -> set[str] | None:
     licence to assume the registry is installed.
     """
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{model_settings.ollama_base_url()}/api/tags")
-            resp.raise_for_status()
-            models = resp.json().get("models", [])
+        runtime = model_settings.local_runtime_snapshot()
+        names = await local_runtime.discover(runtime)
     except Exception as exc:  # noqa: BLE001 — any failure is fail-closed
         global _DISCOVERED_CONTEXTS
         _DISCOVERED_CONTEXTS = {}
         logger.warning("model discovery failed (Ollama /api/tags): %s", exc)
         return None
-    names = {m["name"] for m in models if isinstance(m, dict) and m.get("name")}
+    names = set(names)
     if not names:
         _DISCOVERED_CONTEXTS = {}
         logger.warning("model discovery returned no installed models; failing closed")
@@ -162,11 +169,31 @@ async def _fetch_installed_names() -> set[str] | None:
 async def get_model_inventory() -> ModelInventory:
     """Query Ollama and return a fail-closed :class:`ModelInventory`."""
     configured = frozenset(OLLAMA_MODELS)
+    runtime = model_settings.local_runtime_snapshot()
     installed_names = await _fetch_installed_names()
     if installed_names is None:
         # Fail closed: advertise nothing we cannot verify.
         return ModelInventory(configured=configured, discovery_ok=False)
     discovered = await discover_model_capabilities(installed_names)
+    if runtime.kind == "openai_compatible":
+        capabilities = {
+            name: ModelCapabilities(
+                declared_context=item.get("declared_context"),
+                effective_context=resolve_context_budget(
+                    "__unknown_local_openai__", declared_max=item.get("declared_context")
+                ),
+                tools=bool(item.get("tools")), vision=bool(item.get("vision")),
+                embedding=bool(item.get("embedding")), thinking=False,
+            )
+            for name, item in discovered.items()
+        }
+        return ModelInventory(
+            configured=frozenset(installed_names), installed=frozenset(installed_names),
+            healthy=frozenset(installed_names),
+            tools_capable=frozenset(name for name, item in discovered.items() if item.get("tools")),
+            vision_capable=frozenset(name for name, item in discovered.items() if item.get("vision")),
+            installed_all=frozenset(installed_names), capabilities=capabilities, discovery_ok=True,
+        )
     return build_inventory(installed_names, discovered)
 
 
@@ -179,14 +206,35 @@ async def discover_model_capabilities(model_names: set[str]) -> dict[str, dict]:
     """
     result: dict[str, dict] = {}
     semaphore = asyncio.Semaphore(4)
+    runtime = model_settings.local_runtime_snapshot()
+    if runtime.kind != "ollama":
+        # /models proves presence only; configured tri-state capability is the
+        # authority for generic endpoints and unknown remains fail-closed.
+        return {
+            name: {
+                "declared_context": runtime.context_overrides.get(name),
+                "tools": runtime.capabilities.tools == "supported",
+                "thinking": False,
+                "vision": runtime.capabilities.vision == "supported",
+                "embedding": runtime.capabilities.embeddings == "supported",
+            }
+            for name in model_names
+        }
+    base_url = local_runtime.validate_local_endpoint(runtime)
 
     async def inspect(name: str) -> tuple[str, dict] | None:
         async with semaphore:
             try:
-                async with httpx.AsyncClient(timeout=10) as client:
-                    resp = await client.post(
-                        f"{model_settings.ollama_base_url()}/api/show", json={"model": name}
-                    )
+                async with local_runtime.client(10) as client:
+                    if runtime.effective_key:
+                        resp = await client.post(
+                            f"{base_url}/api/show", json={"model": name},
+                            headers=local_runtime.runtime_headers(runtime),
+                        )
+                    else:
+                        resp = await client.post(
+                            f"{base_url}/api/show", json={"model": name}
+                        )
                 resp.raise_for_status()
                 data = resp.json()
             except Exception as exc:  # noqa: BLE001 - per-model fallback
@@ -211,13 +259,13 @@ async def discover_model_capabilities(model_names: set[str]) -> dict[str, dict]:
                 })
             return name, item
 
-    current_contexts: dict[str, int] = {}
+    current_contexts: dict[str | tuple[str, str], int] = {}
     for found in await asyncio.gather(*(inspect(name) for name in model_names)):
         if found is not None:
             name, item = found
             result[name] = item
             if item.get("declared_context"):
-                current_contexts[name] = int(item["declared_context"])
+                current_contexts[(runtime.fingerprint, name)] = int(item["declared_context"])
     # Replace the authority snapshot as one binding. Removed models, failed show
     # probes, and responses without context metadata cannot retain stale limits.
     global _DISCOVERED_CONTEXTS

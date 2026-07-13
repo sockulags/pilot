@@ -146,12 +146,12 @@ class RoleRoutingTests(unittest.TestCase):
 
     def test_custom_ollama_base_url_from_settings(self):
         settings = _settings()
-        settings["ollama"] = {"base_url": "http://lan-box:11434"}
+        settings["ollama"] = {"base_url": "http://127.0.0.2:11434"}
         model_settings.save_settings(settings)
         recorder = _Recorder(_OLLAMA_RESPONSE)
         _run_chat_once(recorder, model="gemma4:12b")
         url, _, _ = recorder.calls[0]
-        self.assertTrue(url.startswith("http://lan-box:11434/"))
+        self.assertTrue(url.startswith("http://127.0.0.2:11434/"))
 
 
 class ApplyRoleTests(unittest.TestCase):
