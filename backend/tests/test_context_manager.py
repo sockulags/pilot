@@ -121,6 +121,51 @@ def test_oversized_verified_evidence_fails_closed_without_extraction():
         )
 
 
+def test_ordinary_evidence_is_categorized_without_verified_preservation_contract():
+    request = manage_request(
+        [
+            {"role": "system", "content": "contract"},
+            {"role": "user", "content": "ORDINARY " * 2000, "context_kind": "evidence"},
+            {
+                "role": "user",
+                "content": "VERIFIED SOURCE",
+                "context_kind": "verified_evidence",
+                "verified_evidence": True,
+            },
+            {"role": "user", "content": "active task"},
+        ],
+        context_window=1024,
+        force_compact=True,
+    )
+    contents = "\n".join(str(message.get("content", "")) for message in request.messages)
+    assert "ORDINARY " * 2000 not in contents
+    assert request.report.summarized_messages > 0
+    assert "VERIFIED SOURCE" in contents
+    assert request.report.categories["evidence"] > 0
+
+
+def test_stripped_policy_metadata_does_not_inflate_provider_visible_estimate():
+    request = manage_request(
+        [
+            {"role": "system", "content": "contract"},
+            {
+                "role": "user",
+                "content": "tiny proof",
+                "context_kind": "verified_evidence",
+                "verified_evidence": True,
+                "provenance": {"raw": "not-provider-visible" * 20_000},
+            },
+            {"role": "user", "content": "active", "context_kind": "active_task"},
+        ],
+        context_window=512,
+    )
+
+    assert request.report.estimated_prompt_tokens < 128
+    assert 0 < request.report.categories["evidence"] < 64
+    assert all("provenance" not in message for message in request.messages)
+    assert all("context_kind" not in message for message in request.messages)
+
+
 def test_nested_tool_call_arguments_are_fully_charged_and_cannot_sneak_through():
     historical = {
         "role": "assistant",

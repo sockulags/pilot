@@ -37,6 +37,18 @@
 .ctxrow .nm2 { color: var(--text); }
 .ctxrow .tk  { margin-left: auto; font: 11.5px var(--mono); color: var(--dim); }
 .ctxhint     { margin-top: 14px; color: var(--dim); font-size: 12.5px; line-height: 1.5; }
+.ctxstatus   { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; }
+.ctxstatus span, .ctxmeta { color: var(--dim); font: 11.5px var(--mono); }
+.ctxstatus.near_limit, .ctxstatus.compacted { border-color: var(--yellow); }
+.ctxstatus.retried { border-color: var(--red); }
+.ctxlegacy, .ctxchanges { padding: 12px; border-radius: 8px; background: var(--panel-2); color: var(--dim); font-size: 12.5px; line-height: 1.5; }
+.ctxmeta, .ctxchanges { margin-top: 10px; }
+.ctxcalls { margin: 8px 0 0; padding-left: 18px; }
+.ctxcalls li + li { margin-top: 4px; }
+@media (max-width: 520px) {
+  .ctxrow { align-items: flex-start; }
+  .ctxrow .tk { text-align: right; max-width: 52%; overflow-wrap: anywhere; }
+}
 
 .ctxacts         { display: flex; gap: 8px; margin-top: 16px; }
 .ctxacts button  { flex: 1; padding: 10px; border-radius: 10px; border: 1px solid var(--border-2); color: var(--text); font-size: 13px; font-weight: 600; transition: .12s; }

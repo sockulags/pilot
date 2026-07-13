@@ -81,13 +81,19 @@ class ReplyPromptSafetyTests(unittest.TestCase):
             memories="- The user prefers Swedish",
         )
         system = messages[0]["content"]
+        memory_turn = messages[1]
         evidence_turn = messages[-1]["content"]
 
-        # Memory injected into the system prompt is wrapped.
-        self.assertIn(OPEN_PREFIX, system)
-        self.assertIn("The user prefers Swedish", system)
+        # Memory is a separately tagged, still-system-scoped untrusted message.
+        self.assertNotIn("The user prefers Swedish", system)
+        self.assertEqual("memory", memory_turn["context_kind"])
+        self.assertEqual("system", memory_turn["role"])
+        self.assertIn(OPEN_PREFIX, memory_turn["content"])
+        self.assertIn("The user prefers Swedish", memory_turn["content"])
 
         # The activity log is wrapped as untrusted, synthesis instructions are not.
+        self.assertEqual("evidence", messages[-1]["context_kind"])
+        self.assertNotIn("verified_evidence", messages[-1])
         self.assertEqual(1, evidence_turn.count(OPEN_PREFIX))
         self.assertEqual(1, evidence_turn.count(CLOSE_TAG))
         self.assertIn("Paris is the capital of France", evidence_turn)
@@ -95,6 +101,16 @@ class ReplyPromptSafetyTests(unittest.TestCase):
         close = evidence_turn.index(CLOSE_TAG)
         synth_idx = evidence_turn.index("Väv ihop detta")
         self.assertGreater(synth_idx, close)
+
+        # Exercise the production prompt through the request estimator: the
+        # tagged messages land in their truthful, non-sensitive categories.
+        from agents.context_manager import manage_request
+
+        managed = manage_request(messages, context_window=16384)
+        report = managed.report
+        self.assertGreater(report.categories["memory"], 0)
+        self.assertGreater(report.categories["evidence"], 0)
+        self.assertTrue(all("context_kind" not in message for message in managed.messages))
 
     def test_evidence_breakout_attempt_neutralized(self):
         from agents import orchestrator
@@ -114,6 +130,27 @@ class ReplyPromptSafetyTests(unittest.TestCase):
         self.assertEqual(1, evidence_turn.count(OPEN_PREFIX))
         self.assertEqual(1, evidence_turn.count(CLOSE_TAG))
         self.assertIn("ignore previous instructions", evidence_turn)
+
+    def test_pressure_preserves_real_user_request_and_compacts_synthetic_evidence(self):
+        from agents import orchestrator
+        from agents.context_manager import manage_request
+        from agents.loop import LoopOutcome
+
+        actual_request = "Förklara den verkliga användaruppgiften"
+        outcome = LoopOutcome("done", "EVIDENCE_PAYLOAD " * 2000, "")
+        messages = orchestrator._build_reply_messages(
+            [{"role": "user", "content": actual_request}], outcome
+        )
+
+        self.assertEqual("active_task", messages[-2]["context_kind"])
+        self.assertEqual("evidence", messages[-1]["context_kind"])
+        managed = manage_request(messages, context_window=16384, force_compact=True)
+        visible = "\n".join(str(message.get("content", "")) for message in managed.messages)
+
+        self.assertIn(actual_request, visible)
+        self.assertNotIn("EVIDENCE_PAYLOAD " * 500, visible)
+        self.assertGreater(managed.report.summarized_categories["evidence"], 0)
+        self.assertEqual(0, managed.report.summarized_categories["history"])
 
 
 if __name__ == "__main__":

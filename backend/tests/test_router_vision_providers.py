@@ -9,6 +9,7 @@ Two contracts:
 """
 
 import asyncio
+import json
 import unittest
 from unittest import mock
 
@@ -17,6 +18,7 @@ import httpx
 import model_settings
 from agents import providers, router, vision
 from agents.context_manager import ContextBudgetError
+from agents.context_telemetry import build_context_telemetry
 
 
 class _Recorder:
@@ -146,6 +148,30 @@ class VisionStaysLocalTests(unittest.TestCase):
         self.assertGreaterEqual(payload["options"]["num_ctx"], 8192)
         self.assertEqual(out, "a login screen")
 
+    def test_screenshot_request_records_safe_media_telemetry_and_actual_usage(self):
+        recorder = _Recorder({
+            "message": {"content": "a login screen"},
+            "prompt_eval_count": 4310,
+            "eval_count": 24,
+        })
+        _patched_client(recorder)
+        providers.reset_usage()
+
+        out = asyncio.run(router.analyze_screenshot("inspect login", "private-b64", []))
+        telemetry = build_context_telemetry(providers.get_context_reports())
+
+        self.assertEqual(out, "a login screen")
+        self.assertIsNotNone(telemetry)
+        call = telemetry["calls"][0]
+        self.assertEqual(call["model"], router.OLLAMA_VISION_MODEL)
+        self.assertEqual(call["context_role"], "vision")
+        self.assertEqual(call["effective_limit"], recorder.calls[0][1]["options"]["num_ctx"])
+        self.assertEqual(call["categories"]["media"], 4096)
+        self.assertEqual(call["actual_prompt_tokens"], 4310)
+        self.assertEqual(call["actual_completion_tokens"], 24)
+        self.assertNotIn("private-b64", json.dumps(telemetry))
+        self.assertTrue(recorder.calls[0][0].startswith("http://"))
+
     def test_analyze_screenshot_rejects_empty_visible_answer(self):
         recorder = _Recorder({
             "message": {"content": "", "thinking": "I can see the desktop"},
@@ -181,9 +207,15 @@ class VisionStaysLocalTests(unittest.TestCase):
 
         recorder = OverflowRecorder(_VISION_RESPONSE)
         _patched_client(recorder)
+        providers.reset_usage()
         out = asyncio.run(router.analyze_screenshot("task", "b64img", []))
         self.assertEqual(out, "a login screen")
         self.assertEqual(len(recorder.calls), 2)
+        reports = providers.get_context_reports()
+        self.assertEqual(len(reports), 2)
+        self.assertFalse(reports[0].retry)
+        self.assertTrue(reports[1].retry)
+        self.assertTrue(all(report.context_role == "vision" for report in reports))
 
     def test_custom_unknown_vision_model_uses_safe_startup_context(self):
         recorder = _Recorder(_VISION_RESPONSE)

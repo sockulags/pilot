@@ -35,6 +35,7 @@ without threading counters through the agent.
 from __future__ import annotations
 
 import contextvars
+from dataclasses import replace
 import json
 import logging
 from typing import Any, AsyncGenerator
@@ -44,7 +45,7 @@ import httpx
 import model_settings
 from agents.json_utils import extract_json_object
 from agents.context_manager import ContextReport, is_context_overflow, manage_request
-from agents.model_inventory import resolve_context_budget
+from agents.model_inventory import declared_context_for, resolve_context_budget
 from config import (
     ANSWER_BACKEND,
     OLLAMA_MODEL,
@@ -179,10 +180,57 @@ def get_context_reports() -> list[ContextReport]:
     return list(_context_reports.get() or [])
 
 
-def _record_context_report(report: ContextReport) -> None:
+def _tag_context_report(report: ContextReport, model: str, role: str | None) -> ContextReport:
+    return replace(
+        report,
+        model=model,
+        context_role=role or "default",
+        declared_context=declared_context_for(model),
+    )
+
+
+def _record_context_report(report: ContextReport) -> ContextReport:
     reports = _context_reports.get()
     if reports is not None:
         reports.append(report)
+    return report
+
+
+def _record_report_usage(
+    report: ContextReport, prompt_tokens: int | None, completion_tokens: int | None
+) -> ContextReport:
+    reports = _context_reports.get()
+    if reports is None:
+        return report
+    for index in range(len(reports) - 1, -1, -1):
+        if reports[index] is report:
+            updated = replace(
+                report,
+                actual_prompt_tokens=int(prompt_tokens) if prompt_tokens is not None else None,
+                actual_completion_tokens=(
+                    int(completion_tokens) if completion_tokens is not None else None
+                ),
+            )
+            reports[index] = updated
+            return updated
+    return report
+
+
+def record_context_report(
+    report: ContextReport, *, model: str, role: str | None
+) -> ContextReport:
+    """Add one safe request plan to the active turn's telemetry collector."""
+    return _record_context_report(_tag_context_report(report, model, role))
+
+
+def finalize_context_report(
+    report: ContextReport,
+    *,
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+) -> ContextReport:
+    """Attach authoritative provider usage to an already-recorded request."""
+    return _record_report_usage(report, prompt_tokens, completion_tokens)
 
 
 def _response_is_overflow(response: httpx.Response) -> bool:
@@ -347,7 +395,7 @@ async def _ollama_once(
 ) -> dict:
     context_window = resolve_context_budget(model, role)
     managed = manage_request(messages, context_window=context_window, tools=tools)
-    _record_context_report(managed.report)
+    active_report = _record_context_report(_tag_context_report(managed.report, model, role))
     payload: dict = {
         "model": model,
         "messages": managed.messages,
@@ -386,13 +434,16 @@ async def _ollama_once(
                 force_compact=True, retry=True,
                 completion_reserve=managed.report.completion_reserve,
             )
-            _record_context_report(retry.report)
+            active_report = _record_context_report(_tag_context_report(retry.report, model, role))
             payload["messages"] = retry.messages
             payload["options"]["num_predict"] = retry.report.completion_reserve
             resp = await client.post(f"{base_url}/api/chat", json=payload)
         resp.raise_for_status()
         data = resp.json()
     record_usage(data.get("prompt_eval_count", 0), data.get("eval_count", 0), OLLAMA)
+    active_report = _record_report_usage(
+        active_report, data.get("prompt_eval_count"), data.get("eval_count")
+    )
     return _normalize_message(data.get("message", {}) or {})
 
 
@@ -402,7 +453,7 @@ async def _ollama_stream(
 ) -> AsyncGenerator[str, None]:
     context_window = resolve_context_budget(model, role)
     managed = manage_request(messages, context_window=context_window)
-    _record_context_report(managed.report)
+    active_report = _record_context_report(_tag_context_report(managed.report, model, role))
     payload = {
         "model": model,
         "messages": managed.messages,
@@ -433,6 +484,11 @@ async def _ollama_stream(
                             record_usage(
                                 chunk.get("prompt_eval_count", 0), chunk.get("eval_count", 0), OLLAMA
                             )
+                            active_report = _record_report_usage(
+                                active_report,
+                                chunk.get("prompt_eval_count"),
+                                chunk.get("eval_count"),
+                            )
                 return
             except httpx.HTTPStatusError as exc:
                 if attempt or emitted or not is_context_overflow(exc):
@@ -441,7 +497,9 @@ async def _ollama_stream(
                     messages, context_window=context_window, force_compact=True, retry=True,
                     completion_reserve=managed.report.completion_reserve,
                 )
-                _record_context_report(retry.report)
+                active_report = _record_context_report(
+                    _tag_context_report(retry.report, model, role)
+                )
                 payload["messages"] = retry.messages
                 payload["options"]["num_predict"] = retry.report.completion_reserve
 
@@ -474,7 +532,7 @@ async def _openai_once(
         )
     context_window = resolve_context_budget(OLLAMA_MODEL, role)
     managed = manage_request(messages, context_window=context_window, tools=tools)
-    _record_context_report(managed.report)
+    active_report = _record_context_report(_tag_context_report(managed.report, model, role))
     payload: dict = {
         "model": model, "messages": managed.messages, "temperature": temperature,
         "max_tokens": managed.report.completion_reserve,
@@ -501,7 +559,7 @@ async def _openai_once(
                 force_compact=True, retry=True,
                 completion_reserve=managed.report.completion_reserve,
             )
-            _record_context_report(retry.report)
+            active_report = _record_context_report(_tag_context_report(retry.report, model, role))
             payload["messages"] = retry.messages
             payload["max_tokens"] = retry.report.completion_reserve
             resp = await client.post(
@@ -511,6 +569,9 @@ async def _openai_once(
         data = resp.json()
     usage = data.get("usage", {}) or {}
     record_usage(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), OPENAI)
+    active_report = _record_report_usage(
+        active_report, usage.get("prompt_tokens"), usage.get("completion_tokens")
+    )
     choices = data.get("choices") or [{}]
     return _normalize_message(choices[0].get("message", {}) or {})
 
@@ -531,7 +592,7 @@ async def _openai_stream(
         )
     context_window = resolve_context_budget(OLLAMA_MODEL, role)
     managed = manage_request(messages, context_window=context_window)
-    _record_context_report(managed.report)
+    active_report = _record_context_report(_tag_context_report(managed.report, model, role))
     payload = {
         "model": model,
         "messages": managed.messages,
@@ -562,6 +623,11 @@ async def _openai_stream(
                             record_usage(
                                 usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), OPENAI
                             )
+                            active_report = _record_report_usage(
+                                active_report,
+                                usage.get("prompt_tokens"),
+                                usage.get("completion_tokens"),
+                            )
                         choices = chunk.get("choices") or []
                         if choices:
                             piece = (choices[0].get("delta", {}) or {}).get("content", "")
@@ -576,7 +642,9 @@ async def _openai_stream(
                     messages, context_window=context_window, force_compact=True, retry=True,
                     completion_reserve=managed.report.completion_reserve,
                 )
-                _record_context_report(retry.report)
+                active_report = _record_context_report(
+                    _tag_context_report(retry.report, model, role)
+                )
                 payload["messages"] = retry.messages
                 payload["max_tokens"] = retry.report.completion_reserve
 

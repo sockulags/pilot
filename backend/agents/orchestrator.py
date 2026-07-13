@@ -311,17 +311,34 @@ def _build_reply_messages(conversation: list[dict], outcome=None, memories: str 
         "\n\nYour capabilities (tools you can use on this computer):\n"
         f"{registry.capability_manifest()}"
     )
-    if memories:
-        system += (
-            "\n\nLong-term memory about the user (use when relevant; do not contradict "
-            "or repeat verbatim unless asked):\n"
-            + wrap_untrusted(memories, source="memory")
-        )
     messages = [{"role": "system", "content": system}]
-    messages.extend(
-        {"role": m.get("role", "user"), "content": str(m.get("content", ""))}
-        for m in _recent(conversation, limit=20)
+    if memories:
+        # Keep recalled memory in its own provider message so request telemetry
+        # can account for it without inspecting or exposing the raw text.
+        messages.append({
+            "role": "system",
+            "context_kind": "memory",
+            "content": (
+                "Long-term memory about the user (use when relevant; do not contradict "
+                "or repeat verbatim unless asked):\n"
+                + wrap_untrusted(memories, source="memory")
+            ),
+        })
+    recent = _recent(conversation, limit=20)
+    latest_user = max(
+        (index for index, message in enumerate(recent) if message.get("role") == "user"),
+        default=-1,
     )
+    for index, message in enumerate(recent):
+        provider_message = {
+            "role": message.get("role", "user"),
+            "content": str(message.get("content", "")),
+        }
+        if index == latest_user:
+            # The actual request stays mandatory even when a synthetic evidence
+            # turn is appended after it for grounded synthesis.
+            provider_message["context_kind"] = "active_task"
+        messages.append(provider_message)
     if outcome is not None:
         structured = getattr(outcome, "runtime_state", None)
         # Keep the grounding digestible for the answering model (see the budget
@@ -345,6 +362,9 @@ def _build_reply_messages(conversation: list[dict], outcome=None, memories: str 
         )
         messages.append({
             "role": "user",
+            # Ordinary gathered evidence is categorized separately, but is not
+            # promoted to the stronger verified_evidence preservation contract.
+            "context_kind": "evidence",
             "content": (
                 f"{evidence}\n\n"
                 f"Status: {outcome.status}\n\n"
