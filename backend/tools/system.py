@@ -143,6 +143,8 @@ async def run_command(
                 _terminate_tree(process)
 
         watchdog = asyncio.ensure_future(_kill_after())
+    # stdout=PIPE guarantees a StreamReader; assert so the typed-Optional narrows.
+    assert process.stdout is not None
     try:
         async for line in process.stdout:
             yield line.decode(errors="replace")

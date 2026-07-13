@@ -69,6 +69,11 @@ def create_mcp_app() -> FastAPI:
         if not _auth_ok(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         tool = body.get("name")
+        if not isinstance(tool, str):
+            # A missing/non-string tool name can't match any handler; return the
+            # same unknown-tool response the dispatch below would, and narrow
+            # `tool` to str for the lookups that follow.
+            return {"error": f"Unknown tool: {tool}"}
         args = body.get("arguments", {})
         if not isinstance(args, dict):
             return JSONResponse(

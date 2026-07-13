@@ -61,13 +61,16 @@ def resolve_claude_cli() -> str:
         return _resolved_cli
 
     cli = CLAUDE_CLI or "claude"
+    on_path = shutil.which(cli)
+    resolved: str
     if os.path.isabs(cli) and os.path.isfile(cli):
-        _resolved_cli = cli
-    elif shutil.which(cli):
-        _resolved_cli = shutil.which(cli)
+        resolved = cli
+    elif on_path:
+        resolved = on_path
     else:
-        _resolved_cli = _find_bundled_claude() or cli
-    return _resolved_cli
+        resolved = _find_bundled_claude() or cli
+    _resolved_cli = resolved
+    return resolved
 
 
 def _build_cmd(prompt: str, resume_session_id: str | None) -> list[str]:
@@ -114,6 +117,8 @@ async def run_codex(
     session_emitted = False
     streamed_text = False
 
+    # stdout=PIPE guarantees a StreamReader; assert so the typed-Optional narrows.
+    assert process.stdout is not None
     async for line in process.stdout:
         raw = line.decode(errors="replace").strip()
         if not raw:

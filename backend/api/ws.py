@@ -1108,7 +1108,8 @@ async def _run_code_turn(
             elif etype == "result":
                 result_text = ev.get("text", "")
             elif etype == "error":
-                error_text = ev.get("text", "")
+                raw = ev.get("text", "")
+                error_text = raw if isinstance(raw, str) else str(raw)
                 emit({"type": "error", "content": _friendly_agent_error(error_text) or error_text})
     except Exception as exc:
         error_text = f"{type(exc).__name__}: {exc}"

@@ -35,6 +35,23 @@ dev = [
     "ruff>=0.15.20",
 ]
 
+[tool.pyright]
+# Basic-mode type checking scoped to the production backend source. The test
+# suite carries a large pre-existing typing backlog (Optional access on
+# eval-harness return values) that is a separate, larger unit of work, so
+# `tests/` is excluded here and tracked as deferred backlog (see issue #70).
+# `venvPath`/`venv` point pyright at the project virtualenv so third-party
+# imports (httpx, pypdf, PIL, ...) resolve against the real dependency set.
+typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"
+exclude = [
+    "tests",
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*",
+]
+
 [tool.coverage.run]
 # Coverage measures the backend source; the test suite itself and generated
 # runtime data are not part of the number.

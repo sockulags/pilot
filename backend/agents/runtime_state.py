@@ -115,7 +115,7 @@ class RuntimeState:
         })
 
     def record_error(self, message: str, tool: str | None = None, args: dict | None = None) -> None:
-        error = {"error": str(message)}
+        error: dict[str, Any] = {"error": str(message)}
         if tool:
             error["tool"] = tool
         if args:
