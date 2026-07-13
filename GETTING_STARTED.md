@@ -101,6 +101,15 @@ defaults live in `backend/config.py`. The most common ones:
 The full list (network/auth, memory, ComfyUI, code agents) is in `backend/.env.example`
 and `backend/config.py`.
 
+To use LM Studio or llama.cpp instead of Ollama, start that runtime yourself and
+open **Modellinställningar → Lokal modellruntime**. Choose OpenAI-compatible,
+enter `http://127.0.0.1:1234/v1` (LM Studio) or
+`http://127.0.0.1:8080/v1` (llama.cpp), and enter the exact loaded model id.
+Pilot does not install runtimes or download models. Enable tools, structured
+output, vision, or embeddings only when your chosen server/model supports them;
+unknown capabilities are intentionally rejected for privacy and predictable
+degradation.
+
 ## 5. (Optional) Access from anywhere
 
 **You don't need this for local/LAN use** — everything above works on your home network.

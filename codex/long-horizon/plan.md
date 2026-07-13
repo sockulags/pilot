@@ -37,7 +37,7 @@ Touched areas: backend WS/session message schemas, frontend transcript/types/con
 Acceptance criteria: all criteria in #64, including no chain-of-thought exposure, fallback for old history, responsive UI, and browser QA.
 Validation commands: backend focused tests; `cd frontend; pnpm lint; pnpm test; pnpm build`; browser normal and near-limit flows.
 Stop rule: do not add provider configuration; repair rendered and test findings before continuing.
-Status: in_progress
+Status: completed
 
 ## Milestone 4: Issue #65 — Pluggable local inference runtimes
 
@@ -50,7 +50,7 @@ Touched areas: provider/runtime interfaces, settings and API, model discovery, v
 Acceptance criteria: all criteria in #65, including loopback local endpoints, fail-closed capability probing, unchanged stock behavior, and screenshot privacy.
 Validation commands: `cd backend; uv run pytest -q; uv run pytest -q -m eval; uv run ruff check .`; frontend checks if settings UI changes; available live runtime smoke.
 Stop rule: do not install runtimes/models or claim unsupported combinations.
-Status: pending
+Status: in_progress
 
 ## Milestone 5: Issue #66 — Compatibility matrix and pressure evals
 

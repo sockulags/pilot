@@ -321,6 +321,9 @@ async def websocket_endpoint(websocket: WebSocket):
         # A handle_message coroutine is one turn-local context. Resetting here
         # gives concurrent sockets/tasks independent ContextVar-backed reports.
         reset_usage()
+        # Runtime settings are immutable for this turn even if the user saves
+        # new settings concurrently; the next turn picks up the new fingerprint.
+        model_settings.bind_local_runtime_for_turn()
 
         prior = list(conversation)
         conversation.append({"role": "user", "content": text, "turn": turn})

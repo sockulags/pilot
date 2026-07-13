@@ -57,13 +57,13 @@ import tempfile
 import time
 import uuid
 
-import httpx
+import model_settings
+from agents import local_runtime
 
 from config import (
     MEMORY_FILE,
     MEMORY_MIN_SCORE,
     MEMORY_TOP_K,
-    OLLAMA_BASE_URL,
     OLLAMA_EMBED_MODEL,
 )
 
@@ -115,19 +115,16 @@ def is_instruction_like(text: str) -> bool:
 
 
 async def _embed(text: str, *, is_query: bool) -> list[float] | None:
-    """Embed text via Ollama, with the nomic task prefix. None on failure."""
+    """Embed through the configured, privacy-validated local runtime."""
     prefix = "search_query: " if is_query else "search_document: "
+    runtime = model_settings.local_runtime_snapshot()
+    model = runtime.embedding_model or OLLAMA_EMBED_MODEL
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{OLLAMA_BASE_URL}/api/embed",
-                json={"model": OLLAMA_EMBED_MODEL, "input": prefix + text},
-            )
-            resp.raise_for_status()
-            vectors = resp.json().get("embeddings") or []
-            return vectors[0] if vectors else None
+        vectors = await local_runtime.embed(runtime, model, [prefix + text])
+        return vectors[0] if vectors else None
     except Exception as exc:
-        logger.warning("embedding failed: %s", exc)
+        code = exc.code if isinstance(exc, local_runtime.LocalRuntimeError) else "provider_error"
+        logger.warning("embedding failed (%s)", code)
         return None
 
 
@@ -197,8 +194,16 @@ def _load_embeddings() -> dict:
     try:
         with open(_embeddings_file(), "r", encoding="utf-8") as f:
             emb = json.load(f)
+        if isinstance(emb, dict) and "vectors" in emb:
+            if emb.get("fingerprint") != _embedding_fingerprint():
+                logger.info("embedding runtime changed; invalidating incompatible vectors")
+                return {}
+            vectors = emb.get("vectors")
+            return vectors if isinstance(vectors, dict) else {}
+        # Legacy vectors have no model/runtime identity and therefore cannot be
+        # safely mixed with a newly configurable adapter.
         if isinstance(emb, dict):
-            return emb
+            return {}
     except FileNotFoundError:
         pass
     except Exception as exc:
@@ -258,10 +263,20 @@ def _save(data: dict, *, embeddings_changed: bool = True) -> None:
                 for item in data["items"]
                 if item.get("embedding")
             }
-            _write_json_atomic(_embeddings_file(), embeddings)
+            _write_json_atomic(_embeddings_file(), {
+                "version": 2,
+                "fingerprint": _embedding_fingerprint(),
+                "vectors": embeddings,
+            })
         _write_json_atomic(MEMORY_FILE, {**data, "items": items_out})
     except Exception as exc:
         logger.warning("could not save memory store: %s", exc)
+
+
+def _embedding_fingerprint() -> str:
+    runtime = model_settings.local_runtime_snapshot()
+    model = runtime.embedding_model or OLLAMA_EMBED_MODEL
+    return f"{runtime.fingerprint}:{model}"
 
 
 async def save_memory(

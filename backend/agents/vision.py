@@ -2,11 +2,7 @@ from __future__ import annotations
 
 import base64
 import logging
-import httpx
-
 import model_settings
-from agents.context_manager import is_context_overflow, manage_request
-from agents.model_inventory import resolve_context_budget
 from config import OLLAMA_VISION_MODEL
 
 logger = logging.getLogger(__name__)
@@ -24,7 +20,10 @@ async def validate_vision_model() -> tuple[bool, str]:
     # provider, so this validation probe is NOT routed through the provider layer.
     # We only honour a custom Ollama URL via model_settings.ollama_base_url().
     try:
-        window = resolve_context_budget(OLLAMA_VISION_MODEL, "vision")
+        from agents.router import _post_local_vision
+
+        runtime = model_settings.local_runtime_snapshot()
+        model = runtime.vision_model or OLLAMA_VISION_MODEL
         messages = [
             {
                 "role": "user",
@@ -32,41 +31,16 @@ async def validate_vision_model() -> tuple[bool, str]:
                 "images": [_ONE_PIXEL_PNG],
             }
         ]
-        managed = manage_request(messages, context_window=window)
-        logger.info("vision startup context plan: %s", managed.report)
-        payload = {
-            "model": OLLAMA_VISION_MODEL,
-            "messages": managed.messages,
-            "stream": False,
-            "think": False,
-            "options": {
-                "num_ctx": window,
-                "num_predict": managed.report.completion_reserve,
-            },
-        }
-        base_url = model_settings.ollama_base_url()
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{base_url}/api/chat", json=payload)
-            if resp.status_code >= 400 and is_context_overflow(
-                RuntimeError(getattr(resp, "text", ""))
-            ):
-                retry = manage_request(
-                    messages, context_window=window, force_compact=True, retry=True,
-                    completion_reserve=managed.report.completion_reserve,
-                )
-                logger.info("vision startup context retry plan: %s", retry.report)
-                payload["messages"] = retry.messages
-                payload["options"]["num_predict"] = retry.report.completion_reserve
-                resp = await client.post(f"{base_url}/api/chat", json=payload)
-        resp.raise_for_status()
-        content = (resp.json().get("message", {}).get("content") or "").strip()
+        data = await _post_local_vision(messages, timeout=30, requested_model=model)
+        content = (data.get("message", {}).get("content") or "").strip()
         if not content:
             raise RuntimeError("vision model returned an empty response")
     except Exception as exc:
         reason = " ".join(str(exc).split())[:240] or type(exc).__name__
         return (
             False,
-            f"Vision model {OLLAMA_VISION_MODEL!r} did not accept image input: {reason}. "
-            "Fallback: ollama pull llama3.2-vision:11b and set OLLAMA_VISION_MODEL=llama3.2-vision:11b.",
+            f"Local vision model {model!r} did not accept image input: {reason}. "
+            "Configure a verified local vision model; for Ollama: "
+            "ollama pull llama3.2-vision:11b.",
         )
-    return True, f"Vision model {OLLAMA_VISION_MODEL!r} accepted image input."
+    return True, f"Local vision model {model!r} accepted image input."

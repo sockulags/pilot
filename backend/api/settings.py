@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 
 import model_settings
 from agents.model_inventory import build_inventory, discover_model_capabilities
+from agents import local_runtime
 from config import ANSWER_BACKEND, OLLAMA_MODEL, OLLAMA_MODELS, PILOT_AUTH_TOKEN
 from config import AGENT_ROLE_MODELS
 
@@ -62,8 +63,18 @@ def _settings_payload() -> dict:
 async def _fetch_ollama_models(base_url: str) -> tuple[bool, list[dict], str]:
     """(ok, models, detail) from an Ollama /api/tags call — ALL installed models."""
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{base_url.rstrip('/')}/api/tags")
+        runtime = model_settings.local_runtime_snapshot()
+        if runtime.kind != "ollama" or runtime.base_url != base_url.rstrip("/"):
+            runtime = local_runtime.LocalRuntimeConfig(kind="ollama", base_url=base_url)
+        base_url = local_runtime.validate_local_endpoint(runtime)
+        async with local_runtime.client(10) as client:
+            if runtime.effective_key:
+                resp = await client.get(
+                    f"{base_url.rstrip('/')}/api/tags",
+                    headers=local_runtime.runtime_headers(runtime),
+                )
+            else:
+                resp = await client.get(f"{base_url.rstrip('/')}/api/tags")
             resp.raise_for_status()
             raw = resp.json().get("models", [])
     except Exception as exc:  # noqa: BLE001 — connectivity result, not a crash
@@ -104,7 +115,8 @@ async def _test_openai_provider(base_url: str, api_key: str) -> tuple[bool, str]
     if not api_key:
         return False, "API-nyckel saknas"
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        base_url = local_runtime.validate_cloud_endpoint(base_url)
+        async with httpx.AsyncClient(timeout=15, follow_redirects=False, trust_env=False) as client:
             resp = await client.get(
                 f"{base_url.rstrip('/')}/models",
                 headers={"Authorization": f"Bearer {api_key}"},
@@ -143,8 +155,23 @@ def create_settings_router() -> APIRouter:
         if not _auth_ok(request):
             return _unauthorized()
         settings = model_settings.load_settings()
-        base_url = model_settings.ollama_base_url()
-        ok, models, detail = await _fetch_ollama_models(base_url)
+        runtime = model_settings.local_runtime_snapshot(settings)
+        if runtime.kind == "ollama":
+            ok, models, detail = await _fetch_ollama_models(runtime.base_url)
+        else:
+            try:
+                names = await local_runtime.discover(runtime)
+                ok = True
+                models = [{
+                    "id": name, "label": name, "hint": "OpenAI-compatible local runtime",
+                    "tools": runtime.capabilities.tools == "supported", "in_registry": False,
+                    "declared_context": runtime.context_overrides.get(name),
+                    "effective_context": min(runtime.context_overrides.get(name, 4096), 4096),
+                    "effective_contexts": {}, "capabilities": runtime.capabilities.__dict__,
+                } for name in names]
+                detail = f"{len(models)} modeller installerade"
+            except local_runtime.LocalRuntimeError as exc:
+                ok, models, detail = False, [], f"{exc.code}: {exc}"
         cloud = []
         for entry in settings.get("cloud_providers", []):
             cloud.append({
@@ -155,7 +182,11 @@ def create_settings_router() -> APIRouter:
                 "models": list(entry.get("models") or []),
             })
         return {
-            "ollama": {"ok": ok, "base_url": base_url, "detail": detail, "models": models},
+            "ollama": {"ok": ok, "base_url": runtime.base_url, "detail": detail, "models": models},
+            "local_runtime": {
+                "ok": ok, "kind": runtime.kind, "base_url": runtime.base_url,
+                "detail": detail, "models": models, "fingerprint": runtime.fingerprint,
+            },
             "cloud": cloud,
         }
 
@@ -165,10 +196,26 @@ def create_settings_router() -> APIRouter:
             return _unauthorized()
         body = body or {}
         provider_id = str(body.get("provider") or "").strip().lower()
-        if provider_id == "ollama":
-            base_url = str(body.get("base_url") or model_settings.ollama_base_url())
-            ok, models, detail = await _fetch_ollama_models(base_url)
-            return {"ok": ok, "detail": detail, "models": [m["id"] for m in models]}
+        if provider_id in {"ollama", "local"}:
+            stored = model_settings.local_runtime_snapshot()
+            requested_kind = str(body.get("kind") or stored.kind)
+            if requested_kind not in {"ollama", "openai_compatible"}:
+                return {"ok": False, "detail": "invalid runtime kind", "models": []}
+            candidate = local_runtime.LocalRuntimeConfig(
+                kind=requested_kind,  # type: ignore[arg-type]
+                base_url=str(body.get("base_url") or stored.base_url),
+                api_key=str(body.get("api_key") or stored.api_key),
+                api_key_env=stored.api_key_env,
+                allow_private_network=bool(body.get("allow_private_network", stored.allow_private_network)),
+                chat_model=stored.chat_model, vision_model=stored.vision_model,
+                embedding_model=stored.embedding_model, context_overrides=stored.context_overrides,
+                capabilities=stored.capabilities,
+            )
+            try:
+                names = await local_runtime.discover(candidate)
+                return {"ok": True, "detail": f"OK — {len(names)} modeller tillgängliga", "models": names}
+            except local_runtime.LocalRuntimeError as exc:
+                return {"ok": False, "detail": f"{exc.code}: {exc}", "models": []}
         # Cloud: test inline values when provided (unsaved form state), else the
         # stored provider entry. Inline api_key lets the user test before saving.
         settings = model_settings.load_settings()

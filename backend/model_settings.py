@@ -28,6 +28,7 @@ never returns keys to the browser (see :func:`masked_settings`).
 from __future__ import annotations
 
 import copy
+import contextvars
 import json
 import logging
 import os
@@ -43,6 +44,12 @@ from config import (
     OPENAI_API_KEY,
     OPENAI_BASE_URL,
     OPENAI_MODEL,
+)
+from agents.local_runtime import (
+    LocalRuntimeConfig,
+    LocalRuntimeError,
+    RuntimeCapabilities,
+    validate_local_endpoint,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,6 +107,9 @@ PIPELINE_ROLE_ENV_DEFAULTS = {
 _lock = threading.Lock()
 _cache: dict | None = None
 _cache_mtime: float | None = None
+_turn_runtime: contextvars.ContextVar[LocalRuntimeConfig | None] = contextvars.ContextVar(
+    "pilot_local_runtime_snapshot", default=None
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -150,9 +160,26 @@ def _default_settings() -> dict:
             "models": [OPENAI_MODEL],
             "enabled": True,
         })
+    local_runtime = {
+        "kind": "ollama",
+        "base_url": OLLAMA_BASE_URL,
+        "api_key": "",
+        "api_key_env": "",
+        "allow_private_network": False,
+        "chat_model": OLLAMA_MODEL,
+        "vision_model": "",
+        "embedding_model": "",
+        "context_overrides": {},
+        "capabilities": {
+            "tools": "unknown", "vision": "unknown",
+            "embeddings": "unknown", "structured_output": "unknown",
+        },
+    }
     return {
-        "version": 1,
+        "version": 2,
+        # Kept as a truthful read/write alias for old clients and v1 files.
         "ollama": {"base_url": OLLAMA_BASE_URL},
+        "local_runtime": local_runtime,
         "cloud_providers": cloud,
         "roles": {},
     }
@@ -223,6 +250,7 @@ def reset_cache_for_tests() -> None:
     global _cache, _cache_mtime
     with _lock:
         _cache, _cache_mtime = None, None
+    _turn_runtime.set(None)
 
 
 # --------------------------------------------------------------------------- #
@@ -242,13 +270,58 @@ def validate_settings(raw: dict) -> tuple[dict, list[str]]:
 
     out = _default_settings()
 
-    ollama = raw.get("ollama")
-    if isinstance(ollama, dict):
-        base_url = str(ollama.get("base_url") or "").strip().rstrip("/")
-        if base_url and _valid_url(base_url):
-            out["ollama"] = {"base_url": base_url}
-        elif base_url:
-            errors.append(f"ogiltig Ollama-URL: {base_url!r}")
+    # v1 migration: an existing `ollama` object becomes the v2 local runtime
+    # without changing endpoint or stock behaviour.
+    raw_local_value = raw.get("local_runtime")
+    if isinstance(raw_local_value, dict):
+        raw_local: dict = raw_local_value
+    elif isinstance(raw.get("ollama"), dict):
+        raw_local = raw["ollama"]
+    else:
+        raw_local = {}
+    kind = str(raw_local.get("kind") or "ollama").strip().lower()
+    if kind not in {"ollama", "openai_compatible"}:
+        errors.append(f"ogiltig lokal runtime-typ: {kind!r}")
+        kind = "ollama"
+    base_url = str(raw_local.get("base_url") or OLLAMA_BASE_URL).strip().rstrip("/")
+    caps_value = raw_local.get("capabilities")
+    caps_raw: dict = caps_value if isinstance(caps_value, dict) else {}
+    allowed_states = {"supported", "unsupported", "unknown"}
+    capabilities = {
+        key: str(caps_raw.get(key) or "unknown").lower()
+        for key in ("tools", "vision", "embeddings", "structured_output")
+    }
+    for key, state in list(capabilities.items()):
+        if state not in allowed_states:
+            errors.append(f"ogiltig capability {key}: {state!r}")
+            capabilities[key] = "unknown"
+    overrides: dict[str, int] = {}
+    for name, value in (raw_local.get("context_overrides") or {}).items() if isinstance(raw_local.get("context_overrides"), dict) else []:
+        try:
+            parsed = int(value)
+            if not 1 <= parsed <= 2_000_000:
+                raise ValueError
+            overrides[str(name)] = parsed
+        except (TypeError, ValueError):
+            errors.append(f"ogiltig context override för {name!r}")
+    local = {
+        "kind": kind,
+        "base_url": base_url,
+        "api_key": str(raw_local.get("api_key") or ""),
+        "api_key_env": str(raw_local.get("api_key_env") or ""),
+        "allow_private_network": bool(raw_local.get("allow_private_network", False)),
+        "chat_model": str(raw_local.get("chat_model") or (OLLAMA_MODEL if kind == "ollama" else "")),
+        "vision_model": str(raw_local.get("vision_model") or ""),
+        "embedding_model": str(raw_local.get("embedding_model") or ""),
+        "context_overrides": overrides,
+        "capabilities": capabilities,
+    }
+    try:
+        validate_local_endpoint(_runtime_from_dict(local))
+    except LocalRuntimeError as exc:
+        errors.append(f"osäker lokal runtime-URL: {exc}")
+    out["local_runtime"] = local
+    out["ollama"] = {"base_url": base_url} if kind == "ollama" else {"base_url": OLLAMA_BASE_URL}
 
     seen_ids: set[str] = set()
     providers: list[dict] = []
@@ -302,15 +375,15 @@ def validate_settings(raw: dict) -> tuple[dict, list[str]]:
             if not provider or not model:
                 errors.append(f"tilldelning för {role_id} saknar provider/modell")
                 continue
-            if provider != "ollama" and provider not in seen_ids:
+            if provider not in {"ollama", "local"} and provider not in seen_ids:
                 errors.append(
                     f"rollen {role_id} pekar på okänd leverantör {provider!r}"
                 )
                 continue
-            if role_id in LOCAL_ONLY_ROLES and provider != "ollama":
-                errors.append(f"rollen {role_id} kan bara köras lokalt (Ollama)")
+            if role_id in LOCAL_ONLY_ROLES and provider not in {"ollama", "local"}:
+                errors.append(f"rollen {role_id} kan bara köras via säker lokal runtime")
                 continue
-            roles[role_id] = {"provider": provider, "model": model}
+            roles[role_id] = {"provider": "ollama" if provider == "local" else provider, "model": model}
     out["roles"] = roles
     return out, errors
 
@@ -327,7 +400,46 @@ def _valid_url(url: str) -> bool:
 def ollama_base_url() -> str:
     """Effective Ollama URL: the settings value, falling back to the env."""
     settings = load_settings()
-    return str(settings.get("ollama", {}).get("base_url") or OLLAMA_BASE_URL)
+    runtime = settings.get("local_runtime", {})
+    if runtime.get("kind") == "ollama":
+        return str(runtime.get("base_url") or OLLAMA_BASE_URL)
+    return OLLAMA_BASE_URL
+
+
+def _runtime_from_dict(raw: dict) -> LocalRuntimeConfig:
+    caps = raw.get("capabilities") or {}
+    return LocalRuntimeConfig(
+        kind=str(raw.get("kind") or "ollama"),  # type: ignore[arg-type]
+        base_url=str(raw.get("base_url") or OLLAMA_BASE_URL),
+        api_key=str(raw.get("api_key") or ""),
+        api_key_env=str(raw.get("api_key_env") or ""),
+        allow_private_network=bool(raw.get("allow_private_network", False)),
+        chat_model=str(raw.get("chat_model") or ""),
+        vision_model=str(raw.get("vision_model") or ""),
+        embedding_model=str(raw.get("embedding_model") or ""),
+        context_overrides=dict(raw.get("context_overrides") or {}),
+        capabilities=RuntimeCapabilities(
+            tools=str(caps.get("tools") or "unknown"),  # type: ignore[arg-type]
+            vision=str(caps.get("vision") or "unknown"),  # type: ignore[arg-type]
+            embeddings=str(caps.get("embeddings") or "unknown"),  # type: ignore[arg-type]
+            structured_output=str(caps.get("structured_output") or "unknown"),  # type: ignore[arg-type]
+        ),
+    )
+
+
+def local_runtime_snapshot(settings: dict | None = None) -> LocalRuntimeConfig:
+    """Immutable effective runtime snapshot; callers keep it for one call/turn."""
+    if settings is None and (bound := _turn_runtime.get()) is not None:
+        return bound
+    settings = settings or load_settings()
+    return _runtime_from_dict(settings.get("local_runtime") or {})
+
+
+def bind_local_runtime_for_turn() -> LocalRuntimeConfig:
+    """Freeze current runtime in this task's ContextVar for the whole turn."""
+    snapshot = _runtime_from_dict(load_settings().get("local_runtime") or {})
+    _turn_runtime.set(snapshot)
+    return snapshot
 
 
 def cloud_provider(provider_id: str, settings: dict | None = None) -> dict | None:
@@ -431,6 +543,11 @@ def masked_settings(settings: dict | None = None) -> dict:
     """Settings safe to send to the browser: API keys replaced by presence info."""
     settings = settings or load_settings()
     masked = copy.deepcopy(settings)
+    local = masked.get("local_runtime") or {}
+    key = local_runtime_snapshot(settings).effective_key
+    local["api_key"] = ""
+    local["has_key"] = bool(key)
+    local["key_hint"] = f"…{key[-4:]}" if len(key) >= 8 else ""
     for entry in masked.get("cloud_providers", []):
         key = provider_api_key(entry)
         entry["api_key"] = ""
@@ -456,6 +573,16 @@ def apply_client_update(raw: dict) -> dict:
         for entry in current.get("cloud_providers", [])
     }
     merged = copy.deepcopy(raw) if isinstance(raw, dict) else {}
+    current_local = current.get("local_runtime") or {}
+    local = merged.get("local_runtime")
+    if isinstance(local, dict):
+        key = str(local.get("api_key") or "")
+        if not key or key == _KEEP_KEY:
+            local["api_key"] = str(current_local.get("api_key") or "")
+            if current_local.get("api_key_env") and not local.get("api_key_env"):
+                local["api_key_env"] = current_local["api_key_env"]
+        local.pop("has_key", None)
+        local.pop("key_hint", None)
     for entry in merged.get("cloud_providers") or []:
         if not isinstance(entry, dict):
             continue

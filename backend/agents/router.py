@@ -1,9 +1,8 @@
 import logging
 import os
 import platform
-import httpx
 import model_settings
-from agents import providers
+from agents import providers, local_runtime
 from agents.context_manager import is_context_overflow, manage_request
 from agents.json_utils import extract_json_object
 from agents.model_inventory import resolve_context_budget
@@ -12,16 +11,28 @@ from config import OLLAMA_MODEL, OLLAMA_VISION_MODEL
 logger = logging.getLogger(__name__)
 
 
-async def _post_local_vision(messages: list[dict], *, timeout: int) -> dict:
+async def _post_local_vision(
+    messages: list[dict], *, timeout: int, requested_model: str | None = None,
+) -> dict:
     """Budget a local image request and retry one normalized overflow once."""
-    window = resolve_context_budget(OLLAMA_VISION_MODEL, "vision")
+    runtime = model_settings.local_runtime_snapshot()
+    model = requested_model or runtime.vision_model or OLLAMA_VISION_MODEL
+    if runtime.kind == "openai_compatible":
+        local_runtime.require_capability(runtime, "vision")
+    override = runtime.context_overrides.get(model)
+    window = resolve_context_budget(
+        model if runtime.kind == "ollama" else "__unknown_local_openai__",
+        "vision", declared_max=override,
+    )
     managed = manage_request(messages, context_window=window)
+    if runtime.kind == "ollama":
+        await local_runtime.ensure_capability(runtime, model, "vision")
     active_report = providers.record_context_report(
-        managed.report, model=OLLAMA_VISION_MODEL, role="vision"
+        managed.report, model=model, role="vision"
     )
     logger.info("local vision context plan: %s", managed.report)
     payload = {
-        "model": OLLAMA_VISION_MODEL,
+        "model": model,
         "messages": managed.messages,
         "stream": False,
         "think": False,
@@ -30,9 +41,27 @@ async def _post_local_vision(messages: list[dict], *, timeout: int) -> dict:
             "num_predict": managed.report.completion_reserve,
         },
     }
-    base_url = model_settings.ollama_base_url()
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(f"{base_url}/api/chat", json=payload)
+    base_url = local_runtime.validate_local_endpoint(runtime)
+    if runtime.kind == "openai_compatible":
+        openai_payload = {
+            "model": model,
+            "messages": local_runtime.openai_messages(managed.messages),
+            "stream": False,
+            "max_tokens": managed.report.completion_reserve,
+        }
+        message, usage = await local_runtime.openai_chat_once(runtime, openai_payload)
+        providers.record_usage(
+            usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), "local_openai"
+        )
+        providers.finalize_context_report(
+            active_report,
+            prompt_tokens=usage.get("prompt_tokens"),
+            completion_tokens=usage.get("completion_tokens"),
+        )
+        return {"message": message, "usage": usage}
+    async with local_runtime.client(timeout) as client:
+        headers = local_runtime.runtime_headers(runtime)
+        resp = await client.post(f"{base_url}/api/chat", json=payload, headers=headers)
         try:
             resp.raise_for_status()
         except Exception as exc:
@@ -43,12 +72,12 @@ async def _post_local_vision(messages: list[dict], *, timeout: int) -> dict:
                 completion_reserve=managed.report.completion_reserve,
             )
             active_report = providers.record_context_report(
-                retry.report, model=OLLAMA_VISION_MODEL, role="vision"
+                retry.report, model=model, role="vision"
             )
             logger.info("local vision context retry plan: %s", retry.report)
             payload["messages"] = retry.messages
             payload["options"]["num_predict"] = retry.report.completion_reserve
-            resp = await client.post(f"{base_url}/api/chat", json=payload)
+            resp = await client.post(f"{base_url}/api/chat", json=payload, headers=headers)
             resp.raise_for_status()
     data = resp.json()
     providers.record_usage(
