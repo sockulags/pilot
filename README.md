@@ -171,6 +171,16 @@ uv run python -m tests.eval.live_runner --trials 3         # per-task variance
 
 Each run records a **reproducibility block** (git commit + dirty flag, OS/Python, exact model digest/quantization and Ollama version), archives an immutable copy under `results/history/`, and renders a **"change vs previous run"** delta so a regression is visible at a glance. `--trials N` runs every task N times and reports per-task pass rate and latency spread — small local models are noisy, and the report shows it rather than hiding behind one flappy verdict.
 
+A separate [local inference compatibility matrix](docs/local-inference-compatibility.md)
+tests the Ollama and generic local OpenAI-compatible production adapters under
+context pressure. Its pytest contracts are deterministic and network-free; the
+opt-in live runner records exact runtime/model/digest/context/hardware evidence
+to a caller-selected, non-overwriting JSON + Markdown output. The current
+retained run supports native Ollama and Ollama's OpenAI-compatible facade for
+the scenarios it actually completed. LM Studio and llama.cpp remain explicitly
+**unverified** until those exact runtimes are run—API similarity is not a support
+claim.
+
 Reports land in `backend/tests/eval/results/` (`latest.*` committed; `history/` local). A prior 10-task run, local vs API (the suite has since grown — re-run to refresh these numbers):
 
 | Metric | Local `gemma4:12b` | OpenAI `gpt-4o-mini` |

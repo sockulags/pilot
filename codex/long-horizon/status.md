@@ -2,7 +2,7 @@
 
 ## Current Milestone
 
-Milestone 4 / issue #65 — pluggable local inference runtimes. Implementation, repair, independent review, broad validation, live Ollama smoke, and browser QA are complete; publication/CI/merge is next.
+Milestone 5 / issue #66 — local inference compatibility matrix and reproducible context-pressure evals. Implementation, repair, independent review, deterministic validation, and live evidence are complete; publication/CI/merge is next.
 
 ## Completed
 
@@ -26,6 +26,10 @@ Milestone 4 / issue #65 — pluggable local inference runtimes. Implementation, 
 - #65 now centralizes local endpoint policy and runtime snapshots, preserves stock Ollama, adds the generic local OpenAI-compatible contract for LM Studio/llama.cpp, and routes local chat/tools/vision/embeddings through the privacy boundary.
 - #65 independent review found and repaired a DNS-rebinding hostname gap plus missing authenticated-Ollama headers; the re-review is APPROVED with no remaining findings.
 - #65 browser QA passed for stock Ollama discovery/test, unsaved OpenAI-compatible controls, 375px mobile layout, persisted-settings protection, and console diagnostics.
+- PR #77 merged to `master` at `b625752`; backend/frontend CI passed and issue #65 closed.
+- #66 adds a network-free provider/context compatibility matrix, exact boundary and bounded-retry regressions, an opt-in evidence runner, stable comparison/source digests, and a documented support vocabulary.
+- #66 independent review found and repaired unstable live-report comparison, missing exact boundary coverage, incomplete source identity and generic metadata, dishonest profile verdicts, and unverified diagnostic redaction; final re-review is APPROVED.
+- #66 live evidence verifies Ollama 0.31.1 native and Ollama's generic OpenAI-compatible `/v1` facade for text/native tools plus separate `nomic-embed-text:latest` embeddings; native vision also passed a generated 1920x1080 long-task case estimated at 5,206 tokens under an 8,192 effective window. LM Studio and llama.cpp remain unverified.
 
 ## Active Blockers
 
@@ -42,6 +46,7 @@ None.
 - #64 final controller validation: 715 full backend tests, 42 evals, Ruff clean, Pyright 0 errors, 18 frontend tests, TypeScript/ESLint 0 errors (3 unrelated pre-existing warnings), and production build green.
 - #65 final controller validation: 749 full backend tests, 42 evals, Ruff clean, Pyright 0 errors, 18 frontend tests, TypeScript/ESLint 0 errors (3 pre-existing warnings), production build green, and `git diff --check` clean apart from the existing `backend/memory.py` line-ending notice.
 - #65 live Ollama smoke: 7 models discovered, `gemma4:12b` returned a non-empty chat response, and `nomic-embed-text:latest` returned a 768-dimensional embedding. LM Studio and llama.cpp remain honestly unverified live because neither runtime is listening; their contracts are deterministic mocked tests only.
+- #66 final controller validation: 776 full backend tests, 69 eval tests, Ruff clean, Pyright 0 errors, `git diff --check` clean apart from the existing results README line-ending notice, and live evidence comparison/source digests independently recomputed.
 
 ## Subagents
 
@@ -59,6 +64,9 @@ None.
 - `issue65_investigator`: DONE_WITH_CONCERNS; delivered the local-runtime/privacy call-site audit and validation matrix.
 - `issue65_implementer`: DONE after one review-driven security/authentication repair loop.
 - `issue65_reviewer3`: final APPROVED after explicit spec/privacy and code-quality passes plus repair re-review.
+- `issue66_investigator`: DONE_WITH_CONCERNS; delivered the provider/eval/live-report gap audit and honest runtime matrix.
+- `issue66_implementer`: DONE after one review-driven evidence/comparison repair loop.
+- `issue66_reviewer`: final APPROVED after explicit acceptance/evidence and quality/determinism passes plus repair re-review.
 
 ## Known Issues
 
@@ -68,4 +76,4 @@ None.
 
 ## Next Action
 
-Commit and publish #65, wait for GitHub CI, merge and close it, then begin serialized issue #66 work from updated `master`.
+Commit and publish #66, wait for GitHub CI, merge and close it, then perform the epic #67 requirement-by-requirement and end-to-end completion audit.
