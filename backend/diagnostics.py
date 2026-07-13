@@ -44,8 +44,9 @@ def _compact_event(event: dict[str, Any]) -> dict[str, Any]:
         for key in ("type", "tool", "args", "content", "model", "route")
         if key in event
     }
-    if isinstance(kept.get("content"), str):
-        kept["content"] = kept["content"][:800]
+    content = kept.get("content")
+    if isinstance(content, str):
+        kept["content"] = content[:800]
     return kept
 
 

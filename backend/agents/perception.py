@@ -22,10 +22,17 @@ import io
 import logging
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from PIL import Image, ImageDraw, ImageFont
 
 from config import PERCEPTION_MAX_ELEMENTS
+
+if TYPE_CHECKING:
+    # uiautomation is imported lazily at runtime (see enumerate_elements) so the
+    # backend degrades gracefully when it's unavailable; pull the control type in
+    # here purely for annotations so the UIA traversal type-checks.
+    from uiautomation import Control
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +159,7 @@ def enumerate_elements(max_elements: int = PERCEPTION_MAX_ELEMENTS) -> list[Elem
     elements: list[Element] = []
     visited = 0
     next_id = 1
-    stack: list[tuple[object, int]] = [(root, 0)]
+    stack: list[tuple[Control, int]] = [(root, 0)]
 
     while stack and visited < _MAX_NODES and len(elements) < max_elements:
         control, depth = stack.pop()

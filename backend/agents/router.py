@@ -227,7 +227,9 @@ async def vision_done_summary(task: str, image_b64: str) -> str:
 
 
 async def analyze_screenshot(task: str, image_b64: str, history: list[dict]) -> str:
-    messages = [
+    # Values are str except the Ollama ``images`` field, which is a list of
+    # base64 strings, so the message dicts hold ``str | list[str]``.
+    messages: list[dict[str, str | list[str]]] = [
         {
             "role": "system",
             "content": "You are a computer vision assistant. Describe what you see on the screen and how it relates to the task. Be concise and specific.",

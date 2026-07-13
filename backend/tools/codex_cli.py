@@ -51,15 +51,18 @@ def resolve_codex_cli() -> str:
         return _resolved_cli
 
     cli = CODEX_CLI or "codex"
+    on_path = shutil.which(cli)
+    resolved: str
     if os.path.isabs(cli) and os.path.isfile(cli):
-        _resolved_cli = cli
+        resolved = cli
     elif bundled := _find_bundled_codex():
-        _resolved_cli = bundled
-    elif shutil.which(cli):
-        _resolved_cli = shutil.which(cli)
+        resolved = bundled
+    elif on_path:
+        resolved = on_path
     else:
-        _resolved_cli = cli
-    return _resolved_cli
+        resolved = cli
+    _resolved_cli = resolved
+    return resolved
 
 
 def _build_cmd(prompt: str, cwd: str | None, resume_session_id: str | None) -> list[str]:
@@ -104,6 +107,8 @@ async def run_codex_cli(
     last_text = ""
     saw_event = False
 
+    # stdout=PIPE guarantees a StreamReader; assert so the typed-Optional narrows.
+    assert process.stdout is not None
     async for line in process.stdout:
         raw = line.decode(errors="replace").strip()
         if not raw:
