@@ -2,7 +2,7 @@
 
 ## Current Milestone
 
-Milestone 6 / epic #67 — requirement-by-requirement and end-to-end completion audit on current `master` after all child issues merged.
+Milestone 6 / epic #67 — completion audit APPROVED after all child issues, real-app flows, full regression, and independent review; only publication and issue closure remain.
 
 ## Completed
 
@@ -83,4 +83,4 @@ None.
 
 ## Next Action
 
-Obtain an independent completion verdict against the retained end-to-end evidence, publish the final audit PR, verify CI, merge it, and close #67 only if the verdict remains approved.
+Merge the green final audit PR and close #67. No implementation or evidence work remains.

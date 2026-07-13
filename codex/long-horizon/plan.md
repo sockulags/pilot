@@ -76,4 +76,4 @@ Touched areas: whole repository, GitHub issues/PRs, runtime/browser evidence.
 Acceptance criteria: every item in `spec.md` Done When and #67 is proven; no unresolved review findings or scoped dirty changes.
 Validation commands: full backend + eval + frontend checks; browser smoke; git diff/status audit; GitHub state audit.
 Stop rule: do not close the epic on indirect or missing evidence.
-Status: in_progress
+Status: completed
