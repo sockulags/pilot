@@ -29,9 +29,11 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 import model_settings
 from agents.coordinator import run_coordinator
+from agents.context_telemetry import build_context_telemetry
 from agents.gateway import refine_query
 from agents.model_inventory import get_model_inventory
 from agents.orchestrator import classify_turn, compose_reply
+from agents.providers import get_context_reports, reset_usage
 from agents.routing import build_routing_decision
 from agents.turn_policy import (
     build_task_context,
@@ -316,6 +318,10 @@ async def websocket_endpoint(websocket: WebSocket):
             await _handle_job_command(text, turn)
             return
 
+        # A handle_message coroutine is one turn-local context. Resetting here
+        # gives concurrent sockets/tasks independent ContextVar-backed reports.
+        reset_usage()
+
         prior = list(conversation)
         conversation.append({"role": "user", "content": text, "turn": turn})
         task_context = build_task_context(prior, text)
@@ -347,10 +353,17 @@ async def websocket_endpoint(websocket: WebSocket):
         )
         coordinator_model = agent_selection.model
 
+        pending_done_events: list[dict] = []
+
         def emit(event: dict):
             enriched = {**event, "turn": turn, "route": route}
             diagnostic_events.append(enriched)
-            send(enriched)
+            # Provider usage is complete only after the final call. Hold the
+            # terminal event so clients always receive telemetry before done.
+            if event.get("type") == "done":
+                pending_done_events.append(enriched)
+            else:
+                send(enriched)
 
         diagnostic_events: list[dict] = []
         turn_status = "done"
@@ -565,6 +578,18 @@ async def websocket_endpoint(websocket: WebSocket):
                         run_codex, code_prompt, cwd, claude_session_id, emit, abort, conversation,
                         meta=code_meta,
                     )
+
+        context_telemetry = build_context_telemetry(get_context_reports())
+        if context_telemetry:
+            for message in reversed(conversation):
+                if message.get("role") == "assistant" and message.get("turn") == turn:
+                    message["context_telemetry"] = context_telemetry
+                    message.setdefault("meta", {})["context_report"] = context_telemetry
+                    break
+            emit({"type": "context_telemetry", "context_telemetry": context_telemetry})
+
+        for done_event in pending_done_events:
+            send(done_event)
 
         persist()
         turn_status = _diagnostic_turn_status(diagnostic_events, turn_status, abort.is_set())

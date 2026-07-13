@@ -2,7 +2,7 @@
 
 ## Current Milestone
 
-Milestone 2 / issue #63 — adaptive context manager. Implementation and independent two-pass review are approved; controller validation/publication is next.
+Milestone 3 / issue #64 — context telemetry UI. A previously validated but uncommitted implementation was lost during an unrelated worktree branch switch; its exact patch sequence was recovered from the original Codex rollout and is being adapted to current `master` before independent review.
 
 ## Completed
 
@@ -17,6 +17,11 @@ Milestone 2 / issue #63 — adaptive context manager. Implementation and indepen
 - PR #68 merged to `master` at `749280c`; backend/frontend CI passed and issue #62 closed.
 - #63 implements deterministic request planning, completion reserve, 70/85/95 structural compaction, complete UTF-8/provider-payload estimation, bounded Ollama/OpenAI overflow recovery, direct-vision handling, safe diagnostics, and typed perception exhaustion.
 - #63 independent review required two repair loops; final spec and quality passes are APPROVED with no actionable findings.
+- PR #69 merged to `master` at `2b22fbe`; CI passed and issue #63 closed.
+- Current `master` also includes unrelated completed work through `6a1a737`; the #64 branch was fast-forwarded before reconstruction.
+- #64 was reconstructed from the recovered patch record, adapted to current `master`, and completed through three independent two-pass review cycles.
+- #64 final independent spec-compliance and code-quality review is APPROVED with no actionable findings.
+- Browser QA passed for legacy, normal, persisted reconnect, synthetic near-limit (4096 effective denominator), desktop and 375px mobile states with no console errors.
 
 ## Active Blockers
 
@@ -30,6 +35,7 @@ None.
 - Final reviewer validation: 85 focused tests, 669 full backend tests, 40 evals, Ruff clean.
 - Final controller validation: 669 full backend tests, 40 evals, Ruff clean, `git diff --check` clean apart from expected line-ending notices.
 - #63 final reviewer validation: 705 full backend tests, 42 evals, 131 focused tests, Ruff and diff check clean apart from expected line-ending notices.
+- #64 final controller validation: 715 full backend tests, 42 evals, Ruff clean, Pyright 0 errors, 18 frontend tests, TypeScript/ESLint 0 errors (3 unrelated pre-existing warnings), and production build green.
 
 ## Subagents
 
@@ -41,13 +47,16 @@ None.
 - `issue63_finisher`: completed first full implementation pass.
 - `issue63_repair`: DONE after two review-driven repair loops.
 - `issue63_reviewer`: final APPROVED; both review gates passed.
+- `issue64_recovery`: DONE_WITH_CONCERNS; recovered the complete patch sequence from the original rollout, with no reachable commit available.
+- `issue64_implementer_v2`: DONE after adapting the recovered implementation and two review-driven repair rounds.
+- `issue64_reviewer_v2`: final APPROVED after three explicit spec-compliance and code-quality passes.
 
 ## Known Issues
 
-- `frontend/next-env.d.ts` is modified/generated and unrelated to the program; preserve and exclude from scoped commits.
-- Open PR #61 and issue #57 are unrelated.
-- Current branch is `agent/issue-63-adaptive-context`; only unrelated `frontend/next-env.d.ts` is dirty before #63 edits.
+- `frontend/next-env.d.ts` is generated and out of scope; do not replay or include its prior unrelated modification.
+- The lost #64 work had no commit or reachable dangling commit. Recovery source is rollout `019f534b-f84e-7f41-b152-e80b63a846e1`, whose successful patch records contain the complete implementation.
+- Issue #57 and the Pyright work merged as #71 are unrelated and must remain intact.
 
 ## Next Action
 
-Run controller validation, stage only #63 and durable status files, publish PR, obtain green CI, merge, and close #63 before #64.
+Reconstruct #64 on current `master`, run independent spec and quality review, complete browser QA and full validation, then publish/merge #64 before starting #65.

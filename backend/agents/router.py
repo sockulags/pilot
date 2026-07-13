@@ -16,6 +16,9 @@ async def _post_local_vision(messages: list[dict], *, timeout: int) -> dict:
     """Budget a local image request and retry one normalized overflow once."""
     window = resolve_context_budget(OLLAMA_VISION_MODEL, "vision")
     managed = manage_request(messages, context_window=window)
+    active_report = providers.record_context_report(
+        managed.report, model=OLLAMA_VISION_MODEL, role="vision"
+    )
     logger.info("local vision context plan: %s", managed.report)
     payload = {
         "model": OLLAMA_VISION_MODEL,
@@ -39,12 +42,24 @@ async def _post_local_vision(messages: list[dict], *, timeout: int) -> dict:
                 messages, context_window=window, force_compact=True, retry=True,
                 completion_reserve=managed.report.completion_reserve,
             )
+            active_report = providers.record_context_report(
+                retry.report, model=OLLAMA_VISION_MODEL, role="vision"
+            )
             logger.info("local vision context retry plan: %s", retry.report)
             payload["messages"] = retry.messages
             payload["options"]["num_predict"] = retry.report.completion_reserve
             resp = await client.post(f"{base_url}/api/chat", json=payload)
             resp.raise_for_status()
-    return resp.json()
+    data = resp.json()
+    providers.record_usage(
+        data.get("prompt_eval_count", 0), data.get("eval_count", 0), providers.OLLAMA
+    )
+    providers.finalize_context_report(
+        active_report,
+        prompt_tokens=data.get("prompt_eval_count"),
+        completion_tokens=data.get("eval_count"),
+    )
+    return data
 
 PARSE_ERROR_DEFAULT = {"tool": "done", "args": {"summary": "parse error — agenten kunde inte tolka modellsvaret"}, "thinking": "parse error"}
 

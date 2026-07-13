@@ -19,6 +19,7 @@ from typing import Any
 IMAGE_TOKENS = 4096
 MESSAGE_OVERHEAD = 12
 SUMMARY_MARKER = "[DETERMINISTIC CONTEXT SUMMARY — unverified text remains unverified]"
+_INTERNAL_MESSAGE_FIELDS = {"context_kind", "verified_evidence", "pinned", "provenance"}
 
 
 class ContextBudgetError(ValueError):
@@ -40,6 +41,14 @@ class ContextReport:
     media_tokens: int = 0
     tool_schema_tokens: int = 0
     decisions: tuple[str, ...] = field(default_factory=tuple)
+    model: str | None = None
+    context_role: str | None = None
+    declared_context: int | None = None
+    categories: dict[str, int] = field(default_factory=dict)
+    summarized_categories: dict[str, int] = field(default_factory=dict)
+    removed_categories: dict[str, int] = field(default_factory=dict)
+    actual_prompt_tokens: int | None = None
+    actual_completion_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -80,7 +89,11 @@ def estimate_message_tokens(message: dict) -> tuple[int, int]:
     # Count the complete serialized provider message (name, tool calls and nested
     # arguments, tool_call_id, retained extension fields), not merely content.
     content = message.get("content", "")
-    text = estimate_text_tokens(_payload_without_media(message)) + MESSAGE_OVERHEAD
+    # Policy metadata guides preservation/category decisions but is stripped
+    # before the provider call, so it must not inflate the request estimate.
+    text = estimate_text_tokens(
+        _payload_without_media(_provider_message(message))
+    ) + MESSAGE_OVERHEAD
     images = message.get("images") or []
     media = IMAGE_TOKENS * len(images)
     # OpenAI-compatible multimodal content blocks are also accounted for.
@@ -135,6 +148,33 @@ def _tool_like(message: dict) -> bool:
     return message.get("role") == "tool" or message.get("context_kind") == "tool_output"
 
 
+def _semantic_category(message: dict) -> str:
+    kind = message.get("context_kind")
+    if message.get("verified_evidence") or kind in {"evidence", "verified_evidence"}:
+        return "evidence"
+    if kind in {"memory", "pinned_fact"}:
+        return "memory"
+    if _tool_like(message):
+        return "tools"
+    if message.get("role") == "system" or kind in {"safety", "active_task"}:
+        return "system"
+    return "history"
+
+
+def _last_active_user_index(messages: list[dict]) -> int:
+    """Find the real user task, excluding synthetic/verified evidence turns."""
+    return max(
+        (
+            index
+            for index, message in enumerate(messages)
+            if message.get("role") == "user"
+            and message.get("context_kind") not in {"evidence", "verified_evidence"}
+            and not message.get("verified_evidence")
+        ),
+        default=-1,
+    )
+
+
 def _compact_content(message: dict, limit: int, *, summary: bool) -> dict:
     result = copy.deepcopy(message)
     content = result.get("content", "")
@@ -145,6 +185,15 @@ def _compact_content(message: dict, limit: int, *, summary: bool) -> dict:
     excerpt = content[:head] + ("\n…\n" + content[-tail:] if tail else "")
     result["content"] = f"{SUMMARY_MARKER}\n{excerpt}" if summary else excerpt + "\n[trimmed]"
     return result
+
+
+def _provider_message(message: dict) -> dict:
+    """Remove Pilot-only policy metadata before calling provider APIs."""
+    return {
+        key: copy.deepcopy(value)
+        for key, value in message.items()
+        if key not in _INTERNAL_MESSAGE_FIELDS
+    }
 
 
 def manage_request(
@@ -174,7 +223,9 @@ def manage_request(
     pressure = "essential_only" if force_compact else _pressure(ratio)
     decisions: list[str] = []
     trimmed = summarized = removed = 0
-    last_user = max((i for i, m in enumerate(copied) if m.get("role") == "user"), default=-1)
+    summarized_by = {name: 0 for name in ("system", "tools", "media", "history", "memory", "evidence")}
+    removed_by = {name: 0 for name in ("system", "tools", "media", "history", "memory", "evidence")}
+    last_user = _last_active_user_index(copied)
 
     # At 70%, shrink verbose prior tool output first.
     if pressure in {"trim_tools", "summarize_history", "essential_only"}:
@@ -198,6 +249,7 @@ def manage_request(
                 if compacted != message:
                     copied[idx] = compacted
                     summarized += 1
+                    summarized_by[_semantic_category(message)] += 1
         if summarized:
             decisions.append(f"summarized {summarized} older message(s)")
 
@@ -215,6 +267,7 @@ def manage_request(
                 next_messages.append(message)
             else:
                 removed += 1
+                removed_by[_semantic_category(message)] += 1
         copied = next_messages
         if removed:
             decisions.append(f"removed {removed} oldest optional message(s)")
@@ -226,13 +279,14 @@ def manage_request(
         estimated, media = total(copied)
         if estimated <= prompt_budget:
             break
-        last_user = max((i for i, m in enumerate(copied) if m.get("role") == "user"), default=-1)
+        last_user = _last_active_user_index(copied)
         optional_idx = next(
             (i for i, m in enumerate(copied) if not _mandatory(m, i, last_user)), None
         )
         if optional_idx is not None:
-            copied.pop(optional_idx)
+            removed_message = copied.pop(optional_idx)
             removed += 1
+            removed_by[_semantic_category(removed_message)] += 1
             continue
         raise ContextBudgetError(
             f"mandatory context requires {estimated} tokens but prompt budget is {prompt_budget}"
@@ -242,6 +296,15 @@ def manage_request(
         decisions.append(f"removed {removed} optional message(s) to fit budget")
     if retry:
         decisions.append("provider overflow: applied exactly-one compacted retry")
+    categories = {name: 0 for name in ("system", "tools", "media", "history", "memory", "evidence")}
+    categories["tools"] = tool_tokens
+    for message in copied:
+        message_total, message_media = estimate_message_tokens(message)
+        text_tokens = message_total - message_media
+        categories["media"] += message_media
+        category = _semantic_category(message)
+        categories[category] += text_tokens
+
     report = ContextReport(
         context_window=context_window,
         completion_reserve=reserve,
@@ -256,5 +319,12 @@ def manage_request(
         media_tokens=media,
         tool_schema_tokens=tool_tokens,
         decisions=tuple(decisions),
+        categories=categories,
+        summarized_categories=summarized_by,
+        removed_categories=removed_by,
     )
-    return ManagedRequest(copied, copy.deepcopy(tools), report)
+    return ManagedRequest(
+        [_provider_message(message) for message in copied],
+        copy.deepcopy(tools),
+        report,
+    )

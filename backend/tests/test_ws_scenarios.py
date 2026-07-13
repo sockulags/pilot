@@ -323,6 +323,26 @@ class WebSocketScenarioTests(unittest.TestCase):
 
         import api.ws as ws_api
         import store
+        from agents.context_manager import ContextReport
+
+        context_report = ContextReport(
+            context_window=8192,
+            completion_reserve=1024,
+            prompt_budget=7168,
+            estimated_prompt_tokens=1200,
+            pressure="normal",
+            compacted=False,
+            model="gemma4:12b",
+            context_role="synthesis",
+            categories={
+                "system": 200,
+                "tools": 0,
+                "media": 0,
+                "history": 1000,
+                "memory": 0,
+                "evidence": 0,
+            },
+        )
 
         app = FastAPI()
 
@@ -350,14 +370,22 @@ class WebSocketScenarioTests(unittest.TestCase):
              mock.patch.object(ws_api, "classify_turn", new=fake_classify_turn), \
              mock.patch.object(ws_api, "run_coordinator", new=fake_run_coordinator), \
              mock.patch.object(ws_api, "compose_reply", new=fake_compose_reply), \
-             mock.patch.object(ws_api, "search_memories", new=fake_search_memories):
+             mock.patch.object(ws_api, "search_memories", new=fake_search_memories), \
+             mock.patch.object(ws_api, "get_context_reports", return_value=[context_report]):
             with TestClient(app) as client:
                 # First connection: run two turns.
                 with client.websocket_connect("/ws") as websocket:
                     websocket.send_json({"type": "hello", "session_id": "scenario-reconnect"})
                     self._drain_until(websocket, {"jobs"})
                     websocket.send_json({"type": "message", "text": "första"})
-                    self._drain_until(websocket, {"done"})
+                    first_events = self._drain_until(websocket, {"done"})
+                    self.assertLess(
+                        next(
+                            i for i, event in enumerate(first_events)
+                            if event["type"] == "context_telemetry"
+                        ),
+                        next(i for i, event in enumerate(first_events) if event["type"] == "done"),
+                    )
                     websocket.send_json({"type": "message", "text": "andra"})
                     self._drain_until(websocket, {"done"})
                 # Reconnect: the history event replays messages with real turns.
@@ -372,6 +400,10 @@ class WebSocketScenarioTests(unittest.TestCase):
         self.assertEqual(
             [("user", 1), ("assistant", 1), ("user", 2), ("assistant", 2)],
             [(m["role"], m["turn"]) for m in messages],
+        )
+        self.assertEqual(8192, messages[-1]["context_telemetry"]["calls"][0]["effective_limit"])
+        self.assertEqual(
+            messages[-1]["context_telemetry"], messages[-1]["meta"]["context_report"]
         )
 
     def test_turn_exceeding_watchdog_timeout_is_terminated_and_client_notified(self):

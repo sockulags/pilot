@@ -160,6 +160,11 @@ def test_openai_once_normalizes_and_records_usage(monkeypatch):
     assert client.posted["json"]["tool_choice"] == "auto"
     u = providers.get_usage()
     assert u["prompt_tokens"] == 20 and u["completion_tokens"] == 8 and u["backend"] == "openai"
+    report = providers.get_context_reports()[-1]
+    assert report.model == providers.OPENAI_MODEL
+    assert report.context_role == "default"
+    assert report.actual_prompt_tokens == 20
+    assert report.actual_completion_tokens == 8
 
 
 def test_openai_once_requires_key(monkeypatch):

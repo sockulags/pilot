@@ -11,6 +11,12 @@ import Dialog, { useDialogA11y } from "@/components/Dialog";
 import InspectorPanel from "@/components/InspectorPanel";
 import { BrainPopover, Button, CommandPalette, WorkflowCard, type PaletteGroup, type WorkflowTone } from "@/components/ui";
 import { t } from "@/app/strings";
+import {
+  affectedContextCalls,
+  contextMeter,
+  type ContextCategory,
+  type ContextTelemetry,
+} from "@/app/contextTelemetry";
 
 export type Route = "chat" | "computer" | "code";
 export type Project = { id: string; name: string; path: string };
@@ -68,6 +74,7 @@ type StoredMessage = {
   cwd?: string;
   code_session_id?: string;
   codex_trace?: CodexTrace;
+  context_telemetry?: ContextTelemetry;
 };
 
 export type ServerEvent = {
@@ -78,6 +85,7 @@ export type ServerEvent = {
     | "assistant_delta"
     | "thinking"
     | "context"
+    | "context_telemetry"
     | "action"
     | "consult"
     | "expert_delta"
@@ -117,6 +125,7 @@ export type ServerEvent = {
   execution_engine?: string;
   reason?: string;
   required_permissions?: string[];
+  context_telemetry?: ContextTelemetry;
 };
 
 // Why a turn took the route/model it did — populated from turn_start and
@@ -154,6 +163,7 @@ export type TranscriptItem =
       codeSessionId?: string;
       codexTrace?: CodexTrace;
       insight?: RouteInsight;
+      contextTelemetry?: ContextTelemetry;
       done: boolean;
     };
 
@@ -198,13 +208,6 @@ function agentLabel(agent: Agent) {
   return t.agents.find((option) => option.id === agent)?.label ?? agent;
 }
 
-function approximateTokens(transcript: TranscriptItem[]) {
-  return transcript.reduce((sum, item) => {
-    const text = item.kind === "user" ? item.text : `${item.text} ${item.summary ?? ""}`;
-    return sum + Math.ceil(text.length / 4);
-  }, 1600);
-}
-
 // Rebuild the transcript from the server's authoritative history. Each stored
 // message carries the real turn index it belongs to; sessions saved before that
 // field existed fall back to a positional counter so event matching still keys
@@ -232,6 +235,7 @@ function historyToTranscript(messages: StoredMessage[], nextId: () => number): T
           cwd: m.cwd,
           codeSessionId: m.code_session_id,
           codexTrace: m.codex_trace,
+          contextTelemetry: m.context_telemetry,
         };
   });
 }
@@ -239,8 +243,12 @@ function historyToTranscript(messages: StoredMessage[], nextId: () => number): T
 // A cheap content signature of the finalized (done) part of a transcript, used
 // to decide whether the server's history actually differs from what we already
 // show. Ignores in-progress assistant turns the server hasn't persisted yet.
-function transcriptSignature(items: { role: string; content: string }[]): string {
-  return items.map((m) => `${m.role}:${m.content}`).join("\n\x1e");
+function transcriptSignature(
+  items: { role: string; content: string; contextTelemetry?: ContextTelemetry }[],
+): string {
+  return items
+    .map((m) => `${m.role}:${m.content}:${JSON.stringify(m.contextTelemetry ?? null)}`)
+    .join("\n\x1e");
 }
 
 function ContextModal({
@@ -258,28 +266,119 @@ function ContextModal({
   onClearContext: () => void;
   onClose: () => void;
 }) {
-  const total = approximateTokens(transcript);
-  const system = 900;
-  const skills = 420;
-  const conversation = Math.max(0, total - system - skills);
-  const percent = Math.min(100, Math.round((total / 8192) * 100));
+  const latest = transcript.findLast(
+    (item): item is Extract<TranscriptItem, { kind: "assistant" }> =>
+      item.kind === "assistant" && Boolean(item.contextTelemetry),
+  );
+  const meter = contextMeter(latest?.contextTelemetry);
+  const affectedCalls = affectedContextCalls(latest?.contextTelemetry);
+  const categoryLabels: Record<ContextCategory, string> = {
+    system: "System",
+    tools: "Verktyg",
+    media: "Bild/media",
+    history: "Samtal",
+    memory: "Minne",
+    evidence: "Evidens",
+  };
+  const categoryColors: Record<ContextCategory, string> = {
+    system: "var(--accent)",
+    tools: "var(--violet)",
+    media: "var(--red)",
+    history: "var(--green)",
+    memory: "var(--cyan)",
+    evidence: "var(--yellow)",
+  };
 
   return (
     <Dialog icon="◔" title={t.dialogs.context} className="narrow" onClose={onClose}>
         <div className="mb">
-          <p style={{ color: "var(--dim)", marginBottom: 12 }}>
-            Uppskattad fördelning – inte exakta siffror. Värdena beräknas lokalt
-            i webbläsaren och är till för att ge en känsla för storleken.
-          </p>
-          <div className="ctxbar">
-            <span style={{ width: `${(system / 8192) * 100}%`, background: "var(--accent)" }} />
-            <span style={{ width: `${(skills / 8192) * 100}%`, background: "var(--violet)" }} />
-            <span style={{ width: `${(conversation / 8192) * 100}%`, background: "var(--green)" }} />
-          </div>
-          <div className="ctxrow"><span className="sw" style={{ background: "var(--accent)" }} /><span className="nm2">System</span><span className="tk">~{system} tok</span></div>
-          <div className="ctxrow"><span className="sw" style={{ background: "var(--violet)" }} /><span className="nm2">Skills</span><span className="tk">~{skills} tok</span></div>
-          <div className="ctxrow"><span className="sw" style={{ background: "var(--green)" }} /><span className="nm2">Samtal</span><span className="tk">~{conversation} tok</span></div>
-          <div className="ctxrow" style={{ borderBottom: "none" }}><span className="sw" style={{ background: "var(--panel-2)" }} /><span className="nm2">Totalt</span><span className="tk">~{total} tok · ~{percent}% av kontexten</span></div>
+          {!meter.call ? (
+            <div className="ctxlegacy" role="status">
+              Ingen backendtelemetri finns för äldre meddelanden. Nästa modellsvar visar verklig budget.
+            </div>
+          ) : <>
+            <div
+              className={`ctxstatus ${meter.state}`}
+              role="status"
+              aria-label={`Kontextstatus: ${meter.state}`}
+            >
+              <strong>{meter.state === "retried"
+                ? "Återhämtad efter kontextgräns"
+                : meter.state === "compacted"
+                  ? "Kontext kompakterad"
+                  : meter.state === "near_limit"
+                    ? "Nära kontextgränsen"
+                    : meter.state === "estimated"
+                      ? "Backendestimat"
+                      : "Kontext normal"}</strong>
+              <span>{meter.call.model} · {meter.call.context_role}</span>
+            </div>
+            <div
+              className="ctxbar"
+              role="meter"
+              aria-label="Använd kontext"
+              aria-valuemin={0}
+              aria-valuemax={meter.denominator}
+              aria-valuenow={Math.min(meter.used, meter.denominator)}
+              aria-valuetext={`${meter.used} av ${meter.denominator} tokens`}
+            >
+              {(Object.keys(categoryLabels) as ContextCategory[]).map((category) => (
+                <span
+                  key={category}
+                  title={`${categoryLabels[category]}: cirka ${meter.call!.categories[category] ?? 0} tokens`}
+                  style={{
+                    width: `${((meter.call!.categories[category] ?? 0) / meter.denominator) * 100}%`,
+                    background: categoryColors[category],
+                  }}
+                />
+              ))}
+            </div>
+            {(Object.keys(categoryLabels) as ContextCategory[]).map((category) => (
+              <div className="ctxrow" key={category}>
+                <span className="sw" style={{ background: categoryColors[category] }} />
+                <span className="nm2">{categoryLabels[category]}</span>
+                <span className="tk">~{meter.call!.categories[category] ?? 0} tok</span>
+              </div>
+            ))}
+            <div className="ctxrow">
+              <span className="nm2">Svarsreserv</span>
+              <span className="tk">{meter.call.completion_reserve} tok</span>
+            </div>
+            <div className="ctxrow">
+              <span className="nm2">Använt</span>
+              <span className="tk">
+                {meter.call.measurement === "estimated" ? "~" : ""}
+                {meter.used} / {meter.denominator} tok · {meter.percent}%
+              </span>
+            </div>
+            {meter.call.declared_max && (
+              <div className="ctxmeta">
+                Modellens deklarerade max: {meter.call.declared_max} tok. Effektiv runtimegräns ovan används för mätaren.
+              </div>
+            )}
+            {(latest?.contextTelemetry?.calls.length ?? 0) > 1 && (
+              <div className="ctxmeta">
+                {latest!.contextTelemetry!.calls.length} separata modellanrop gjordes. Mätaren visar det slutliga anropet; olika kontextfönster summeras inte.
+              </div>
+            )}
+            {(meter.call.compacted || meter.call.overflow_retry) && (
+              <div className="ctxchanges">
+                Historik: {meter.call.changes.history.summarized} sammanfattade, {meter.call.changes.history.dropped} borttagna · Evidens: {meter.call.changes.evidence?.summarized ?? 0} sammanfattade, {meter.call.changes.evidence?.dropped ?? 0} borttagna · Verktyg: {meter.call.changes.tools.trimmed} trimmade
+              </div>
+            )}
+            {affectedCalls.length > 0 && (
+              <div className="ctxchanges" aria-label="Tidigare modellanrop med kontextåtgärder">
+                <strong>Tidigare anrop med kontextåtgärder:</strong>
+                <ul className="ctxcalls">
+                  {affectedCalls.map((call) => (
+                    <li key={call.call_index}>
+                      #{call.call_index + 1} · {call.model ?? "okänd modell"} · {call.context_role ?? "okänd roll"}: {call.overflow_retry ? "retry" : "kompakterad"}; historik {call.changes.history.summarized} sammanfattade/{call.changes.history.dropped} borttagna, evidens {call.changes.evidence?.summarized ?? 0} sammanfattade/{call.changes.evidence?.dropped ?? 0} borttagna, verktyg {call.changes.tools.trimmed} trimmade
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>}
           <p className="ctxhint">
             {compacted ? `Fokusvy aktiv. ${hiddenCount} äldre inlägg är dolda i UI:t, men finns kvar i den underliggande sessionen.` : "Fokusvy visar bara de senaste turerna för att minska visuellt brus utan att kasta bort sessionen."}
           </p>
@@ -580,6 +679,9 @@ function Workspace() {
             updated.cwd = ev.content.replace("Working directory: ", "");
           }
           break;
+        case "context_telemetry":
+          updated.contextTelemetry = ev.context_telemetry;
+          break;
         case "codex_trace":
           updated.codexTrace = ev.trace;
           break;
@@ -660,7 +762,11 @@ function Workspace() {
             // a just-sent user prompt trailing the history) is preserved so a
             // reconnect mid-stream doesn't drop live UI.
             const serverSig = transcriptSignature(
-              messages.map((m) => ({ role: m.role, content: m.content }))
+              messages.map((m) => ({
+                role: m.role,
+                content: m.content,
+                contextTelemetry: m.context_telemetry,
+              }))
             );
             const finalized = prev.filter(
               (it) => it.kind === "user" || it.done
@@ -669,6 +775,7 @@ function Workspace() {
               finalized.map((it) => ({
                 role: it.kind === "user" ? "user" : "assistant",
                 content: it.text,
+                contextTelemetry: it.kind === "assistant" ? it.contextTelemetry : undefined,
               }))
             );
             // Identical finalized history and nothing in flight: leave the UI as

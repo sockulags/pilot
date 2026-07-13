@@ -1,0 +1,101 @@
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": "Synthetic context-pressure browser fixture",
+      "turn": 1
+    },
+    {
+      "role": "assistant",
+      "content": "This persisted test fixture exercises the near-limit context UI.",
+      "turn": 1,
+      "context_telemetry": {
+        "version": 1,
+        "calls": [
+          {
+            "call_index": 0,
+            "model": "fixture-model",
+            "context_role": "synthesis",
+            "declared_max": 8192,
+            "effective_limit": 4096,
+            "prompt_budget": 3072,
+            "estimated_prompt_tokens": 2860,
+            "actual_prompt_tokens": null,
+            "actual_completion_tokens": null,
+            "completion_reserve": 1024,
+            "measurement": "estimated",
+            "categories": {
+              "system": 480,
+              "tools": 380,
+              "media": 0,
+              "history": 1100,
+              "memory": 300,
+              "evidence": 600
+            },
+            "pressure": "trim_tools",
+            "compacted": false,
+            "overflow_retry": false,
+            "changes": {
+              "history": { "summarized": 0, "dropped": 0 },
+              "evidence": { "summarized": 0, "dropped": 0 },
+              "tools": { "trimmed": 0 }
+            }
+          }
+        ],
+        "primary_call": 0,
+        "final_call": 0,
+        "aggregation": "per_call_not_summed",
+        "compacted": false,
+        "overflow_retried": false
+      },
+      "meta": {
+        "context_report": {
+          "version": 1,
+          "calls": [
+            {
+              "call_index": 0,
+              "model": "fixture-model",
+              "context_role": "synthesis",
+              "declared_max": 8192,
+              "effective_limit": 4096,
+              "prompt_budget": 3072,
+              "estimated_prompt_tokens": 2860,
+              "actual_prompt_tokens": null,
+              "actual_completion_tokens": null,
+              "completion_reserve": 1024,
+              "measurement": "estimated",
+              "categories": {
+                "system": 480,
+                "tools": 380,
+                "media": 0,
+                "history": 1100,
+                "memory": 300,
+                "evidence": 600
+              },
+              "pressure": "trim_tools",
+              "compacted": false,
+              "overflow_retry": false,
+              "changes": {
+                "history": { "summarized": 0, "dropped": 0 },
+                "evidence": { "summarized": 0, "dropped": 0 },
+                "tools": { "trimmed": 0 }
+              }
+            }
+          ],
+          "primary_call": 0,
+          "final_call": 0,
+          "aggregation": "per_call_not_summed",
+          "compacted": false,
+          "overflow_retried": false
+        }
+      }
+    }
+  ],
+  "turn": 1,
+  "cwd": null,
+  "claude_session_id": null,
+  "codex_session_id": null,
+  "agent": "claude",
+  "model_mode": "auto",
+  "route_mode": "auto"
+}
