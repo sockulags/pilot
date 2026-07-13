@@ -110,6 +110,12 @@ output, vision, or embeddings only when your chosen server/model supports them;
 unknown capabilities are intentionally rejected for privacy and predictable
 degradation.
 
+To check an exact local runtime/model combination, use the deterministic and
+opt-in live matrices in [Local inference compatibility](docs/local-inference-compatibility.md).
+The live command writes JSON and Markdown only to the output stem you choose and
+refuses accidental overwrites. LM Studio and llama.cpp are currently
+**unverified**, not implicitly supported by their API shape.
+
 ## 5. (Optional) Access from anywhere
 
 **You don't need this for local/LAN use** — everything above works on your home network.

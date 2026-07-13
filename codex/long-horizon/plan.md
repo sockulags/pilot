@@ -50,7 +50,7 @@ Touched areas: provider/runtime interfaces, settings and API, model discovery, v
 Acceptance criteria: all criteria in #65, including loopback local endpoints, fail-closed capability probing, unchanged stock behavior, and screenshot privacy.
 Validation commands: `cd backend; uv run pytest -q; uv run pytest -q -m eval; uv run ruff check .`; frontend checks if settings UI changes; available live runtime smoke.
 Stop rule: do not install runtimes/models or claim unsupported combinations.
-Status: in_progress
+Status: completed
 
 ## Milestone 5: Issue #66 — Compatibility matrix and pressure evals
 
@@ -63,7 +63,7 @@ Touched areas: backend provider tests, eval fixtures/scenarios/runner, live smok
 Acceptance criteria: all criteria in #66, including >4096 full-screen case, retry/no-loop regression, exact version metadata, and no unverified support claims.
 Validation commands: `cd backend; uv run pytest -q; uv run pytest -q -m eval; uv run ruff check .`; available live matrix commands.
 Stop rule: mark unavailable combinations unverified; do not weaken deterministic CI.
-Status: pending
+Status: in_progress
 
 ## Milestone 6: Epic #67 completion audit
 

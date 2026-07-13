@@ -1,0 +1,549 @@
+{
+  "schema_version": 1,
+  "run": {
+    "timestamp_utc": "2026-07-13T20:40:21+00:00",
+    "git_sha": "b625752dd174b3a09d6b73d5166236a565d382f2",
+    "git_dirty": true,
+    "source_digest": "6d88e27daee12640417c1c04f74c2402112c6d01b5c88a7fc830d829d8957130",
+    "os": {
+      "system": "Windows",
+      "release": "11",
+      "machine": "AMD64"
+    },
+    "python": "3.12.13",
+    "hardware": {
+      "cpu": "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD",
+      "logical_cpu_count": 16,
+      "ram_bytes": 65805840384,
+      "gpu": {
+        "detected": true,
+        "name": "NVIDIA GeForce RTX 5060 Ti",
+        "vram_mb": 16311,
+        "driver": "595.71"
+      }
+    }
+  },
+  "profiles": [
+    {
+      "id": "ollama",
+      "runtime": {
+        "kind": "ollama",
+        "name": "Ollama native API",
+        "version": "0.31.1",
+        "endpoint_class": "loopback",
+        "fingerprint": "1d391349d4008d8eb82a7492"
+      },
+      "model": {
+        "id": "qwen3.5:9b",
+        "requested_id": "qwen3.5:9b",
+        "digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+        "quantization": "Q4_K_M",
+        "declared_context": 262144
+      },
+      "embedding_model": {
+        "id": "nomic-embed-text:latest",
+        "requested_id": "nomic-embed-text",
+        "digest": "0a109f422b47e3a30ba2b10eca18548e944e8a23073ee3f3e947efcf3c45e59f",
+        "quantization": "F16",
+        "declared_context": 2048
+      },
+      "effective_context": 8192,
+      "capabilities": {
+        "tools": "supported",
+        "vision": "supported",
+        "embeddings": "supported",
+        "structured_output": "unknown"
+      },
+      "availability": "available",
+      "verdict": "limited",
+      "scenarios": [
+        {
+          "id": "text",
+          "verdict": "supported",
+          "latency_ms": 3640.69,
+          "budget": {
+            "context_window": 8192,
+            "completion_reserve": 2048,
+            "prompt_budget": 6144,
+            "estimated_prompt_tokens": 33,
+            "media_tokens": 0,
+            "tool_schema_tokens": 0,
+            "compacted": false,
+            "retry": false
+          },
+          "token_usage": {
+            "prompt_tokens": 19,
+            "completion_tokens": 5,
+            "calls": 1,
+            "backend": "ollama"
+          },
+          "detail": "contract satisfied"
+        },
+        {
+          "id": "native_tool",
+          "verdict": "supported",
+          "latency_ms": 822.37,
+          "budget": {
+            "context_window": 8192,
+            "completion_reserve": 2048,
+            "prompt_budget": 6144,
+            "estimated_prompt_tokens": 103,
+            "media_tokens": 0,
+            "tool_schema_tokens": 62,
+            "compacted": false,
+            "retry": false
+          },
+          "token_usage": {
+            "prompt_tokens": 281,
+            "completion_tokens": 27,
+            "calls": 1,
+            "backend": "ollama"
+          },
+          "detail": "contract satisfied"
+        },
+        {
+          "id": "below_budget",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "deterministic contract only; not issued to the live runtime"
+        },
+        {
+          "id": "above_budget",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "deterministic contract only; not issued to the live runtime"
+        },
+        {
+          "id": "vision_long_8192",
+          "verdict": "supported",
+          "latency_ms": 2951.85,
+          "budget": {
+            "context_window": 8192,
+            "completion_reserve": 2048,
+            "prompt_budget": 6144,
+            "estimated_prompt_tokens": 5206,
+            "media_tokens": 4096,
+            "tool_schema_tokens": 0,
+            "compacted": false,
+            "retry": false
+          },
+          "token_usage": {
+            "prompt_tokens": 2567,
+            "completion_tokens": 15,
+            "calls": 1,
+            "backend": "ollama"
+          },
+          "detail": "contract satisfied",
+          "result": {
+            "expected_word_observed": true,
+            "expected_color_families_observed": true
+          },
+          "input": {
+            "image_resolution": "1920x1080",
+            "estimated_prompt_tokens": 5206
+          }
+        },
+        {
+          "id": "large_tool_schema",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "deterministic contract only; not issued to the live runtime"
+        },
+        {
+          "id": "overflow_retry_once",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "deterministic contract only; not issued to the live runtime"
+        },
+        {
+          "id": "overflow_twice",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "deterministic contract only; not issued to the live runtime"
+        },
+        {
+          "id": "embeddings",
+          "verdict": "supported",
+          "latency_ms": 35.04,
+          "budget": null,
+          "token_usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "calls": 0,
+            "backend": null
+          },
+          "detail": "contract satisfied",
+          "input": {
+            "model": "nomic-embed-text"
+          },
+          "result": {
+            "vector_dimension": 768
+          }
+        }
+      ],
+      "metadata_provenance": {}
+    },
+    {
+      "id": "ollama-openai",
+      "runtime": {
+        "kind": "openai_compatible",
+        "name": "Ollama OpenAI-compatible API",
+        "version": "0.31.1",
+        "endpoint_class": "loopback",
+        "fingerprint": "3523e9d47fb22120ee8757d2"
+      },
+      "model": {
+        "id": "qwen3.5:9b",
+        "requested_id": "qwen3.5:9b",
+        "digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+        "quantization": "Q4_K_M",
+        "declared_context": 262144
+      },
+      "embedding_model": {
+        "id": "nomic-embed-text:latest",
+        "requested_id": "nomic-embed-text",
+        "digest": "0a109f422b47e3a30ba2b10eca18548e944e8a23073ee3f3e947efcf3c45e59f",
+        "quantization": "F16",
+        "declared_context": 2048
+      },
+      "effective_context": 8192,
+      "capabilities": {
+        "tools": "supported",
+        "vision": "unknown",
+        "embeddings": "supported",
+        "structured_output": "unknown"
+      },
+      "availability": "available",
+      "verdict": "limited",
+      "scenarios": [
+        {
+          "id": "text",
+          "verdict": "supported",
+          "latency_ms": 11002.83,
+          "budget": {
+            "context_window": 8192,
+            "completion_reserve": 2048,
+            "prompt_budget": 6144,
+            "estimated_prompt_tokens": 33,
+            "media_tokens": 0,
+            "tool_schema_tokens": 0,
+            "compacted": false,
+            "retry": false
+          },
+          "token_usage": {
+            "prompt_tokens": 17,
+            "completion_tokens": 476,
+            "calls": 1,
+            "backend": "local_openai"
+          },
+          "detail": "contract satisfied"
+        },
+        {
+          "id": "native_tool",
+          "verdict": "supported",
+          "latency_ms": 1678.51,
+          "budget": {
+            "context_window": 8192,
+            "completion_reserve": 2048,
+            "prompt_budget": 6144,
+            "estimated_prompt_tokens": 103,
+            "media_tokens": 0,
+            "tool_schema_tokens": 62,
+            "compacted": false,
+            "retry": false
+          },
+          "token_usage": {
+            "prompt_tokens": 279,
+            "completion_tokens": 87,
+            "calls": 1,
+            "backend": "local_openai"
+          },
+          "detail": "contract satisfied"
+        },
+        {
+          "id": "below_budget",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "deterministic contract only; not issued to the live runtime"
+        },
+        {
+          "id": "above_budget",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "deterministic contract only; not issued to the live runtime"
+        },
+        {
+          "id": "vision_long_8192",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "deterministic contract only; not issued to the live runtime"
+        },
+        {
+          "id": "large_tool_schema",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "deterministic contract only; not issued to the live runtime"
+        },
+        {
+          "id": "overflow_retry_once",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "deterministic contract only; not issued to the live runtime"
+        },
+        {
+          "id": "overflow_twice",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "deterministic contract only; not issued to the live runtime"
+        },
+        {
+          "id": "embeddings",
+          "verdict": "supported",
+          "latency_ms": 37.92,
+          "budget": null,
+          "token_usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "calls": 0,
+            "backend": null
+          },
+          "detail": "contract satisfied",
+          "input": {
+            "model": "nomic-embed-text"
+          },
+          "result": {
+            "vector_dimension": 768
+          }
+        }
+      ],
+      "metadata_provenance": {}
+    },
+    {
+      "id": "lm-studio",
+      "runtime": {
+        "kind": "openai_compatible",
+        "name": "LM Studio OpenAI-compatible API",
+        "version": null,
+        "endpoint_class": "loopback",
+        "fingerprint": "c39fc96325b5c2fd1b0bf184"
+      },
+      "model": {
+        "id": "qwen3.5:9b",
+        "digest": null,
+        "quantization": null,
+        "declared_context": null
+      },
+      "embedding_model": null,
+      "effective_context": 8192,
+      "capabilities": {
+        "tools": "unknown",
+        "vision": "unknown",
+        "embeddings": "unknown",
+        "structured_output": "unknown"
+      },
+      "availability": "unverified",
+      "verdict": "unverified",
+      "scenarios": [
+        {
+          "id": "text",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        },
+        {
+          "id": "native_tool",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        },
+        {
+          "id": "below_budget",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        },
+        {
+          "id": "above_budget",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        },
+        {
+          "id": "vision_long_8192",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        },
+        {
+          "id": "large_tool_schema",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        },
+        {
+          "id": "overflow_retry_once",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        },
+        {
+          "id": "overflow_twice",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        },
+        {
+          "id": "embeddings",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        }
+      ],
+      "metadata_provenance": {},
+      "availability_detail": "LocalRuntimeError:unreachable"
+    },
+    {
+      "id": "llama-cpp",
+      "runtime": {
+        "kind": "openai_compatible",
+        "name": "llama.cpp OpenAI-compatible API",
+        "version": null,
+        "endpoint_class": "loopback",
+        "fingerprint": "f8e13ebce4fc53326f0711ac"
+      },
+      "model": {
+        "id": "qwen3.5:9b",
+        "digest": null,
+        "quantization": null,
+        "declared_context": null
+      },
+      "embedding_model": null,
+      "effective_context": 8192,
+      "capabilities": {
+        "tools": "unknown",
+        "vision": "unknown",
+        "embeddings": "unknown",
+        "structured_output": "unknown"
+      },
+      "availability": "unverified",
+      "verdict": "unverified",
+      "scenarios": [
+        {
+          "id": "text",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        },
+        {
+          "id": "native_tool",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        },
+        {
+          "id": "below_budget",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        },
+        {
+          "id": "above_budget",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        },
+        {
+          "id": "vision_long_8192",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        },
+        {
+          "id": "large_tool_schema",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        },
+        {
+          "id": "overflow_retry_once",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        },
+        {
+          "id": "overflow_twice",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        },
+        {
+          "id": "embeddings",
+          "verdict": "unverified",
+          "latency_ms": null,
+          "budget": null,
+          "token_usage": {},
+          "detail": "runtime/model unavailable"
+        }
+      ],
+      "metadata_provenance": {},
+      "availability_detail": "LocalRuntimeError:unreachable"
+    }
+  ],
+  "comparison_key": "4119fa828b5493873d9f766625641d88d6ac9b038c5271a9fb2d2bf67b45bec7"
+}

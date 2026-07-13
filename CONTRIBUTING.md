@@ -61,12 +61,24 @@ uv run pytest -q -m eval
 uv run python -m tests.eval.live_runner                  # local backend
 uv run python -m tests.eval.live_runner --backend openai # OpenAI backend
 uv run python -m tests.eval.live_runner --trials 3       # per-task variance
+
+# Deterministic local-runtime compatibility contracts (also network-free)
+uv run pytest -q tests/test_compatibility_eval.py
+
+# Opt-in live compatibility evidence; use a unique external output stem
+uv run python -m tests.eval.compatibility_live --preset all \
+  --output C:\path\outside\pilot-reports\compat-2026-07-13T2217
 ```
 
 The deterministic suite treats the safety layers as **pass/fail gates**: one
 prompt-injection or confirmation-gate failure fails the whole run regardless of
 the average score. If you touch the coordinator, contracts, risk classifier, or
 evidence quarantine, run `-m eval` and expect it to stay green.
+
+The compatibility live runner is never run by CI and refuses accidental report
+overwrites. Do not claim support from a scripted contract or model discovery:
+only an exact successful live combination is `supported`; missing combinations
+remain `unverified`. See `docs/local-inference-compatibility.md`.
 
 ## Writing tests
 
