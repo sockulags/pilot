@@ -63,7 +63,7 @@ Touched areas: backend provider tests, eval fixtures/scenarios/runner, live smok
 Acceptance criteria: all criteria in #66, including >4096 full-screen case, retry/no-loop regression, exact version metadata, and no unverified support claims.
 Validation commands: `cd backend; uv run pytest -q; uv run pytest -q -m eval; uv run ruff check .`; available live matrix commands.
 Stop rule: mark unavailable combinations unverified; do not weaken deterministic CI.
-Status: in_progress
+Status: completed
 
 ## Milestone 6: Epic #67 completion audit
 
@@ -76,4 +76,4 @@ Touched areas: whole repository, GitHub issues/PRs, runtime/browser evidence.
 Acceptance criteria: every item in `spec.md` Done When and #67 is proven; no unresolved review findings or scoped dirty changes.
 Validation commands: full backend + eval + frontend checks; browser smoke; git diff/status audit; GitHub state audit.
 Stop rule: do not close the epic on indirect or missing evidence.
-Status: pending
+Status: completed

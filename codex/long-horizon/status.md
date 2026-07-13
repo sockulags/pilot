@@ -2,7 +2,7 @@
 
 ## Current Milestone
 
-Milestone 5 / issue #66 — local inference compatibility matrix and reproducible context-pressure evals. Implementation, repair, independent review, deterministic validation, and live evidence are complete; publication/CI/merge is next.
+Milestone 6 / epic #67 — completion audit APPROVED after all child issues, real-app flows, full regression, and independent review; only publication and issue closure remain.
 
 ## Completed
 
@@ -30,6 +30,11 @@ Milestone 5 / issue #66 — local inference compatibility matrix and reproducibl
 - #66 adds a network-free provider/context compatibility matrix, exact boundary and bounded-retry regressions, an opt-in evidence runner, stable comparison/source digests, and a documented support vocabulary.
 - #66 independent review found and repaired unstable live-report comparison, missing exact boundary coverage, incomplete source identity and generic metadata, dishonest profile verdicts, and unverified diagnostic redaction; final re-review is APPROVED.
 - #66 live evidence verifies Ollama 0.31.1 native and Ollama's generic OpenAI-compatible `/v1` facade for text/native tools plus separate `nomic-embed-text:latest` embeddings; native vision also passed a generated 1920x1080 long-task case estimated at 5,206 tokens under an 8,192 effective window. LM Studio and llama.cpp remain unverified.
+- PR #78 merged to `master` at `c704b13`; backend/frontend CI passed and issue #66 closed.
+- Epic #67 stock-Ollama app trace passed at 1920x1080: the real Pilot UI routed to `dator` / `gemma4:12b`, invoked `screenshot` exactly once, returned a grounded three-item critique of visible UI, and completed without overflow or a repeated perception loop.
+- The same trace exposed truthful UI telemetry for the final synthesis call: effective 16,384-token window versus declared 262,144, 1,621 tokens used (10%), 2,048 response reserve, and six separately reported model calls. A persisted near-limit fixture also rendered `near_limit`, 2,860 / 4,096 (70%), 1,024 reserve, and declared 8,192 without changing the stored session.
+- Epic #67 generic-adapter app trace passed on an isolated Pilot instance configured for Ollama's `http://127.0.0.1:11434/v1`: a no-tool text turn returned `PILOT_GENERIC_TEXT_OK`; a second turn invoked `get_screen_size` exactly once and grounded the answer as `3440x1440`. The UI reported qwen3.5:9b with an effective 8,192-token window versus declared 262,144. The temporary settings, session, server, and ports were removed afterward.
+- Epic #67 independent completion re-audit is APPROVED: all eight cross-cutting criteria and all five end-to-end completion steps are proven, with no remaining substantive gap.
 
 ## Active Blockers
 
@@ -47,6 +52,7 @@ None.
 - #65 final controller validation: 749 full backend tests, 42 evals, Ruff clean, Pyright 0 errors, 18 frontend tests, TypeScript/ESLint 0 errors (3 pre-existing warnings), production build green, and `git diff --check` clean apart from the existing `backend/memory.py` line-ending notice.
 - #65 live Ollama smoke: 7 models discovered, `gemma4:12b` returned a non-empty chat response, and `nomic-embed-text:latest` returned a 768-dimensional embedding. LM Studio and llama.cpp remain honestly unverified live because neither runtime is listening; their contracts are deterministic mocked tests only.
 - #66 final controller validation: 776 full backend tests, 69 eval tests, Ruff clean, Pyright 0 errors, `git diff --check` clean apart from the existing results README line-ending notice, and live evidence comparison/source digests independently recomputed.
+- Epic #67 final controller validation on merged `c704b13`: 776 full backend tests, 69 eval tests, Ruff clean, Pyright 0 errors, 18 frontend tests, TypeScript/ESLint 0 errors (3 pre-existing warnings), and production build green.
 
 ## Subagents
 
@@ -67,6 +73,7 @@ None.
 - `issue66_investigator`: DONE_WITH_CONCERNS; delivered the provider/eval/live-report gap audit and honest runtime matrix.
 - `issue66_implementer`: DONE after one review-driven evidence/comparison repair loop.
 - `issue66_reviewer`: final APPROVED after explicit acceptance/evidence and quality/determinism passes plus repair re-review.
+- `epic67_auditor`: final APPROVED after the retained stock-Ollama, context-pressure UI, and generic-adapter actual-app traces closed the initial end-to-end evidence gap.
 
 ## Known Issues
 
@@ -76,4 +83,4 @@ None.
 
 ## Next Action
 
-Commit and publish #66, wait for GitHub CI, merge and close it, then perform the epic #67 requirement-by-requirement and end-to-end completion audit.
+Merge the green final audit PR and close #67. No implementation or evidence work remains.
