@@ -225,9 +225,13 @@ _ENCODED_RE = re.compile(r"-e(nc(odedcommand)?)?\b", re.IGNORECASE)
 # subexpression such as ``(Get-ChildItem).Count``) and a bare ``$VAR`` expansion
 # without parentheses are intentionally NOT matched.
 _COMMAND_SUBSTITUTION_RE = re.compile(r"\$\(|`")
-# A single ``&`` not part of a ``&&``. Matched via a boundary check so ``a && b``
-# (compound separator) does not trigger, but ``a & b`` (background) does.
-_BARE_BACKGROUND_RE = re.compile(r"(?<!&)&(?!&)")
+# A single ``&`` not part of a ``&&`` and not part of a file-descriptor redirect
+# operator (``2>&1``, ``1>&2``, ``>&2``, ``&>file``, ``<&3``). The lookbehind
+# excludes a ``&`` preceded by ``&``/``<``/``>`` (the compound separator and the
+# ``N>&``/``<&`` redirect duplications), and the lookahead excludes one followed
+# by ``&``/``>`` (the ``&&`` separator and the ``&>`` combined redirect), leaving
+# only a genuine background/sequencing ``&`` such as ``a & b`` or ``sleep 5 &``.
+_BARE_BACKGROUND_RE = re.compile(r"(?<![&<>])&(?![&>])")
 
 
 def _classify_shell_constructs(cmd: str) -> set[str]:
