@@ -173,6 +173,69 @@ class CommandRiskClassifierTests(unittest.TestCase):
         self._assert_risky("gh pr merge 5", mentions=command_risk.PROCESS_SPAWN)
         self._assert_risky("gh issue close 3", mentions=command_risk.PROCESS_SPAWN)
 
+    def test_command_substitution_requires_confirmation(self):
+        # $(...) and backtick substitution hide the nested command from the
+        # first-token rules, so they must gate even when the outer command
+        # (echo) is on the safe list.
+        self._assert_risky("echo $(rm -rf /tmp/foo)", mentions=command_risk.CODE_EXECUTION)
+        self._assert_risky("echo `rm -rf /tmp/foo`", mentions=command_risk.CODE_EXECUTION)
+        # Even wrapping an otherwise-safe command is treated conservatively.
+        self._assert_risky("echo $(ls)", mentions=command_risk.CODE_EXECUTION)
+
+    def test_bare_background_ampersand_requires_confirmation(self):
+        # A single & backgrounds/sequences a second command that never becomes
+        # its own compound part, so `echo hello` alone must not clear it.
+        self._assert_risky("echo hello & rm -rf /tmp/foo", mentions=command_risk.PROCESS_SPAWN)
+
+    def test_dangerous_constructs_not_bypassable_after_separator(self):
+        # Placing the construct after an existing separator must not slip past.
+        self._assert_risky("ls && echo $(rm -rf /tmp/foo)", mentions=command_risk.CODE_EXECUTION)
+        self._assert_risky("ls && echo `rm -rf /tmp/foo`", mentions=command_risk.CODE_EXECUTION)
+        self._assert_risky("ls && echo hello & rm -rf /tmp/foo", mentions=command_risk.PROCESS_SPAWN)
+
+    def test_fd_redirect_ampersand_not_treated_as_background(self):
+        # The `&` inside POSIX file-descriptor redirects (`2>&1`, `1>&2`, `>&2`,
+        # `&>file`, `<&3`) is stderr/stdout plumbing, not backgrounding, so the
+        # bare-& rule must not add PROCESS_SPAWN for it.
+        for cmd in (
+            "echo hi 2>&1",
+            "pytest tests 2>&1",
+            "git log 1>&2",
+            "make >&2",
+            "build &> out.log",
+            "read line <&3",
+            "python script.py 2>&1 | grep error",
+        ):
+            self.assertNotIn(
+                command_risk.PROCESS_SPAWN,
+                command_risk._classify_shell_constructs(cmd),
+                f"fd-redirect `&` wrongly gated as background: {cmd!r}",
+            )
+
+    def test_redirect_idioms_classify_as_safe(self):
+        # End-to-end: common redirect-to-fd commands stay ungated (they were a
+        # false-positive PROCESS_SPAWN regression from the bare-& rule).
+        self._assert_safe("echo hi 2>&1")
+        self._assert_safe("pytest -q 2>&1")
+        self._assert_safe("echo hi 1>&2")
+
+    def test_real_backgrounding_still_gated(self):
+        # The fd-redirect exclusion must not weaken detection of genuine
+        # background/sequencing `&`, including trailing and no-space forms and a
+        # background `&` that follows a redirect.
+        for cmd in (
+            "sleep 5 &",
+            "echo a & echo b",
+            "echo a&echo b",
+            "echo hi & rm -rf x",
+            "pytest tests 2>&1 &",
+        ):
+            self.assertIn(
+                command_risk.PROCESS_SPAWN,
+                command_risk._classify_shell_constructs(cmd),
+                f"real backgrounding not gated: {cmd!r}",
+            )
+
     # ---- safe read-only -------------------------------------------------
 
     def test_low_risk_read_only(self):

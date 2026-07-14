@@ -212,6 +212,43 @@ _GH_RISKY = ("gh issue close", "gh pr merge")
 _REDIRECT_RE = re.compile(r"(^|\s)>>?(\s|$|\S)")
 _ENCODED_RE = re.compile(r"-e(nc(odedcommand)?)?\b", re.IGNORECASE)
 
+# Command substitution — ``$(...)`` and backtick forms — and a bare ``&``
+# (background / sequencing operator, distinct from the ``&&`` compound
+# separator). ``shlex`` does not treat any of these specially, so a nested or
+# backgrounded command stays invisible to the first-token rules: ``echo $(rm -rf
+# x)`` tokenises with ``echo`` first and looks read-only, and ``echo hi & rm -rf
+# x`` is never split into a second part. Because the classifier cannot see into
+# the substituted/backgrounded command, these constructs are treated
+# conservatively (require confirmation), exactly like encoded PowerShell.
+#
+# Only ``$(`` and backticks count as substitution: a bare ``(`` (PowerShell
+# subexpression such as ``(Get-ChildItem).Count``) and a bare ``$VAR`` expansion
+# without parentheses are intentionally NOT matched.
+_COMMAND_SUBSTITUTION_RE = re.compile(r"\$\(|`")
+# A single ``&`` not part of a ``&&`` and not part of a file-descriptor redirect
+# operator (``2>&1``, ``1>&2``, ``>&2``, ``&>file``, ``<&3``). The lookbehind
+# excludes a ``&`` preceded by ``&``/``<``/``>`` (the compound separator and the
+# ``N>&``/``<&`` redirect duplications), and the lookahead excludes one followed
+# by ``&``/``>`` (the ``&&`` separator and the ``&>`` combined redirect), leaving
+# only a genuine background/sequencing ``&`` such as ``a & b`` or ``sleep 5 &``.
+_BARE_BACKGROUND_RE = re.compile(r"(?<![&<>])&(?![&>])")
+
+
+def _classify_shell_constructs(cmd: str) -> set[str]:
+    """Flag opaque command substitution / background execution in the raw command.
+
+    These constructs hide a nested or backgrounded command from the token-based
+    per-part classifier, so they are gated regardless of what the substituted or
+    backgrounded command turns out to be (mirroring the docstring's "ambiguous
+    commands also require confirmation" principle).
+    """
+    classes: set[str] = set()
+    if _COMMAND_SUBSTITUTION_RE.search(cmd):
+        classes.add(CODE_EXECUTION)
+    if _BARE_BACKGROUND_RE.search(cmd):
+        classes.add(PROCESS_SPAWN)
+    return classes
+
 
 # ---------------------------------------------------------------------------
 # Splitting / tokenising
@@ -488,6 +525,11 @@ def classify_command(cmd: str) -> CommandRisk:
     all_classes: set[str] = set()
     for part in parts:
         all_classes |= _classify_part(part)
+
+    # Opaque command substitution / background execution is decided on the raw
+    # command so a construct placed after an existing separator (e.g.
+    # ``ls && echo $(rm -rf x)``) can't bypass it.
+    all_classes |= _classify_shell_constructs(cmd)
 
     risky = all_classes - {SAFE}
     if not risky:
