@@ -173,6 +173,26 @@ class CommandRiskClassifierTests(unittest.TestCase):
         self._assert_risky("gh pr merge 5", mentions=command_risk.PROCESS_SPAWN)
         self._assert_risky("gh issue close 3", mentions=command_risk.PROCESS_SPAWN)
 
+    def test_command_substitution_requires_confirmation(self):
+        # $(...) and backtick substitution hide the nested command from the
+        # first-token rules, so they must gate even when the outer command
+        # (echo) is on the safe list.
+        self._assert_risky("echo $(rm -rf /tmp/foo)", mentions=command_risk.CODE_EXECUTION)
+        self._assert_risky("echo `rm -rf /tmp/foo`", mentions=command_risk.CODE_EXECUTION)
+        # Even wrapping an otherwise-safe command is treated conservatively.
+        self._assert_risky("echo $(ls)", mentions=command_risk.CODE_EXECUTION)
+
+    def test_bare_background_ampersand_requires_confirmation(self):
+        # A single & backgrounds/sequences a second command that never becomes
+        # its own compound part, so `echo hello` alone must not clear it.
+        self._assert_risky("echo hello & rm -rf /tmp/foo", mentions=command_risk.PROCESS_SPAWN)
+
+    def test_dangerous_constructs_not_bypassable_after_separator(self):
+        # Placing the construct after an existing separator must not slip past.
+        self._assert_risky("ls && echo $(rm -rf /tmp/foo)", mentions=command_risk.CODE_EXECUTION)
+        self._assert_risky("ls && echo `rm -rf /tmp/foo`", mentions=command_risk.CODE_EXECUTION)
+        self._assert_risky("ls && echo hello & rm -rf /tmp/foo", mentions=command_risk.PROCESS_SPAWN)
+
     # ---- safe read-only -------------------------------------------------
 
     def test_low_risk_read_only(self):
