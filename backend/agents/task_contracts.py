@@ -109,6 +109,25 @@ def _has_requirement(name: str, evidence: tuple[dict, ...]) -> bool:
             item.get("tool") in _SCREEN_OBSERVE_TOOLS
             for item in evidence[last_input + 1:]
         )
+    if name == "visual_screen_observation":
+        for item in evidence:
+            if not item.get("ok") or item.get("tool") != "perceive":
+                continue
+            text = str(item.get("text", ""))
+            lowered = text.lower()
+            if "visual description:" not in lowered:
+                continue
+            visual = lowered.split("visual description:", 1)[1].strip()
+            if not visual:
+                continue
+            if any(marker in visual for marker in (
+                "vision analysis unavailable",
+                "vision context recovery exhausted",
+                "context overflow",
+            )):
+                continue
+            return True
+        return False
     if name == "code_change_inspection":
         # Lenient: at least one concrete inspection/verification of the changed
         # code — a read_file/search_files, a run_command (test/diff/build), or a
@@ -250,6 +269,24 @@ _GITHUB_TOOLS = frozenset({"github_issues", "github_prs", "github_repo"})
 
 
 _CONTRACTS: dict[str, TaskContract] = {
+    "screen_analysis": TaskContract(
+        intent="screen_analysis",
+        required_evidence=(
+            EvidenceRequirement(
+                "visual_screen_observation",
+                "a fresh successful visual screen observation",
+            ),
+        ),
+        allowed_tools=frozenset({"perceive"}),
+        completion_criteria=(
+            "Capture the current screen and analyze the screenshot with the vision model."
+        ),
+        failure_criteria="The current screen cannot be captured or vision analysis is unavailable.",
+        final_answer_requirements=(
+            "Base every UI observation and recommendation on the fresh visual description. "
+            "Say plainly if vision was unavailable; UI-automation elements alone are not visual evidence."
+        ),
+    ),
     "research": TaskContract(
         intent="research",
         required_evidence=(

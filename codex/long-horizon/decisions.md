@@ -42,6 +42,28 @@ The first #62 review showed that reusing the provider `role` argument for both c
 
 Local runtime URLs accept loopback IP literals or the exact `localhost` hostname, with `localhost` required to resolve exclusively to loopback. Arbitrary hostnames are rejected even when an initial lookup returns loopback, avoiding a second-resolution DNS-rebinding gap. Private IP literals additionally require explicit opt-in and a separate runtime credential, which is propagated across every Ollama and OpenAI-compatible operation.
 
+### 2026-07-15 — External MCP tools fail closed
+
+Tools discovered from external MCP servers register as high-risk and
+side-effecting, so every call enters the existing confirmation gate. Pilot does
+not infer read-only safety from free-form tool names or descriptions; any future
+relaxation requires trustworthy capability metadata and separate acceptance
+criteria.
+
+### 2026-07-15 — UI review requires direct visual evidence of the named target
+
+Requests to review a screen or interface use a deterministic `screen_analysis`
+contract and cannot finish without a successful vision description. A named
+loopback page is rendered directly in a local Chromium browser because the Pilot
+chat window is normally active when the user submits the request; photographing
+the desktop would otherwise analyze the wrong window. Direct rendering is
+restricted to localhost/loopback targets, and failed vision returns an explicit
+error instead of generic UI advice.
+
+The first demo recording was rejected after live review because it showed a
+grounded file question rather than the requested vision-backed UI analysis. It
+must not be published as evidence for this behavior.
+
 ## Assumptions
 
 - GitHub CLI authentication remains available for issue/PR operations; the GitHub connector currently has read access but returned 403 for issue creation.

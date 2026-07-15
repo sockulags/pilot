@@ -74,6 +74,12 @@ class CoordinatorTests(unittest.TestCase):
     def test_required_first_tool_obeys_contract_allowlist(self):
         asyncio.run(self._required_first_tool_obeys_contract_allowlist())
 
+    def test_screen_analysis_perceives_before_model_can_answer(self):
+        asyncio.run(self._screen_analysis_perceives_before_model_can_answer())
+
+    def test_screen_analysis_fails_clearly_when_vision_is_unavailable(self):
+        asyncio.run(self._screen_analysis_fails_clearly_when_vision_is_unavailable())
+
     def test_file_output_requirement_blocks_early_answer(self):
         asyncio.run(self._file_output_requirement_blocks_early_answer())
 
@@ -111,6 +117,76 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual("done", outcome.status)
         self.assertEqual("", outcome.action_log)
         self.assertFalse(any(e["type"] == "consult" for e in events))
+
+    async def _screen_analysis_perceives_before_model_can_answer(self):
+        from agents import coordinator
+
+        long_uia = "Elements:\n" + "\n".join(
+            f"[{index}] Button control {index}" for index in range(100)
+        )
+        observation = (
+            f"{long_uia}\n\nVisual description:\n"
+            "The Pilot dashboard has a dense left rail and weak primary-action contrast."
+        )
+        perceived: list[str] = []
+
+        async def fake_perceive(task, history, emit):
+            perceived.append(task)
+            return observation
+
+        with mock.patch.object(
+            coordinator, "available_expert_models", new=_av(self._experts())
+        ), mock.patch.object(
+            coordinator.agent_loop, "perceive", new=fake_perceive
+        ), mock.patch.object(
+            coordinator, "_decide_step", new=mock.AsyncMock(
+                side_effect=AssertionError("screen analysis must not ask for another decision")
+            )
+        ):
+            outcome = await coordinator.run_coordinator(
+                "Granska gränssnittet på localhost:3000 och föreslå förbättringar",
+                lambda _event: None,
+                asyncio.Event(),
+                coordinator_model="gemma4:12b",
+                task_contract_intent="screen_analysis",
+            )
+
+        self.assertEqual(1, len(perceived))
+        self.assertEqual("done", outcome.status)
+        self.assertIn("dense left rail", outcome.action_log)
+        evidence = outcome.runtime_state.evidence_items
+        self.assertTrue(any(item.get("tool") == "perceive" and item.get("ok") for item in evidence))
+        self.assertIn("dense left rail", outcome.runtime_state.actions[0]["summary"])
+
+    async def _screen_analysis_fails_clearly_when_vision_is_unavailable(self):
+        from agents import coordinator
+
+        async def unavailable_perception(task, history, emit):
+            return (
+                "Elements: [1] Browser\n\n"
+                "Vision analysis unavailable: the local vision model returned no usable description."
+            )
+
+        with mock.patch.object(
+            coordinator, "available_expert_models", new=_av(self._experts())
+        ), mock.patch.object(
+            coordinator.agent_loop, "perceive", new=unavailable_perception
+        ), mock.patch.object(
+            coordinator, "_decide_step", new=mock.AsyncMock(
+                side_effect=AssertionError("failed vision must not enter the decision loop")
+            )
+        ):
+            outcome = await coordinator.run_coordinator(
+                "Granska gränssnittet",
+                lambda _event: None,
+                asyncio.Event(),
+                coordinator_model="gemma4:12b",
+                task_contract_intent="screen_analysis",
+            )
+
+        self.assertEqual("error", outcome.status)
+        self.assertIn("Vision analysis unavailable", outcome.detail)
+        self.assertFalse(outcome.runtime_state.requirements["satisfied"])
 
     async def _consults_expert_and_grounds_outcome(self):
         from agents import coordinator

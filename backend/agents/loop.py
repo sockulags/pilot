@@ -2,11 +2,12 @@ import asyncio
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Callable
 from agents.router import route_next_action, analyze_screenshot
-from agents.perception import perceive_screen
+from agents.perception import capture_local_webpage, perceive_screen
 from agents.context_manager import ContextBudgetError, is_context_overflow
 from agents.safety import unsafe_tool_block_reason
 from agents.runtime_state import RuntimeState
@@ -279,8 +280,18 @@ async def perceive(
 
     try:
         emit(make_event("thinking", content="Observerar skärmen (element + bild)..."))
-        # UIA traversal + PIL annotation are blocking; run off the event loop.
-        annotated, _elements, observation = await asyncio.to_thread(perceive_screen)
+        local_url = _local_webpage_url(task)
+        if local_url:
+            # A Pilot chat turn makes the chat window active, so a desktop
+            # screenshot would often analyze Pilot itself instead of the URL the
+            # user named. Render loopback pages directly and fail closed if that
+            # capture cannot be produced.
+            annotated, observation = await asyncio.to_thread(
+                capture_local_webpage, local_url
+            )
+        else:
+            # UIA traversal + PIL annotation are blocking; run off the event loop.
+            annotated, _elements, observation = await asyncio.to_thread(perceive_screen)
         emit(make_event("screenshot", image=annotated))
 
         context_exhausted = False
@@ -308,6 +319,21 @@ async def perceive(
     except Exception as e:
         emit(make_event("error", content=f"Perception error: {e}"))
         return PerceptionResult("")
+
+
+def _local_webpage_url(task: str) -> str | None:
+    match = re.search(
+        r"(?<![\w.-])(?:(?:https?://)?(?:localhost|127\.0\.0\.1|\[::1\])"
+        r"(?::\d+)?(?:/[^\s<>\"']*)?)",
+        task,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    url = match.group(0).rstrip(".,;:!?)]}")
+    if not url.lower().startswith(("http://", "https://")):
+        url = "http://" + url
+    return url
 
 
 def normalize_command_key(args: dict) -> tuple[str, str]:

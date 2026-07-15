@@ -123,11 +123,14 @@ def build_task_context(conversation: list[dict] | None, user_message: str) -> Ta
     research = _looks_like_research_request(resolved) or requires_current
     action = _contains_any(text_lc, _ACTION_TERMS)
     project_analysis = _looks_like_project_analysis(resolved)
-    needs_tools = research or creates_file or action or project_analysis
+    screen_analysis = _looks_like_screen_analysis(resolved)
+    needs_tools = research or creates_file or action or project_analysis or screen_analysis
 
     intent = "chat"
     if local_model_audit:
         intent = "local_model_audit_report"
+    elif screen_analysis:
+        intent = "screen_analysis"
     elif project_analysis:
         intent = "project_analysis"
     elif research and creates_file:
@@ -180,6 +183,14 @@ def deterministic_route(
             "route": "computer",
             "task": ctx.standalone_task,
             "thinking": "local model audit report needs deterministic local playbook; using computer route",
+            "model": resolve_answer_model(model_mode, ctx.preferred_model),
+        }
+
+    if ctx.intent == "screen_analysis":
+        return {
+            "route": "computer",
+            "task": ctx.standalone_task,
+            "thinking": "UI review needs a fresh visual screen observation; using computer route",
             "model": resolve_answer_model(model_mode, ctx.preferred_model),
         }
 
@@ -342,7 +353,7 @@ def web_query(task: str, ctx: TaskContext | None = None) -> str:
 def task_contract_intent(ctx: TaskContext) -> str | None:
     if ctx.intent == "local_model_audit_report":
         return "local_model_audit_report"
-    if ctx.intent in {"research", "create_file", "project_analysis"}:
+    if ctx.intent in {"research", "create_file", "project_analysis", "screen_analysis"}:
         return ctx.intent
     if ctx.intent == "research_and_create_file":
         return "create_file"
@@ -529,6 +540,27 @@ def _looks_like_project_analysis(text: str) -> bool:
         or "backendflöde" in lowered
         or "websocket" in lowered and "tool-call" in lowered
     )
+
+
+def _looks_like_screen_analysis(text: str) -> bool:
+    """Detect requests that can only be answered by looking at the current UI.
+
+    Require both a visual/interface target and an analysis cue. This keeps plain
+    questions *about* UI design conversational while making concrete reviews of
+    a screen, screenshot, web page, or localhost app evidence-backed.
+    """
+    lowered = text.lower()
+    visual_target = bool(re.search(
+        r"\b(gränssnitt|gränsnitt|interface|ui|ux|skärm(?:en)?|screen|screenshot|"
+        r"webbsida(?:n)?|webpage|localhost(?::\d+)?)\b",
+        lowered,
+    ))
+    analysis_cue = bool(re.search(
+        r"\b(analysera|analyze|granska|review|förslag|suggest|feedback|förbättra|"
+        r"improve|improvements?|justera|adjust|borde\s+se\s+ut|should\s+look)\b",
+        lowered,
+    ))
+    return visual_target and analysis_cue
 
 
 def _looks_like_local_model_audit(text: str) -> bool:

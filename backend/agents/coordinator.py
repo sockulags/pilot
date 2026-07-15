@@ -737,6 +737,38 @@ async def run_coordinator(
                 capabilities, required_permissions,
             )
 
+    # Screen reviews are observational tasks, not optional desktop actions. Run
+    # perception deterministically before the model can answer so a chatty model
+    # cannot skip vision and claim it needs the user to provide a screenshot.
+    if contract and contract.intent == "screen_analysis" and not abort.is_set():
+        perception = agent_loop.normalize_perception(
+            await agent_loop.perceive(task, history, emit)
+        )
+        last_observation = perception.observation
+        notes.append(f"Screen observation:\n{_bounded_screen_observation(last_observation)}")
+        runtime_state.record_tool_result(
+            "perceive", {}, last_observation,
+            ok=bool(last_observation) and not perception.context_exhausted,
+        )
+        if perception.context_exhausted:
+            error = (
+                "Perception stopped: vision context overflow persisted after the single "
+                "allowed compacted retry."
+            )
+            emit(make_event("error", content=error))
+            runtime_state.record_error(error, "perceive", {})
+            return LoopOutcome("error", _render_notes(notes), error, runtime_state)
+        contract_result = verify_contract(contract, runtime_state)
+        if contract_result.satisfied:
+            return LoopOutcome("done", _render_notes(notes), runtime_state=runtime_state)
+        error = (
+            "Vision analysis unavailable: Pilot captured the screen but the local "
+            "vision model did not return a usable visual description."
+        )
+        emit(make_event("error", content=error))
+        runtime_state.record_error(error, "perceive", {})
+        return LoopOutcome("error", _render_notes(notes), error, runtime_state)
+
     if contract and contract.intent == "local_model_audit_report" and not abort.is_set():
         return await _run_local_model_audit_playbook(
             project_cwd, emit, runtime_state, notes, contract, capabilities,
@@ -908,7 +940,7 @@ async def run_coordinator(
                 await agent_loop.perceive(task, history, emit)
             )
             last_observation = perception.observation
-            notes.append(f"Screen observation:\n{last_observation[:1200]}")
+            notes.append(f"Screen observation:\n{_bounded_screen_observation(last_observation)}")
             # Record the observation as evidence so action+verify contracts (e.g.
             # desktop_action) can confirm a post-action screen check happened.
             runtime_state.record_tool_result(
@@ -1410,6 +1442,21 @@ async def _execute_and_record_tool(
         bool(evidence["artifact_verified"]),
     )
     return args, result
+
+
+def _bounded_screen_observation(observation: str, limit: int = 1200) -> str:
+    """Prioritize vision output over a potentially long UIA element prefix."""
+    marker = "Visual description:"
+    if marker not in observation:
+        return observation[:limit]
+    visual = observation[observation.index(marker):].strip()
+    if len(visual) >= limit:
+        return visual[:limit]
+    prefix = observation[:observation.index(marker)].strip()
+    remaining = limit - len(visual) - len("\n\nUI automation context:\n")
+    if remaining <= 0 or not prefix:
+        return visual
+    return f"{visual}\n\nUI automation context:\n{prefix[:remaining]}"
 
 
 def _render_notes(notes: list[str]) -> str:

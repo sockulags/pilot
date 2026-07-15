@@ -77,3 +77,22 @@ Acceptance criteria: every item in `spec.md` Done When and #67 is proven; no unr
 Validation commands: full backend + eval + frontend checks; browser smoke; git diff/status audit; GitHub state audit.
 Stop rule: do not close the epic on indirect or missing evidence.
 Status: completed
+
+## Maintenance sweep: 2026-07-15
+
+Goal: close the verified follow-up gaps in tool confirmation, GitHub-tool test
+coverage, backend type-check CI, stale status documentation, and vision-backed
+UI review.
+
+- #86 / PR #89: `open_app` confirmation gate — completed.
+- #84 / PR #90: external MCP tools fail closed — completed.
+- #87 / PR #91: direct GitHub-tool failure-path tests — completed.
+- #57 / PR #92: Pyright dependency and CI gate — completed.
+- Vision-backed UI review regression — implementation and live validation complete;
+  publication pending.
+- Public demo artifact — still pending a clean recording; the first recording was
+  rejected because it did not prove vision-backed UI review.
+
+Validation: focused red/green tests where applicable, full backend suite, eval
+suite, Ruff, Pyright, GitHub Actions, diff review, and the exact Swedish UI-review
+prompt against a real local Pilot instance.
