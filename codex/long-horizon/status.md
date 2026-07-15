@@ -2,9 +2,9 @@
 
 ## Current Milestone
 
-Vision-backed UI-review regression fixed and live-verified on 2026-07-15;
-publication is pending. The public demo remains intentionally unpublished until
-a clean vision-backed recording exists.
+Vision-backed UI-review regression fixed, live-verified, and published via PR
+#94 on 2026-07-15; issue #93 is closed. The public demo remains intentionally
+unpublished until a clean vision-backed recording exists.
 
 ## Completed
 
@@ -95,5 +95,5 @@ None.
 
 ## Next Action
 
-Publish the vision regression fix after final full-suite/CI review. Record a
-separate clean demo later; do not reuse the rejected file-Q&A clip.
+Record a separate clean vision-backed demo later; do not reuse the rejected
+file-Q&A clip.
