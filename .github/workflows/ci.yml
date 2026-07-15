@@ -24,6 +24,8 @@ jobs:
         run: uv sync
       - name: Lint
         run: uv run ruff check .
+      - name: Type-check
+        run: uv run pyright .
       - name: Run tests (with coverage summary)
         run: uv run python -m pytest tests -q --cov=. --cov-report=term
 
