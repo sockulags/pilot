@@ -64,6 +64,11 @@ The first demo recording was rejected after live review because it showed a
 grounded file question rather than the requested vision-backed UI analysis. It
 must not be published as evidence for this behavior.
 
+Its replacement records a clean session with the exact Swedish UI-review prompt,
+the deterministic route and visual-observation trace, the captured localhost
+page, and recommendations that reference visible Pilot controls. README copy
+still treats the clip as one observed run rather than a benchmark.
+
 ## Assumptions
 
 - GitHub CLI authentication remains available for issue/PR operations; the GitHub connector currently has read access but returned 403 for issue creation.
