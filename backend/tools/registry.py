@@ -613,6 +613,14 @@ def confirmation_required(tool: str, args: dict | None = None) -> bool:
         return _command_requires_confirmation(str(args.get("cmd") or args.get("command") or ""))
     if tool == "read_file":
         return _path_requires_confirmation(str(args.get("path") or ""))
+    if tool == "read_document":
+        # Reads arbitrary file content by path (PDF or text); gate on the same
+        # secret fragments as read_file before any parsing happens.
+        return _path_requires_confirmation(str(args.get("path") or ""))
+    if tool == "search_in_files":
+        # grep over a directory tree; the caller-supplied root is the only entry
+        # point into the filesystem, so gate on it like a direct file read.
+        return _path_requires_confirmation(str(args.get("root") or ""))
     if tool == "write_file":
         return _write_file_requires_confirmation(args)
     if tool == "http_request":

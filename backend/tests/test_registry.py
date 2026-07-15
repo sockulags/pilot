@@ -155,6 +155,39 @@ class RegistryDerivationTests(unittest.TestCase):
             self.assertTrue(via_shell, f"shell should gate on {path!r}")
             self.assertEqual(via_read, via_shell, f"gates disagree on {path!r}")
 
+    def test_read_document_and_search_gate_on_secret_paths(self):
+        # issue #85: read_document (by path) and search_in_files (by root) read
+        # arbitrary file content but previously fell through to risk_level="low"
+        # and were never gated. They must now prompt on the same secret fragments
+        # as read_file, while non-secret paths stay ungated.
+        for path in (r"C:\Users\me\.ssh\id_rsa", "backend/.env", r"C:\certs\server.pem"):
+            self.assertTrue(
+                registry.confirmation_required("read_document", {"path": path}),
+                f"expected read_document to gate on {path!r}",
+            )
+            self.assertTrue(
+                registry.confirmation_required("search_in_files", {"root": path}),
+                f"expected search_in_files to gate on {path!r}",
+            )
+        self.assertFalse(registry.confirmation_required("read_document", {"path": "docs/cv.pdf"}))
+        self.assertFalse(registry.confirmation_required("search_in_files", {"root": "backend"}))
+
+    def test_read_document_search_and_read_file_agree_across_fragments(self):
+        # For every shared fragment, read_document/search_in_files gate exactly
+        # where read_file and the shell classifier do — one secret list, four
+        # surfaces (shell, read_file, read_document, search_in_files).
+        from tools import command_risk
+
+        for frag in command_risk.SECRET_FRAGMENTS:
+            path = f"C:\\work\\thing{frag}"
+            via_read = registry.confirmation_required("read_file", {"path": path})
+            via_doc = registry.confirmation_required("read_document", {"path": path})
+            via_search = registry.confirmation_required("search_in_files", {"root": path})
+            self.assertTrue(via_doc, f"read_document should gate on {path!r}")
+            self.assertTrue(via_search, f"search_in_files should gate on {path!r}")
+            self.assertEqual(via_read, via_doc, f"read_document disagrees on {path!r}")
+            self.assertEqual(via_read, via_search, f"search_in_files disagrees on {path!r}")
+
     def test_mcp_call_enforces_confirmation_policy(self):
         from api.mcp import create_mcp_app
 
