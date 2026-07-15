@@ -157,6 +157,38 @@ class TurnPolicyTests(unittest.TestCase):
         self.assertEqual("run_command", task_contract_intent(build_task_context([], "Kör git status")))
         self.assertIsNone(task_contract_intent(build_task_context([], "Öppna Notepad")))
 
+    def test_ui_review_requires_screen_analysis_and_routes_to_computer(self):
+        from agents.turn_policy import (
+            build_task_context,
+            deterministic_route,
+            resolve_task_contract_intent,
+        )
+
+        message = (
+            "Ge mig förslag på hur gränsnittet på den här tjänsten borde se ut "
+            "och vad som skulle kunna justera. Den är igång lokalt så du hittar "
+            "den på localhost:3000."
+        )
+
+        ctx = build_task_context([], message)
+        decision = deterministic_route([], message, project="pilot")
+
+        self.assertEqual("screen_analysis", ctx.intent)
+        self.assertTrue(ctx.needs_tools)
+        self.assertEqual("screen_analysis", resolve_task_contract_intent(ctx))
+        self.assertEqual("computer", decision["route"])
+
+    def test_english_ui_review_requires_screen_analysis(self):
+        from agents.turn_policy import build_task_context
+
+        ctx = build_task_context(
+            [],
+            "Review the UI at localhost:3000 and suggest interface improvements.",
+        )
+
+        self.assertEqual("screen_analysis", ctx.intent)
+        self.assertTrue(ctx.needs_tools)
+
     def test_local_model_audit_report_routes_to_computer_file_workflow(self):
         from agents.turn_policy import build_task_context, deterministic_route
 

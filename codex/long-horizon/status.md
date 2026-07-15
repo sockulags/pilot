@@ -2,7 +2,9 @@
 
 ## Current Milestone
 
-Milestone 6 / epic #67 — completion audit APPROVED after all child issues, real-app flows, full regression, and independent review; only publication and issue closure remain.
+Vision-backed UI-review regression fixed and live-verified on 2026-07-15;
+publication is pending. The public demo remains intentionally unpublished until
+a clean vision-backed recording exists.
 
 ## Completed
 
@@ -35,6 +37,12 @@ Milestone 6 / epic #67 — completion audit APPROVED after all child issues, rea
 - The same trace exposed truthful UI telemetry for the final synthesis call: effective 16,384-token window versus declared 262,144, 1,621 tokens used (10%), 2,048 response reserve, and six separately reported model calls. A persisted near-limit fixture also rendered `near_limit`, 2,860 / 4,096 (70%), 1,024 reserve, and declared 8,192 without changing the stored session.
 - Epic #67 generic-adapter app trace passed on an isolated Pilot instance configured for Ollama's `http://127.0.0.1:11434/v1`: a no-tool text turn returned `PILOT_GENERIC_TEXT_OK`; a second turn invoked `get_screen_size` exactly once and grounded the answer as `3440x1440`. The UI reported qwen3.5:9b with an effective 8,192-token window versus declared 262,144. The temporary settings, session, server, and ports were removed afterward.
 - Epic #67 independent completion re-audit is APPROVED: all eight cross-cutting criteria and all five end-to-end completion steps are proven, with no remaining substantive gap.
+- PR #79 merged and epic #67 closed with the approved completion audit.
+- PR #89 merged and issue #86 closed: non-whitelisted `open_app` targets now require confirmation.
+- PR #90 merged and issue #84 closed: external MCP tools fail closed as high-risk, side-effecting calls that require confirmation.
+- PR #91 merged and issue #87 closed: `tools/github.py` now has direct subprocess/JSON error-path tests and 100% statement coverage.
+- PR #92 merged and issue #57 closed: Pyright is a backend dev dependency and a dedicated CI step after Ruff and before pytest.
+- UI-review prompts now route deterministically to `screen_analysis`, require a usable vision description, preserve visual evidence during synthesis, and render named localhost pages directly instead of capturing the active Pilot chat window.
 
 ## Active Blockers
 
@@ -53,6 +61,10 @@ None.
 - #65 live Ollama smoke: 7 models discovered, `gemma4:12b` returned a non-empty chat response, and `nomic-embed-text:latest` returned a 768-dimensional embedding. LM Studio and llama.cpp remain honestly unverified live because neither runtime is listening; their contracts are deterministic mocked tests only.
 - #66 final controller validation: 776 full backend tests, 69 eval tests, Ruff clean, Pyright 0 errors, `git diff --check` clean apart from the existing results README line-ending notice, and live evidence comparison/source digests independently recomputed.
 - Epic #67 final controller validation on merged `c704b13`: 776 full backend tests, 69 eval tests, Ruff clean, Pyright 0 errors, 18 frontend tests, TypeScript/ESLint 0 errors (3 pre-existing warnings), and production build green.
+- #84 final validation: 814 backend tests, 69 eval tests, Ruff clean, diff check clean, and backend/frontend CI green.
+- #87 final validation: 825 backend tests, 69 eval tests, Ruff clean, 100% statement coverage for `tools/github.py`, and backend/frontend CI green.
+- #57 final validation: a deliberate production type error failed with `reportReturnType`; after removal Pyright reported 0 errors, Ruff was clean, 825 tests passed with 79% total coverage, and GitHub Actions showed the new Type-check step green.
+- Vision regression validation: the exact Swedish prompt routed to `screen_analysis`; the saved turn finished `done` with its contract satisfied and grounded recommendations in visible controls including `auto-orkestrering`, `Claude Code`, `Kontext`, and `Styr datorn`. The rejected file-Q&A GIF was not published.
 
 ## Subagents
 
@@ -79,8 +91,9 @@ None.
 
 - `frontend/next-env.d.ts` is generated and out of scope; do not replay or include its prior unrelated modification.
 - The lost #64 work had no commit or reachable dangling commit. Recovery source is rollout `019f534b-f84e-7f41-b152-e80b63a846e1`, whose successful patch records contain the complete implementation.
-- Issue #57 and the Pyright work merged as #71 are unrelated and must remain intact.
+- LM Studio and llama.cpp remain honestly unverified live; only their deterministic contracts are claimed.
 
 ## Next Action
 
-Merge the green final audit PR and close #67. No implementation or evidence work remains.
+Publish the vision regression fix after final full-suite/CI review. Record a
+separate clean demo later; do not reuse the rejected file-Q&A clip.

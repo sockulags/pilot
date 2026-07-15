@@ -13,6 +13,68 @@ async def _async_value(value):
 
 
 class AgentSafetyTests(unittest.TestCase):
+    def test_direct_webpage_capture_rejects_non_loopback_url_before_launch(self):
+        from agents import perception
+
+        with mock.patch.object(
+            perception,
+            "_installed_browser_executable",
+            side_effect=AssertionError("browser must not launch"),
+        ):
+            with self.assertRaisesRegex(ValueError, "loopback"):
+                perception.capture_local_webpage("https://example.com")
+
+    def test_perceive_captures_localhost_page_directly(self):
+        from agents import loop
+
+        events = []
+        captured: list[str] = []
+
+        def fake_capture(url):
+            captured.append(url)
+            return "local-page-b64", f"Captured local webpage directly: {url}"
+
+        async def describe(_task, image, _history):
+            self.assertEqual("local-page-b64", image)
+            return "A dark Pilot dashboard with a left navigation rail."
+
+        with mock.patch.object(
+            loop, "capture_local_webpage", new=fake_capture
+        ), mock.patch.object(
+            loop, "perceive_screen", side_effect=AssertionError("desktop capture is wrong target")
+        ), mock.patch.object(
+            loop, "analyze_screenshot", new=describe
+        ), mock.patch.object(loop, "OLLAMA_VISION_ENABLED", True):
+            result = asyncio.run(loop.perceive(
+                "Review the UI at localhost:3000 and suggest improvements.",
+                [],
+                events.append,
+            ))
+
+        self.assertEqual(["http://localhost:3000"], captured)
+        self.assertIn("Captured local webpage directly", result.observation)
+        self.assertIn("dark Pilot dashboard", result.observation)
+        self.assertTrue(any(event["type"] == "screenshot" for event in events))
+
+    def test_perceive_does_not_directly_capture_external_url(self):
+        from agents import loop
+
+        async def describe(*_args):
+            return "A browser window."
+
+        with mock.patch.object(
+            loop, "capture_local_webpage", side_effect=AssertionError("external URL must not be opened")
+        ), mock.patch.object(
+            loop, "perceive_screen", return_value=("desktop-b64", [], "Elements: [1] Browser")
+        ), mock.patch.object(
+            loop, "analyze_screenshot", new=describe
+        ), mock.patch.object(loop, "OLLAMA_VISION_ENABLED", True):
+            result = asyncio.run(loop.perceive(
+                "Review the UI at https://example.com", [], lambda _event: None
+            ))
+
+        self.assertIn("Elements: [1] Browser", result.observation)
+
     def test_perceive_surfaces_vision_failure_to_coordinator_and_ui(self):
         from agents import loop
 

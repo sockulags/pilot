@@ -20,9 +20,14 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import os
+import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -33,6 +38,67 @@ if TYPE_CHECKING:
     # backend degrades gracefully when it's unavailable; pull the control type in
     # here purely for annotations so the UIA traversal type-checks.
     from uiautomation import Control
+
+
+def capture_local_webpage(url: str) -> tuple[str, str]:
+    """Render a loopback webpage directly instead of photographing the active window.
+
+    UI-review prompts are normally sent from Pilot itself, which makes the Pilot
+    chat window active at capture time. A headless local-browser render keeps the
+    requested localhost page—not whichever desktop window currently has focus—
+    as the visual source. Callers must validate that ``url`` is loopback-only.
+    """
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError("Direct webpage capture is restricted to loopback URLs")
+    browser = _installed_browser_executable()
+    if browser is None:
+        raise RuntimeError("No supported local Chromium browser is installed")
+    with tempfile.TemporaryDirectory(prefix="pilot-local-page-") as temp_dir:
+        root = Path(temp_dir)
+        screenshot_path = root / "page.png"
+        profile_path = root / "profile"
+        command = [
+            str(browser),
+            "--headless=new",
+            "--disable-gpu",
+            "--hide-scrollbars",
+            "--window-size=1440,900",
+            "--run-all-compositor-stages-before-draw",
+            "--virtual-time-budget=3000",
+            f"--user-data-dir={profile_path}",
+            f"--screenshot={screenshot_path}",
+            url,
+        ]
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if completed.returncode != 0 or not screenshot_path.is_file():
+            detail = (completed.stderr or completed.stdout or "browser capture failed").strip()
+            raise RuntimeError(detail[:300])
+        image_b64 = base64.b64encode(screenshot_path.read_bytes()).decode()
+    return image_b64, f"Captured local webpage directly: {url}"
+
+
+def _installed_browser_executable() -> Path | None:
+    locations = (
+        (os.environ.get("PROGRAMFILES(X86)"), "Microsoft/Edge/Application/msedge.exe"),
+        (os.environ.get("PROGRAMFILES"), "Microsoft/Edge/Application/msedge.exe"),
+        (os.environ.get("PROGRAMFILES"), "Google/Chrome/Application/chrome.exe"),
+        (os.environ.get("LOCALAPPDATA"), "Google/Chrome/Application/chrome.exe"),
+    )
+    candidates = tuple(Path(root) / relative for root, relative in locations if root)
+    return next((path for path in candidates if path.is_file()), None)
 
 logger = logging.getLogger(__name__)
 

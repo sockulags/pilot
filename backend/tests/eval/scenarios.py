@@ -309,6 +309,33 @@ GOLDEN_SCENARIOS: list[Scenario] = [
         expect_contract_satisfied=True,
         expect_final_answer_allowed=True,
     ),
+    Scenario(
+        name="golden_screen_analysis_forces_visual_observation",
+        description=(
+            "A UI-review request perceives the current screen before an immediately "
+            "answering coordinator can finish."
+        ),
+        path="coordinator",
+        message=(
+            "Ge mig förslag på hur gränsnittet på den här tjänsten borde se ut. "
+            "Den finns på localhost:3000."
+        ),
+        task_contract_intent="screen_analysis",
+        decisions=[{"action": "answer", "thinking": "use the visual evidence"}],
+        perceive_output=(
+            "Elements: [1] Navigation [2] Main\n\nVisual description:\n"
+            "A dark dashboard with a dense left rail and a low-contrast primary action."
+        ),
+        compose_text=(
+            "Gränssnittet har en tät vänsterspalt och huvudåtgärden behöver högre kontrast."
+        ),
+        expect_status="done",
+        expect_evidence_tools=["perceive"],
+        expect_contract_satisfied=True,
+        expect_final_answer_allowed=True,
+        expect_perception_attempts=1,
+        final_must_contain=["vänsterspalt", "kontrast"],
+    ),
     # --- 9b. Desktop action+verify: perceive -> type -> observe gates the answer ---
     Scenario(
         name="golden_desktop_type_then_observe_gates_answer",

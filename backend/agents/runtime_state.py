@@ -45,7 +45,7 @@ class RuntimeState:
             "tool": tool,
             "args": args,
             "ok": bool(ok),
-            "summary": text[:1000],
+            "summary": _bounded_tool_summary(tool, text, 1000),
             "risk_level": registry.risk_level_for(tool, args),
             "side_effects": registry.side_effects_for(tool),
             "decision": "allowed" if ok else "failed",
@@ -224,6 +224,14 @@ def _artifact_path_from_command(cmd: str) -> str:
     if match:
         return match.group("path").strip()
     return ""
+
+
+def _bounded_tool_summary(tool: str, text: str, limit: int) -> str:
+    """Keep visual evidence when a long UIA prefix would otherwise hide it."""
+    if tool != "perceive" or "Visual description:" not in text:
+        return text[:limit]
+    visual = text[text.index("Visual description:"):].strip()
+    return visual[:limit]
 
 
 def _path_from_tool_text(text: str) -> str:

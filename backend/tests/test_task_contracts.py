@@ -215,6 +215,35 @@ class TaskContractTests(unittest.TestCase):
         ])
         self.assertTrue(result.satisfied)
 
+    def test_screen_analysis_requires_successful_visual_description(self):
+        from agents.task_contracts import build_task_contract
+
+        contract = build_task_contract("screen_analysis")
+
+        self.assertEqual({"perceive"}, contract.allowed_tools)
+        self.assertFalse(contract.evaluate([]).satisfied)
+        self.assertFalse(contract.evaluate([
+            {"tool": "perceive", "ok": True, "text": "Elements: [1] Browser"},
+        ]).satisfied)
+        self.assertFalse(contract.evaluate([
+            {
+                "tool": "perceive",
+                "ok": True,
+                "text": "Elements: [1] Browser\n\nVisual description: Vision analysis unavailable",
+            },
+        ]).satisfied)
+        result = contract.evaluate([
+            {
+                "tool": "perceive",
+                "ok": True,
+                "text": (
+                    "Elements: [1] Browser\n\nVisual description:\n"
+                    "A dashboard with a narrow sidebar and low-contrast controls."
+                ),
+            },
+        ])
+        self.assertTrue(result.satisfied)
+
     def test_shell_action_requires_command_output(self):
         from agents.task_contracts import build_task_contract
 
