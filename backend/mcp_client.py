@@ -193,6 +193,8 @@ def _spec_from_mcp_tool(namespaced: str, server: str, tool: dict) -> registry.To
         category=server,
         coordinator=True,
         deterministic=False,
+        risk_level="high",
+        side_effects=True,
     )
 
 
