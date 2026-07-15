@@ -648,6 +648,8 @@ def side_effects_for(tool: str) -> bool:
 
 
 def confirmation_reason(tool: str, args: dict | None = None) -> str:
+    if tool.startswith(EXTERNAL_PREFIX):
+        return "External MCP tool calls require confirmation before execution."
     if tool == "run_command":
         args = args or {}
         cmd = str(args.get("cmd") or args.get("command") or "")

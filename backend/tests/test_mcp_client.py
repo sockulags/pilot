@@ -28,6 +28,14 @@ class MCPClientIntegrationTests(unittest.TestCase):
         try:
             names = {s.name for s in specs}
             self.assertIn("mcp__test__echo", names)
+            echo_spec = next(s for s in specs if s.name == "mcp__test__echo")
+            self.assertEqual("high", echo_spec.risk_level)
+            self.assertTrue(echo_spec.side_effects)
+            self.assertTrue(registry.confirmation_required(echo_spec.name, {"text": "hi"}))
+            self.assertIn(
+                "external mcp tool",
+                registry.confirmation_reason(echo_spec.name, {"text": "hi"}).lower(),
+            )
             # Surfaced into the registry's coordinator allowlist + schemas.
             self.assertIn("mcp__test__echo", registry.coordinator_tool_names())
             self.assertTrue(
