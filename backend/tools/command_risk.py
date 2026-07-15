@@ -203,8 +203,11 @@ _PERMISSION_COMMANDS = {
 _PACKAGE_MANAGERS = {"npm", "pnpm", "yarn", "pip", "pip3", "uv", "cargo", "gem", "apt", "apt-get", "brew", "choco"}
 _INSTALL_VERBS = {"install", "i", "add", "ci"}
 
-# Secret-bearing path fragments.
-_SECRET_FRAGMENTS = (".env", "id_rsa", "id_dsa", "id_ecdsa", "credentials", "secret", "token", ".pem", ".key")
+# Secret-bearing path fragments. Public: this is the single source of truth for
+# both the SECRET_ACCESS shell-command classification below and the read_file
+# confirmation gate in registry.py (which imports this one-way), so a secret path
+# triggers the same prompt whether reached via a shell command or read directly.
+SECRET_FRAGMENTS = (".env", "id_rsa", "id_dsa", "id_ecdsa", "credentials", "secret", "token", ".pem", ".key")
 
 # gh side-effecting subcommands preserved from the legacy substring set.
 _GH_RISKY = ("gh issue close", "gh pr merge")
@@ -408,7 +411,7 @@ def _classify_part(part: str) -> set[str]:
         classes.add(ENCODED)
 
     # Secret/credential access by path fragment anywhere in the part.
-    if any(frag in lowered for frag in _SECRET_FRAGMENTS):
+    if any(frag in lowered for frag in SECRET_FRAGMENTS):
         classes.add(SECRET_ACCESS)
 
     # Preserved gh side-effecting subcommands.

@@ -656,15 +656,11 @@ def _command_requires_confirmation(cmd: str) -> bool:
 
 
 def _path_requires_confirmation(path: str) -> bool:
+    # Share command_risk's secret-fragment list (imported one-way above) so a
+    # direct read_file gates on exactly the paths a shell command would flag as
+    # SECRET_ACCESS — no separate copy to drift (id_dsa, id_ecdsa, .pem, .key).
     lowered = path.lower().replace("\\", "/")
-    sensitive_parts = (
-        ".env",
-        "id_rsa",
-        "credentials",
-        "secret",
-        "token",
-    )
-    return any(part in lowered for part in sensitive_parts)
+    return any(frag in lowered for frag in command_risk.SECRET_FRAGMENTS)
 
 
 # ---------------------------------------------------------------------------

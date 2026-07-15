@@ -128,6 +128,33 @@ class RegistryDerivationTests(unittest.TestCase):
         self.assertFalse(registry.confirmation_required("run_command", {"cmd": "Get-ChildItem backend"}))
         self.assertFalse(registry.confirmation_required("read_file", {"path": "README.md"}))
 
+    def test_read_file_gates_on_full_secret_fragment_set(self):
+        # Previously missing from read_file's gate (issue #74): reading an SSH
+        # private key or a cert/key directly must prompt, matching the shell path.
+        for path in (
+            r"C:\Users\me\.ssh\id_dsa",
+            r"C:\Users\me\.ssh\id_ecdsa",
+            r"C:\certs\server.pem",
+            r"C:\keys\private.key",
+        ):
+            self.assertTrue(
+                registry.confirmation_required("read_file", {"path": path}),
+                f"expected read_file to gate on {path!r}",
+            )
+
+    def test_read_file_and_shell_agree_across_fragments(self):
+        # For every shared fragment, read_file's gate and the shell classifier's
+        # SECRET_ACCESS check agree on the same path (single source of truth).
+        from tools import command_risk
+
+        for frag in command_risk.SECRET_FRAGMENTS:
+            path = f"C:\\work\\thing{frag}"
+            via_read = registry.confirmation_required("read_file", {"path": path})
+            via_shell = command_risk.classify_command(f"cat {path}").requires_confirmation
+            self.assertTrue(via_read, f"read_file should gate on {path!r}")
+            self.assertTrue(via_shell, f"shell should gate on {path!r}")
+            self.assertEqual(via_read, via_shell, f"gates disagree on {path!r}")
+
     def test_mcp_call_enforces_confirmation_policy(self):
         from api.mcp import create_mcp_app
 
