@@ -128,6 +128,32 @@ class RegistryDerivationTests(unittest.TestCase):
         self.assertFalse(registry.confirmation_required("run_command", {"cmd": "Get-ChildItem backend"}))
         self.assertFalse(registry.confirmation_required("read_file", {"path": "README.md"}))
 
+    def test_confirmation_policy_gates_open_app_outside_whitelist(self):
+        # The whitelisted calculator aliases launch without a prompt, tolerating
+        # case and surrounding whitespace (matching system.open_app's lookup).
+        for name in ("calc", "calculator", "kalkylator", "Calc", "CALCULATOR", " calc ", "  Kalkylator  "):
+            self.assertFalse(
+                registry.confirmation_required("open_app", {"name": name}),
+                f"expected {name!r} to launch without confirmation",
+            )
+        # Anything else -- arbitrary path, URL, UNC path, unknown app, or a
+        # missing/empty name -- must be confirmed before os.startfile runs it (#86).
+        for name in (
+            r"C:\Windows\System32\cmd.exe",
+            "https://example.com",
+            r"\\host\share\file.exe",
+            "notepad",
+            "calculator.exe",  # not an exact alias match -- must gate
+            "",
+            "   ",
+        ):
+            self.assertTrue(
+                registry.confirmation_required("open_app", {"name": name}),
+                f"expected {name!r} to require confirmation",
+            )
+        # A missing name key gates too.
+        self.assertTrue(registry.confirmation_required("open_app", {}))
+
     def test_read_file_gates_on_full_secret_fragment_set(self):
         # Previously missing from read_file's gate (issue #74): reading an SSH
         # private key or a cert/key directly must prompt, matching the shell path.
