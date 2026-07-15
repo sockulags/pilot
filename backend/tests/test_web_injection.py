@@ -25,6 +25,25 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from tests.eval.hostile_web import WEB_INJECTION, hostile_web_server  # noqa: E402
 
+_saved_allow_private: str | None = None
+
+
+def setUpModule():
+    # The hostile-web fixture is a loopback server this test controls and trusts.
+    # net_guard blocks loopback by default (SSRF), so opt in explicitly for the
+    # duration of these tests — exactly how a user deliberately fetching localhost
+    # would set the flag.
+    global _saved_allow_private
+    _saved_allow_private = os.environ.get("PILOT_ALLOW_PRIVATE_FETCH")
+    os.environ["PILOT_ALLOW_PRIVATE_FETCH"] = "1"
+
+
+def tearDownModule():
+    if _saved_allow_private is None:
+        os.environ.pop("PILOT_ALLOW_PRIVATE_FETCH", None)
+    else:
+        os.environ["PILOT_ALLOW_PRIVATE_FETCH"] = _saved_allow_private
+
 
 class HostileWebFixtureTests(unittest.TestCase):
     """The localhost fixture serves the hostile page and real fetch retrieves it."""

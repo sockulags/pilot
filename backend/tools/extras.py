@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from net_guard import guard_request
 
 # Directories never worth walking for a content search (mirrors search.py).
 _SKIP_DIRS = {
@@ -169,7 +170,12 @@ def http_request(
     if not re.match(r"^https?://", url or "", re.IGNORECASE):
         return {"error": "url must be http(s)"}
     try:
-        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+        # guard_request runs before the initial request AND on every redirect
+        # hop, so a public URL that 302s to an internal address is blocked too.
+        with httpx.Client(
+            timeout=timeout, follow_redirects=True,
+            event_hooks={"request": [guard_request]},
+        ) as client:
             resp = client.request(
                 method, url, headers=headers or None,
                 json=json_body if json_body is not None else None,
