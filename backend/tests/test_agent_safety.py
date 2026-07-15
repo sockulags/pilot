@@ -408,17 +408,17 @@ class AgentLoopTests(unittest.TestCase):
                 return {"tool": "type_text", "args": {"text": "hej"}, "thinking": "type"}
             if opened:
                 return {"tool": "done", "args": {"summary": "opened only"}, "thinking": "too early"}
-            return {"tool": "open_app", "args": {"name": "notepad"}, "thinking": "open"}
+            return {"tool": "open_app", "args": {"name": "calculator"}, "thinking": "open"}
 
         async def fake_execute(tool, args, emit):
             executed.append(tool)
             return f"{tool} ok"
 
         async def fake_perceive(task, history, emit):
-            return "Screen observation: Notepad is focused."
+            return "Screen observation: Calculator is focused."
 
-        with self._patched(loop, route_next_action=fake_route, execute_tool=fake_execute, perceive=fake_perceive, asyncio_sleep=True, active_window_title=lambda: "Untitled - Notepad"):
-            outcome = await loop.run_agent_loop("Öppna Notepad och skriv hej", events.append, asyncio.Event())
+        with self._patched(loop, route_next_action=fake_route, execute_tool=fake_execute, perceive=fake_perceive, asyncio_sleep=True, active_window_title=lambda: "Calculator"):
+            outcome = await loop.run_agent_loop("Öppna kalkylatorn och skriv hej", events.append, asyncio.Event())
 
         self.assertEqual(["open_app", "type_text"], executed)
         self.assertEqual("done", outcome.status)
@@ -435,7 +435,7 @@ class AgentLoopTests(unittest.TestCase):
             history = args[1] if len(args) > 1 else kwargs.get("history", [])
             if any(str(i.get("content", "")).startswith("open_app(") for i in history if i.get("type") == "action"):
                 return {"tool": "type_text", "args": {"text": "hej"}, "thinking": "type"}
-            return {"tool": "open_app", "args": {"name": "notepad"}, "thinking": "open"}
+            return {"tool": "open_app", "args": {"name": "calculator"}, "thinking": "open"}
 
         async def fake_execute(tool, args, emit):
             executed.append(tool)
@@ -445,7 +445,7 @@ class AgentLoopTests(unittest.TestCase):
             return "Screen observation: Codex is focused."
 
         with self._patched(loop, route_next_action=fake_route, execute_tool=fake_execute, perceive=fake_perceive, asyncio_sleep=True, active_window_title=lambda: "Codex"):
-            outcome = await loop.run_agent_loop("Öppna Notepad och skriv hej", events.append, asyncio.Event())
+            outcome = await loop.run_agent_loop("Öppna kalkylatorn och skriv hej", events.append, asyncio.Event())
 
         self.assertEqual(["open_app"], executed)
         self.assertEqual("blocked", outcome.status)

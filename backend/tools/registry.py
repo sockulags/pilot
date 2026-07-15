@@ -628,6 +628,8 @@ def confirmation_required(tool: str, args: dict | None = None) -> bool:
         # it needs sign-off (the URL/body may be steered by gathered evidence).
         method = str(args.get("method") or "GET").upper()
         return method not in ("GET", "HEAD")
+    if tool == "open_app":
+        return _open_app_requires_confirmation(str(args.get("name") or ""))
     return spec.risk_level == "high"
 
 
@@ -656,11 +658,27 @@ def confirmation_reason(tool: str, args: dict | None = None) -> str:
     if tool == "http_request":
         method = str((args or {}).get("method") or "GET").upper()
         return f"{method} may change external state and requires confirmation."
+    if tool == "open_app":
+        return (
+            "open_app only launches the built-in calculator without a prompt; "
+            "any other name, path, or URL requires confirmation."
+        )
     return f"High-risk tool {tool!r} requires confirmation."
 
 
 def _command_requires_confirmation(cmd: str) -> bool:
     return command_risk.command_requires_confirmation(cmd)
+
+
+def _open_app_requires_confirmation(name: str) -> bool:
+    # open_app hands ``name`` straight to os.startfile outside a small built-in
+    # whitelist (calc/calculator/kalkylator), so an arbitrary path, URL, or UNC
+    # target would otherwise launch with no human sign-off (issue #86). Only the
+    # whitelisted aliases -- matched exactly after .strip().lower(), the same way
+    # system.open_app resolves them -- skip the prompt; everything else gates.
+    from tools.system import WINDOWS_APP_ALIASES
+
+    return name.strip().lower() not in WINDOWS_APP_ALIASES
 
 
 def _path_requires_confirmation(path: str) -> bool:
