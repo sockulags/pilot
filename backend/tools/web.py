@@ -24,6 +24,7 @@ from urllib.parse import unquote
 from typing import Awaitable, Callable, TypeVar
 
 import httpx
+from net_guard import aguard_request
 from tool_results import ToolResult
 
 # A realistic browser UA — DuckDuckGo serves an empty/challenge page to
@@ -710,8 +711,11 @@ async def fetch_url(url: str, max_chars: int = 4000) -> str:
         url = "https://" + url
     try:
         async def _call() -> httpx.Response:
+            # aguard_request runs before the initial request AND on every redirect
+            # hop, so a public URL that 302s to an internal address is blocked too.
             async with httpx.AsyncClient(
-                timeout=20, follow_redirects=True, headers={"User-Agent": _UA}
+                timeout=20, follow_redirects=True, headers={"User-Agent": _UA},
+                event_hooks={"request": [aguard_request]},
             ) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
