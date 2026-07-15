@@ -88,10 +88,9 @@ UI review.
 - #84 / PR #90: external MCP tools fail closed — completed.
 - #87 / PR #91: direct GitHub-tool failure-path tests — completed.
 - #57 / PR #92: Pyright dependency and CI gate — completed.
-- Vision-backed UI review regression — implementation and live validation complete;
-  publication pending.
-- Public demo artifact — still pending a clean recording; the first recording was
-  rejected because it did not prove vision-backed UI review.
+- Vision-backed UI review regression — completed via issue #93 / PR #94.
+- Public demo artifact — completed with a clean vision-backed UI-review recording;
+  the rejected file-Q&A recording was replaced.
 
 Validation: focused red/green tests where applicable, full backend suite, eval
 suite, Ruff, Pyright, GitHub Actions, diff review, and the exact Swedish UI-review

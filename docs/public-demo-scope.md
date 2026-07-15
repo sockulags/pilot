@@ -7,8 +7,10 @@ the security and permission model, and the evaluation task set with success
 criteria — the last defined *before* any polishing so the demo is measured, not
 just shown.
 
-Status: draft for review. Nothing here is a polish task; it is the contract the
-polish and evaluation work must satisfy.
+Status: implemented as the public scope and evaluation contract. The measured
+results and limitations are documented below and in the linked findings reports.
+The retained `docs/screenshots/demo.gif` is one observed vision-backed UI-review
+turn, not proof that every task category passes reliably.
 
 ---
 
@@ -163,8 +165,10 @@ with a deterministic checker:
 
 ---
 
-## Out of scope for gate 7 (do later, in order)
+## Delivered after gate 7
 
-- The live-model API path itself (OpenAI-compatible client) — gate 8.
-- Writing the public English README and demo video — gate 8, after the eval runs.
-- Any UI polish that does not serve the primary scenario or its evaluation.
+- The optional OpenAI-compatible answering path is implemented alongside the
+  local-first default.
+- The public English README now includes a real local vision-backed demo.
+- Evaluation remains the source of truth: the demo does not erase measured
+  weaknesses or generalize one successful run into a reliability claim.

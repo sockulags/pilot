@@ -2,9 +2,9 @@
 
 ## Current Milestone
 
-Vision-backed UI-review regression fixed and live-verified on 2026-07-15;
-publication is pending. The public demo remains intentionally unpublished until
-a clean vision-backed recording exists.
+Vision-backed UI-review regression fixed, live-verified, and published via PR
+#94 on 2026-07-15; issue #93 is closed. A clean vision-backed public demo has
+replaced the rejected file-Q&A recording.
 
 ## Completed
 
@@ -43,6 +43,7 @@ a clean vision-backed recording exists.
 - PR #91 merged and issue #87 closed: `tools/github.py` now has direct subprocess/JSON error-path tests and 100% statement coverage.
 - PR #92 merged and issue #57 closed: Pyright is a backend dev dependency and a dedicated CI step after Ruff and before pytest.
 - UI-review prompts now route deterministically to `screen_analysis`, require a usable vision description, preserve visual evidence during synthesis, and render named localhost pages directly instead of capturing the active Pilot chat window.
+- `docs/screenshots/demo.gif` now records a clean exact-prompt UI-review turn with the route, vision trace, captured page, and grounded final recommendations.
 
 ## Active Blockers
 
@@ -65,6 +66,7 @@ None.
 - #87 final validation: 825 backend tests, 69 eval tests, Ruff clean, 100% statement coverage for `tools/github.py`, and backend/frontend CI green.
 - #57 final validation: a deliberate production type error failed with `reportReturnType`; after removal Pyright reported 0 errors, Ruff was clean, 825 tests passed with 79% total coverage, and GitHub Actions showed the new Type-check step green.
 - Vision regression validation: the exact Swedish prompt routed to `screen_analysis`; the saved turn finished `done` with its contract satisfied and grounded recommendations in visible controls including `auto-orkestrering`, `Claude Code`, `Kontext`, and `Styr datorn`. The rejected file-Q&A GIF was not published.
+- Demo validation: clean local session, 50 captured PNG states condensed to a 39-frame 960x540 looping GIF (2,460,849 bytes); start, routing, visual-observation, captured-page, and final-answer frames were visually inspected.
 
 ## Subagents
 
@@ -95,5 +97,5 @@ None.
 
 ## Next Action
 
-Publish the vision regression fix after final full-suite/CI review. Record a
-separate clean demo later; do not reuse the rejected file-Q&A clip.
+No remaining work for this regression/demo follow-up. Route the next task from
+current GitHub state.

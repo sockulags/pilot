@@ -6,14 +6,13 @@
 
 Pilot runs on your machine, on local [Ollama](https://ollama.com) models by default. You talk to it in natural language (Swedish or English); it classifies the turn, gathers what it needs (reads project files, runs read-only shell commands, does web research), performs the action, and answers **only from evidence it actually gathered**. When a task produces a file, Pilot writes it and verifies it exists before claiming success.
 
-![A grounded task end-to-end: Pilot reasons about the next step, runs a PowerShell command, and answers from the verified command output — on a local gemma4:12b model](docs/screenshots/grounded-task.png)
+![A real vision-backed Pilot turn: a Swedish localhost UI-review request routes to screen analysis, captures the page, and returns grounded interface feedback](docs/screenshots/demo.gif)
 
-<!-- DEMO PLACEHOLDER: a short screencast (GIF/MP4) of one live turn — classify →
-     route → tool call → grounded answer — still needs to be recorded on a real
-     machine and dropped in at docs/screenshots/demo.gif, then linked here.
-     A static screenshot stands in above until then. -->
-> **Demo clip coming soon.** A short screencast of a full live turn will land at
-> `docs/screenshots/demo.gif`; the static screenshot above stands in for now.
+The clip is one real local run: Pilot recognizes an interface-review request,
+routes it to `screen_analysis`, visually observes the named localhost page, and
+grounds its answer in controls visible on that page. It is evidence of this
+observed turn, not a reliability benchmark; measured behavior remains in
+[Evaluation](#evaluation--measured-not-claimed).
 
 **Trust model / intended user:** a technically comfortable person running Pilot on their own machine, who wants an assistant that can actually touch their files, shell and screen — not a cloud chatbot — and accepts "it runs on my machine with my permissions." Pilot is a working personal agent and a public code sample, **not** a hosted multi-user product, and this README never claims production-grade reliability: see [Evaluation](#evaluation--measured-not-claimed) for what is actually measured.
 
