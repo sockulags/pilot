@@ -175,7 +175,7 @@ const HERO_WORKFLOWS = t.hero.workflows;
 
 const RECONNECT_DELAY = 3000;
 
-function wsUrl(): string {
+export function wsUrl(): string {
   if (typeof window === "undefined") return "ws://localhost:8000/ws";
   const { protocol, hostname, host, port } = window.location;
   if (port === "3000") return `ws://${hostname}:8000/ws`;
@@ -183,7 +183,7 @@ function wsUrl(): string {
   return `${proto}://${host}/ws`;
 }
 
-function makeSessionId(): string {
+export function makeSessionId(): string {
   try {
     if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
     if (typeof crypto !== "undefined" && crypto.getRandomValues) {
@@ -194,17 +194,17 @@ function makeSessionId(): string {
   return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
 }
 
-function preview(text: string, max = 72) {
+export function preview(text: string, max = 72) {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
 }
 
-function modelLabel(mode: string, models: ModelOption[]) {
+export function modelLabel(mode: string, models: ModelOption[]) {
   if (mode === "auto") return "Auto";
   return models.find((model) => model.id === mode)?.label ?? mode;
 }
 
-function agentLabel(agent: Agent) {
+export function agentLabel(agent: Agent) {
   return t.agents.find((option) => option.id === agent)?.label ?? agent;
 }
 
@@ -212,7 +212,7 @@ function agentLabel(agent: Agent) {
 // message carries the real turn index it belongs to; sessions saved before that
 // field existed fall back to a positional counter so event matching still keys
 // consistently rather than collapsing every item onto turn 0.
-function historyToTranscript(messages: StoredMessage[], nextId: () => number): TranscriptItem[] {
+export function historyToTranscript(messages: StoredMessage[], nextId: () => number): TranscriptItem[] {
   let fallbackTurn = 0;
   return messages.map((m) => {
     if (typeof m.turn === "number") {
@@ -243,7 +243,7 @@ function historyToTranscript(messages: StoredMessage[], nextId: () => number): T
 // A cheap content signature of the finalized (done) part of a transcript, used
 // to decide whether the server's history actually differs from what we already
 // show. Ignores in-progress assistant turns the server hasn't persisted yet.
-function transcriptSignature(
+export function transcriptSignature(
   items: { role: string; content: string; contextTelemetry?: ContextTelemetry }[],
 ): string {
   return items
