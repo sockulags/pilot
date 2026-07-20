@@ -753,11 +753,41 @@ async def _execute_tool_text(tool: str, args: dict, emit: Callable[[dict], None]
         return open_app(args["name"])
 
     elif tool == "run_codex":
-        output_parts = []
-        async for chunk in run_codex(args["prompt"]):
-            output_parts.append(chunk)
-            emit(make_event("result", content=chunk))
-        return "".join(output_parts)[-500:]
+        # run_codex yields TYPED events ({"type": "session"|"text"|"tool"|
+        # "result"|"error", ...}), never plain strings — so the items cannot be
+        # string-joined. Dispatch on each event's type, mirroring
+        # ws._run_code_turn: accumulate streamed text, forward tool calls as
+        # their own action events, and surface errors distinctly instead of
+        # letting a failure masquerade as normal output.
+        parts: list[str] = []
+        result_text = ""
+        error_text = ""
+        async for ev in run_codex(args["prompt"]):
+            etype = ev.get("type")
+            if etype == "text":
+                chunk = ev.get("text", "")
+                if chunk:
+                    parts.append(chunk)
+                    emit(make_event("result", content=chunk))
+            elif etype == "tool":
+                emit(make_event("action", tool=ev.get("name", "tool"), args=ev.get("input", {})))
+            elif etype == "result":
+                result_text = ev.get("text", "") or ""
+            elif etype == "error":
+                raw = ev.get("text", "")
+                error_text = raw if isinstance(raw, str) else str(raw)
+                emit(make_event("error", content=error_text))
+            # "session" events carry no output on this path — ignore them.
+        streamed = "".join(parts)
+        if error_text:
+            # Reflect the failure in the return value so the model (and the
+            # coordinator's notes) see it as an error, not a silent success.
+            # tool_execution_succeeded treats the "Error executing" prefix as a
+            # failed result; keep that prefix intact and truncate only the tail.
+            detail = f"{streamed}\n{error_text}" if streamed else error_text
+            return f"Error executing run_codex: {detail[-500:]}"
+        # Prefer streamed text; fall back to the terminal result payload.
+        return (streamed or result_text)[-500:]
 
     else:
         return f"Unknown tool: {tool}"
