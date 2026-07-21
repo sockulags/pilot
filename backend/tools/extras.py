@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from net_guard import guard_request
+from net_guard import guard_request, pinned_transport
 
 # Directories never worth walking for a content search (mirrors search.py).
 _SKIP_DIRS = {
@@ -172,9 +172,12 @@ def http_request(
     try:
         # guard_request runs before the initial request AND on every redirect
         # hop, so a public URL that 302s to an internal address is blocked too.
+        # The pinning transport then dials the exact validated IP for each hop,
+        # closing the DNS-rebinding window between check and connect.
         with httpx.Client(
             timeout=timeout, follow_redirects=True,
             event_hooks={"request": [guard_request]},
+            transport=pinned_transport(),
         ) as client:
             resp = client.request(
                 method, url, headers=headers or None,
