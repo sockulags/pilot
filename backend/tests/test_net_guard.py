@@ -13,8 +13,11 @@ import os
 import socket
 import sys
 import unittest
+from collections.abc import Iterable
+from typing import Any
 from unittest import mock
 
+import httpcore
 import httpx
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -38,6 +41,62 @@ def _fake_resolver(mapping):
         return [(family, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, 0))]
 
     return _resolve
+
+
+def _sequential_resolver(hostname, answers):
+    """getaddrinfo stub that returns a *different* IP on each successive call.
+
+    Models DNS rebinding: the guard's lookup and the client's connect-time lookup
+    hit the same name a few ms apart and get different answers. The last entry is
+    reused for any further calls.
+    """
+    state = {"n": 0}
+
+    def _resolve(host, *args, **kwargs):
+        if host != hostname:
+            raise socket.gaierror(f"unmapped host {host!r}")
+        ip = answers[min(state["n"], len(answers) - 1)]
+        state["n"] += 1
+        family = socket.AF_INET6 if ":" in ip else socket.AF_INET
+        return [(family, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, 0))]
+
+    return _resolve
+
+
+class _RecordingBackend(httpcore.NetworkBackend):
+    """A sync backend that records every address it is asked to dial."""
+
+    def __init__(self):
+        self.dialed: list[str] = []
+
+    def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable[Any] | None = None,
+    ) -> httpcore.NetworkStream:
+        self.dialed.append(host)
+        return httpcore.MockStream([])
+
+
+class _AsyncRecordingBackend(httpcore.AsyncNetworkBackend):
+    """Async counterpart of :class:`_RecordingBackend`."""
+
+    def __init__(self):
+        self.dialed: list[str] = []
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable[Any] | None = None,
+    ) -> httpcore.AsyncNetworkStream:
+        self.dialed.append(host)
+        return httpcore.AsyncMockStream([])
 
 
 @contextlib.contextmanager
@@ -136,6 +195,59 @@ class CheckUrlResolutionTests(unittest.TestCase):
             net_guard.socket, "getaddrinfo", _fake_resolver({}),
         ):
             check_url("https://nx.invalid/")  # must not raise
+
+
+class PinnedConnectionRebindingTests(unittest.TestCase):
+    """The address validated is the address dialed — no connect-time re-resolve.
+
+    These exercise the pinning network backend directly (the mechanism wired into
+    both httpx clients), simulating two sequential lookups for one host: the first
+    (public) passes the guard, the second (internal) is what a rebinding attacker
+    would swap in at connect time. Pinning validates its own resolution, so the
+    internal address is refused and never dialed.
+    """
+
+    def test_public_host_is_dialed_by_validated_ip_not_hostname(self):
+        # The connection targets the resolved+validated IP, so httpcore has no
+        # hostname left to re-resolve independently.
+        with mock.patch.object(
+            net_guard.socket, "getaddrinfo",
+            _fake_resolver({"example.com": _PUBLIC_IP}),
+        ):
+            inner = _RecordingBackend()
+            net_guard._PinnedBackend(inner).connect_tcp("example.com", 443)
+        self.assertEqual(inner.dialed, [_PUBLIC_IP])
+
+    def test_connect_time_rebinding_to_metadata_is_blocked_sync(self):
+        resolver = _sequential_resolver("rebind.example", [_PUBLIC_IP, "169.254.169.254"])
+        inner = _RecordingBackend()
+        with mock.patch.object(net_guard.socket, "getaddrinfo", resolver):
+            # Lookup #1 (public) — the guard would let the request through.
+            check_url("https://rebind.example/")
+            backend = net_guard._PinnedBackend(inner)
+            # Lookup #2 at connect time now answers with the metadata IP.
+            with self.assertRaises(BlockedHostError):
+                backend.connect_tcp("rebind.example", 443)
+        # The internal address was never dialed — the socket was never opened.
+        self.assertEqual(inner.dialed, [])
+
+    def test_connect_time_rebinding_to_loopback_is_blocked_async(self):
+        resolver = _sequential_resolver("rebind.example", [_PUBLIC_IP, "127.0.0.1"])
+        inner = _AsyncRecordingBackend()
+        with mock.patch.object(net_guard.socket, "getaddrinfo", resolver):
+            check_url("https://rebind.example/")
+            backend = net_guard._AsyncPinnedBackend(inner)
+            with self.assertRaises(BlockedHostError):
+                asyncio.run(backend.connect_tcp("rebind.example", 443))
+        self.assertEqual(inner.dialed, [])
+
+    def test_opt_out_passes_hostname_through_unpinned(self):
+        # With the private opt-out, the backend must not resolve/pin — the client
+        # is trusted to reach local/private targets by name.
+        with mock.patch.dict(os.environ, {"PILOT_ALLOW_PRIVATE_FETCH": "1"}):
+            inner = _RecordingBackend()
+            net_guard._PinnedBackend(inner).connect_tcp("localhost", 8080)
+        self.assertEqual(inner.dialed, ["localhost"])
 
 
 class OptOutTests(unittest.TestCase):
