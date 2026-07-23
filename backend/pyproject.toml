@@ -37,17 +37,19 @@ dev = [
 ]
 
 [tool.pyright]
-# Basic-mode type checking scoped to the production backend source. The test
-# suite carries a large pre-existing typing backlog (Optional access on
-# eval-harness return values) that is a separate, larger unit of work, so
-# `tests/` is excluded here and tracked as deferred backlog (see issue #70).
-# `venvPath`/`venv` point pyright at the project virtualenv so third-party
-# imports (httpx, pypdf, PIL, ...) resolve against the real dependency set.
+# Basic-mode type checking scoped to the production backend source plus the
+# eval harness under `tests/eval/`. The top-level test files carry a large
+# pre-existing typing backlog (Optional access on eval-harness return values)
+# that is a separate, larger unit of work, so `tests/*.py` is excluded here and
+# tracked as deferred backlog (see issues #70 and #105). The `tests/eval/`
+# harness is analyzed (issue #105). `venvPath`/`venv` point pyright at the
+# project virtualenv so third-party imports (httpx, pypdf, PIL, ...) resolve
+# against the real dependency set.
 typeCheckingMode = "basic"
 venvPath = "."
 venv = ".venv"
 exclude = [
-    "tests",
+    "tests/*.py",
     "**/node_modules",
     "**/__pycache__",
     "**/.*",
