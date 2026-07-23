@@ -373,7 +373,7 @@ def _intent_hint(route: str, task_context) -> tuple[str, dict | None]:
 
 
 async def run_live_turn(
-    task: LiveTask, cwd: str, inventory: ModelInventory,
+    task: LiveTask | MultiTurnTask, cwd: str, inventory: ModelInventory,
     escalation: bool | None = None,
     *,
     message: str | None = None,
@@ -472,7 +472,9 @@ async def run_live_turn(
 
     rs = outcome.runtime_state
     if rs is not None:
-        turn.evidence_tools = [item.get("tool") for item in rs.evidence_items]
+        # Every evidence item carries a non-null "tool" str (runtime_state always
+        # sets it); coerce so the list is a concrete list[str] for LiveTurn.
+        turn.evidence_tools = [str(item.get("tool", "")) for item in rs.evidence_items]
         turn.contract_satisfied = (rs.requirements or {}).get("satisfied")
         turn.verified_artifacts = [
             str(a.get("path") or "").strip()
@@ -1153,6 +1155,9 @@ async def run_suite(
     inventory, error = await _health_gate(backend)
     if error:
         return None, error
+    # _health_gate returns (None, message) on failure and (inventory, None) on
+    # success; a falsy error therefore guarantees a real inventory.
+    assert inventory is not None
 
     network_ok = await _network_reachable()
     trials = max(1, trials)

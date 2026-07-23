@@ -29,7 +29,7 @@ import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, cast
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
@@ -196,7 +196,9 @@ def _config(preset: str, model: str, embedding_model: str, context: int) -> loca
         structured_output="unknown",
     )
     return local_runtime.LocalRuntimeConfig(
-        kind=item["kind"], base_url=item["base_url"], chat_model=model,
+        # PRESETS only ever holds valid RuntimeKind literals ("ollama" /
+        # "openai_compatible"); the dict[str, str] inference widens it to str.
+        kind=cast("local_runtime.RuntimeKind", item["kind"]), base_url=item["base_url"], chat_model=model,
         vision_model=model if preset == "ollama" else "", embedding_model=embedding_model,
         context_overrides={model: context}, capabilities=caps,
     )
