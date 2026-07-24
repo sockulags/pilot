@@ -55,6 +55,32 @@ class PersistedMessageCapTests(unittest.TestCase):
         self.assertEqual(2, len(loaded["messages"]))
 
 
+class AtomicWriteCleanupTests(unittest.TestCase):
+    def test_failed_save_leaves_no_temp_file(self):
+        import json as _json
+
+        import store
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(store, "SESSIONS_DIR", tmp), \
+                    mock.patch.object(store, "MAX_PERSISTED_MESSAGES", 0), \
+                    mock.patch.object(store, "SESSIONS_MAX_AGE_DAYS", 0), \
+                    mock.patch.object(
+                        _json, "dump", side_effect=OSError("simulated disk full")
+                    ):
+                # save_session swallows the failure (best-effort persistence),
+                # so this must not raise.
+                store.save_session(
+                    "abc123", [{"role": "user", "content": "hi"}], turn=1
+                )
+
+            # The atomic write failed, but its temp file must not linger.
+            leftovers = os.listdir(tmp)
+            self.assertEqual(
+                [], leftovers, f"leaked temp file(s): {leftovers}"
+            )
+
+
 class SessionPruneTests(unittest.TestCase):
     def _touch(self, path: str, age_days: float) -> None:
         with open(path, "w", encoding="utf-8") as f:

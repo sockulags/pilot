@@ -173,9 +173,17 @@ def _save(data: dict) -> None:
     os.makedirs(os.path.dirname(JOBS_FILE), exist_ok=True)
     try:
         fd, tmp = tempfile.mkstemp(dir=os.path.dirname(JOBS_FILE), suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
-        os.replace(tmp, JOBS_FILE)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            os.replace(tmp, JOBS_FILE)
+        except Exception:
+            # Don't leak the temp file when the write fails.
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
     except Exception as exc:
         logger.warning("could not save jobs store: %s", exc)
 
