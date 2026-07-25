@@ -31,9 +31,17 @@ def _read() -> list[dict]:
 def _write(projects: list[dict]) -> None:
     os.makedirs(os.path.dirname(PROJECTS_FILE), exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(PROJECTS_FILE), suffix=".tmp")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(projects, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, PROJECTS_FILE)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(projects, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, PROJECTS_FILE)
+    except Exception:
+        # Don't leak the temp file when the write fails; the caller still sees it.
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _ensure_seeded() -> None:

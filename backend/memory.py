@@ -184,9 +184,17 @@ def _write_json_atomic(path: str, obj) -> None:
     """Serialize obj to path via a temp file + atomic replace (best effort)."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False)
-    os.replace(tmp, path)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(obj, f, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception:
+        # Don't leak the temp file when the write fails; the caller still sees it.
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _load_embeddings() -> dict:

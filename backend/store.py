@@ -103,9 +103,17 @@ def save_session(
     try:
         # Atomic write: temp file in the same dir, then replace.
         fd, tmp = tempfile.mkstemp(dir=SESSIONS_DIR, suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False)
-        os.replace(tmp, _path(session_id))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False)
+            os.replace(tmp, _path(session_id))
+        except Exception:
+            # Don't leak the temp file when the write fails.
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
     except Exception as exc:
         logger.warning("Could not save session %s: %s", session_id, exc)
     # Piggy-back a cheap prune of stale session files on the save we just did, so
