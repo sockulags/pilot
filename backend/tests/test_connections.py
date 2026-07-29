@@ -61,11 +61,19 @@ class ConnectionRegistryTests(unittest.TestCase):
         healthy.assert_called_once_with("body", "")
 
     def test_all_hooks_failing_reports_not_delivered(self):
-        connections.register("test-sess-4", _boom)
+        first = mock.Mock(side_effect=RuntimeError("dead connection"))
+        second = mock.Mock(side_effect=RuntimeError("dead connection"))
+        connections.register("test-sess-4", first)
+        connections.register("test-sess-4", second)
 
         # scheduler._deliver falls back to _store_offline on False, so a session
-        # whose every connection is dead must not report a delivery.
+        # whose every connection is dead must not report a delivery. Both hooks
+        # are asserted because one dead connection must not short-circuit the
+        # rest: with two raisers, stopping at the first exception leaves the
+        # second uncalled whichever way the set happens to iterate.
         self.assertFalse(connections.deliver_to_session("test-sess-4", "body"))
+        first.assert_called_once_with("body", "")
+        second.assert_called_once_with("body", "")
 
     def test_unregister_removes_only_the_given_hook(self):
         gone, kept = mock.Mock(), mock.Mock()
