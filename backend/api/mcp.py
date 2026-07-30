@@ -107,46 +107,57 @@ def create_mcp_app() -> FastAPI:
                 status_code=400,
             )
 
-        if tool == "pilot_screenshot":
-            img = screenshot()
-            return {"content": [{"type": "image", "data": img, "mimeType": "image/png"}]}
+        # Ordinary bad input -- a path that doesn't exist, a directory that got
+        # renamed, a window that already closed -- makes the underlying tool
+        # raise, and without this guard the exception leaves the route as a bare
+        # 500 with no body an MCP client can read (issue #119). The catch is
+        # deliberately narrow: these three classes are the ones verified
+        # reachable from ordinary input through this endpoint, whereas a bare
+        # `except OSError`/`except Exception` would also swallow PermissionError
+        # and genuine server faults as if they were "not found".
+        try:
+            if tool == "pilot_screenshot":
+                img = screenshot()
+                return {"content": [{"type": "image", "data": img, "mimeType": "image/png"}]}
 
-        elif tool == "pilot_click":
-            result = click(args["x"], args["y"], args.get("button", "left"))
-            return {"content": [{"type": "text", "text": result}]}
+            elif tool == "pilot_click":
+                result = click(args["x"], args["y"], args.get("button", "left"))
+                return {"content": [{"type": "text", "text": result}]}
 
-        elif tool == "pilot_type":
-            result = type_text(args["text"])
-            return {"content": [{"type": "text", "text": result}]}
+            elif tool == "pilot_type":
+                result = type_text(args["text"])
+                return {"content": [{"type": "text", "text": result}]}
 
-        elif tool == "pilot_run_command":
-            result = run_command_sync(args["cmd"], args.get("cwd"))
-            return {"content": [{"type": "text", "text": result}]}
+            elif tool == "pilot_run_command":
+                result = run_command_sync(args["cmd"], args.get("cwd"))
+                return {"content": [{"type": "text", "text": result}]}
 
-        elif tool == "pilot_open_app":
-            result = open_app(args["name"])
-            return {"content": [{"type": "text", "text": result}]}
+            elif tool == "pilot_open_app":
+                result = open_app(args["name"])
+                return {"content": [{"type": "text", "text": result}]}
 
-        elif tool == "pilot_list_dir":
-            result = list_dir(args.get("path"))
-            return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
+            elif tool == "pilot_list_dir":
+                result = list_dir(args.get("path"))
+                return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
 
-        elif tool == "pilot_read_file":
-            result = read_file(args["path"])
-            return {"content": [{"type": "text", "text": result["text"]}]}
+            elif tool == "pilot_read_file":
+                result = read_file(args["path"])
+                return {"content": [{"type": "text", "text": result["text"]}]}
 
-        elif tool == "pilot_find_file":
-            result = find_file(args["name"], args.get("root"))
-            return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
+            elif tool == "pilot_find_file":
+                result = find_file(args["name"], args.get("root"))
+                return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
 
-        elif tool == "pilot_list_windows":
-            result = list_windows()
-            return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
+            elif tool == "pilot_list_windows":
+                result = list_windows()
+                return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
 
-        elif tool == "pilot_focus_window":
-            result = focus_window(args["title"])
-            return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
+            elif tool == "pilot_focus_window":
+                result = focus_window(args["title"])
+                return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
 
-        return {"error": f"Unknown tool: {tool}"}
+            return {"error": f"Unknown tool: {tool}"}
+        except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+            return JSONResponse({"error": f"{tool}: {exc}"}, status_code=404)
 
     return app
