@@ -565,5 +565,142 @@ class WebSocketScenarioTests(unittest.TestCase):
         self.assertNotIn("<tool_code>", answer)
 
 
+class WebSocketHelloRegistrationTests(unittest.TestCase):
+    """The `hello` handler's scheduler-delivery registration (api/ws.py:685-692).
+
+    Clicking "Ny konversation" in the UI sends a second `hello` with a fresh
+    session id on the *same* open socket (frontend/app/page.tsx `handleReset`
+    reuses the socket instead of reconnecting), so the connection's delivery hook
+    has to move from the old session to the new one. A stale registration left
+    behind would not throw and would not fail a request: a job firing for the
+    abandoned session would still arrive on this connection, and `deliver_turn`
+    would append it to whatever conversation is open now and persist it under the
+    *current* session id — a scheduled answer for one chat silently showing up in
+    another.
+
+    These use the light WS harness (`websocket_endpoint` behind a bare FastAPI
+    app, no pipeline mocking) since no turn ever runs; only `store.SESSIONS_DIR`
+    is redirected, because a delivered job persists. `connections._hooks` is
+    process-wide module state, so setUp snapshots it and tearDown restores it —
+    the same isolation tests/test_connections.py uses.
+    """
+
+    def setUp(self):
+        import connections
+
+        self._saved_hooks = dict(connections._hooks)
+
+    def tearDown(self):
+        import connections
+
+        connections._hooks.clear()
+        connections._hooks.update(self._saved_hooks)
+
+    def test_second_hello_moves_job_delivery_to_the_new_session(self):
+        import api.ws as ws_api
+        import connections
+        import store
+
+        app = FastAPI()
+
+        @app.websocket("/ws")
+        async def ws(websocket: WebSocket):
+            await ws_api.websocket_endpoint(websocket)
+
+        old_session, new_session = "hello-dedupe-old", "hello-dedupe-new"
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(store, "SESSIONS_DIR", tmp):
+            client = TestClient(app)
+            with client.websocket_connect("/ws") as websocket:
+                websocket.send_json({"type": "hello", "session_id": old_session})
+                self._drain_until(websocket, {"jobs"})
+                self.assertIn(old_session, connections._hooks)
+
+                # Same still-open socket, no reconnect in between.
+                websocket.send_json({"type": "hello", "session_id": new_session})
+                self._drain_until(websocket, {"jobs"})
+
+                # The registration moved: gone from the old session, and the one
+                # hook now under the new session is this connection's deliver_turn.
+                self.assertNotIn(old_session, connections._hooks)
+                self.assertEqual(
+                    ["deliver_turn"],
+                    [hook.__name__ for hook in connections._hooks[new_session]],
+                )
+
+                # A job firing for the abandoned session reaches nobody, so the
+                # scheduler falls back to storing it offline...
+                self.assertFalse(
+                    connections.deliver_to_session(old_session, "svar för gamla chatten", "Gammalt jobb")
+                )
+                # ...while the session the user is actually looking at is still
+                # live, proving the hook moved rather than just being torn down.
+                self.assertTrue(
+                    connections.deliver_to_session(new_session, "svar för nya chatten", "Nytt jobb")
+                )
+
+                # deliver_turn persists synchronously, so the file is already there.
+                saved = self._load_session_file(Path(tmp), new_session)
+                self.assertFalse(
+                    (Path(tmp) / f"{old_session}.json").exists(),
+                    "the abandoned session must not be written to",
+                )
+
+        # Only the new session's job landed in the conversation this connection
+        # holds; the old session's job did not leak into it.
+        self.assertEqual(
+            [("assistant", "svar för nya chatten")],
+            [(m["role"], m["content"]) for m in saved["messages"]],
+        )
+
+    def test_repeated_hello_for_the_same_session_delivers_once(self):
+        # The other half of the dedupe: re-sending `hello` for the session that is
+        # already registered must not leave a second hook behind, or every fired
+        # job would be appended to the conversation twice.
+        import api.ws as ws_api
+        import connections
+        import store
+
+        app = FastAPI()
+
+        @app.websocket("/ws")
+        async def ws(websocket: WebSocket):
+            await ws_api.websocket_endpoint(websocket)
+
+        session = "hello-dedupe-same"
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(store, "SESSIONS_DIR", tmp):
+            client = TestClient(app)
+            with client.websocket_connect("/ws") as websocket:
+                for _ in range(2):
+                    websocket.send_json({"type": "hello", "session_id": session})
+                    self._drain_until(websocket, {"jobs"})
+
+                self.assertEqual(1, len(connections._hooks[session]))
+                self.assertTrue(
+                    connections.deliver_to_session(session, "svar", "Jobb")
+                )
+                saved = self._load_session_file(Path(tmp), session)
+
+        self.assertEqual(["svar"], [m["content"] for m in saved["messages"]])
+
+    def _drain_until(self, websocket, stop_types: set[str]) -> list[dict]:
+        events: list[dict] = []
+        while True:
+            event = websocket.receive_json()
+            events.append(event)
+            if event.get("type") in stop_types:
+                return events
+
+    def _load_session_file(self, root: Path, session_id: str) -> dict:
+        import json
+
+        path = root / f"{session_id}.json"
+        self.assertTrue(path.exists(), f"Session was not saved: {path}")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()
