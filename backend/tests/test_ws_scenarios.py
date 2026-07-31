@@ -1,3 +1,4 @@
+import functools
 import os
 import sys
 import tempfile
@@ -610,7 +611,9 @@ class WebSocketHelloRegistrationTests(unittest.TestCase):
         old_session, new_session = "hello-dedupe-old", "hello-dedupe-new"
 
         with tempfile.TemporaryDirectory() as tmp, \
-             mock.patch.object(store, "SESSIONS_DIR", tmp):
+             mock.patch.object(store, "SESSIONS_DIR", tmp), \
+             mock.patch.object(ws_api, "list_projects", return_value=[]), \
+             mock.patch.object(ws_api, "list_jobs", return_value=[]):
             client = TestClient(app)
             with client.websocket_connect("/ws") as websocket:
                 websocket.send_json({"type": "hello", "session_id": old_session})
@@ -632,12 +635,16 @@ class WebSocketHelloRegistrationTests(unittest.TestCase):
                 # A job firing for the abandoned session reaches nobody, so the
                 # scheduler falls back to storing it offline...
                 self.assertFalse(
-                    connections.deliver_to_session(old_session, "svar för gamla chatten", "Gammalt jobb")
+                    self._deliver_on_loop(
+                        websocket, old_session, "svar för gamla chatten", "Gammalt jobb"
+                    )
                 )
                 # ...while the session the user is actually looking at is still
                 # live, proving the hook moved rather than just being torn down.
                 self.assertTrue(
-                    connections.deliver_to_session(new_session, "svar för nya chatten", "Nytt jobb")
+                    self._deliver_on_loop(
+                        websocket, new_session, "svar för nya chatten", "Nytt jobb"
+                    )
                 )
 
                 # deliver_turn persists synchronously, so the file is already there.
@@ -671,7 +678,9 @@ class WebSocketHelloRegistrationTests(unittest.TestCase):
         session = "hello-dedupe-same"
 
         with tempfile.TemporaryDirectory() as tmp, \
-             mock.patch.object(store, "SESSIONS_DIR", tmp):
+             mock.patch.object(store, "SESSIONS_DIR", tmp), \
+             mock.patch.object(ws_api, "list_projects", return_value=[]), \
+             mock.patch.object(ws_api, "list_jobs", return_value=[]):
             client = TestClient(app)
             with client.websocket_connect("/ws") as websocket:
                 for _ in range(2):
@@ -679,12 +688,29 @@ class WebSocketHelloRegistrationTests(unittest.TestCase):
                     self._drain_until(websocket, {"jobs"})
 
                 self.assertEqual(1, len(connections._hooks[session]))
-                self.assertTrue(
-                    connections.deliver_to_session(session, "svar", "Jobb")
-                )
+                self.assertTrue(self._deliver_on_loop(websocket, session, "svar", "Jobb"))
                 saved = self._load_session_file(Path(tmp), session)
 
         self.assertEqual(["svar"], [m["content"] for m in saved["messages"]])
+
+    def _deliver_on_loop(self, websocket, session_id: str, content: str, title: str) -> bool:
+        """Fire a job the way the scheduler does: on the endpoint's event loop.
+
+        `scheduler._deliver` runs inside `run_scheduler`, i.e. on the same loop as
+        the connection, and `deliver_turn` relies on that — it queues onto an
+        asyncio.Queue with no awaits. TestClient runs the app in a portal thread,
+        so calling `deliver_to_session` straight from the test thread would reach
+        `loop.call_soon` cross-thread; that happens to work only because
+        `call_soon`'s thread check is a no-op unless asyncio debug is on. Under
+        `-X dev` / PYTHONASYNCIODEBUG=1 it raises, `deliver_to_session` swallows
+        it, and the socket's teardown then blocks forever on the never-woken
+        sender. Going through the portal keeps the test on the production path.
+        """
+        import connections
+
+        return websocket.portal.call(
+            functools.partial(connections.deliver_to_session, session_id, content, title)
+        )
 
     def _drain_until(self, websocket, stop_types: set[str]) -> list[dict]:
         events: list[dict] = []
