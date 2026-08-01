@@ -202,6 +202,65 @@ class MCPDispatchTests(unittest.TestCase):
         self.assertEqual("missing required argument(s): path", resp.json()["error"])
         read_file.assert_not_called()
 
+    # --- desktop-input argument validation (issue #122) ----------------------
+    #
+    # pyautogui itself accepts a string coordinate (it searches the screen for
+    # an image of that name) and raises an uncaught exception on a bad button or
+    # a fail-safe corner, so these must be refused before the tool is reached.
+    # `click`/`type_text` stay mocked throughout: a rejected call must never
+    # touch the real mouse or keyboard, and asserting the mock went unused is
+    # how that is checked.
+
+    def _assert_bad_request(self, resp, needle):
+        self.assertEqual(400, resp.status_code)
+        self.assertIn(needle, resp.json()["error"])
+
+    def test_click_with_non_numeric_coordinate_is_400(self):
+        for x, y in [("delete", 5), (5, None), ([1, 2], 3), (True, 4), (1, 2.5)]:
+            with self.subTest(x=x, y=y):
+                with mock.patch.object(mcp, "click") as click:
+                    resp = self._call("pilot_click", {"x": x, "y": y})
+                self._assert_bad_request(resp, "expected an integer")
+                click.assert_not_called()
+
+    def test_click_with_unsupported_button_is_400(self):
+        for button in ["middle-click", "primary", "", 1, None]:
+            with self.subTest(button=button):
+                with mock.patch.object(mcp, "click") as click:
+                    resp = self._call("pilot_click", {"x": 10, "y": 20, "button": button})
+                self._assert_bad_request(resp, "invalid argument button")
+                click.assert_not_called()
+
+    def test_click_accepts_supported_buttons_case_insensitively(self):
+        """pyautogui lowercases the button itself, so the value is validated but
+        passed through unchanged."""
+        for button in ["left", "MIDDLE", "Right"]:
+            with self.subTest(button=button):
+                with mock.patch.object(mcp, "click", return_value="clicked") as click:
+                    resp = self._call("pilot_click", {"x": 10, "y": 20, "button": button})
+                self.assertEqual(200, resp.status_code)
+                click.assert_called_once_with(10, 20, button)
+
+    def test_click_at_failsafe_corner_is_400_without_moving_the_mouse(self):
+        with mock.patch.object(mcp, "click") as click:
+            resp = self._call("pilot_click", {"x": 0, "y": 0})
+        self._assert_bad_request(resp, "fail-safe")
+        click.assert_not_called()
+
+    def test_click_away_from_the_corner_still_dispatches(self):
+        with mock.patch.object(mcp, "click", return_value="clicked") as click:
+            resp = self._call("pilot_click", {"x": 1, "y": 1})
+        self.assertEqual(200, resp.status_code)
+        click.assert_called_once_with(1, 1, "left")
+
+    def test_type_with_non_string_text_is_400(self):
+        for text in [123, None, ["a", "b"], {"a": 1}, True]:
+            with self.subTest(text=text):
+                with mock.patch.object(mcp, "type_text") as type_text:
+                    resp = self._call("pilot_type", {"text": text})
+                self._assert_bad_request(resp, "invalid argument text")
+                type_text.assert_not_called()
+
     def test_unknown_tool_name_returns_unknown_tool(self):
         resp = self._call("pilot_does_not_exist", {})
         self.assertEqual(200, resp.status_code)
