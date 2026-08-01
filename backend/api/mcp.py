@@ -9,6 +9,7 @@ from tools import (
     list_dir, read_file, find_file, list_windows, focus_window,
 )
 from tools import registry
+from tools.input import is_failsafe_corner
 from tools.system import run_command_sync
 
 
@@ -42,6 +43,45 @@ _MCP_TO_INTERNAL = {
     for spec in registry.REGISTRY
     if spec.mcp_facing
 }
+
+_CLICK_BUTTONS = ("left", "middle", "right")
+
+
+def _invalid_input_argument(tool: str, args: dict) -> str | None:
+    """Return an error message when pilot_click/pilot_type got an argument the
+    desktop-input tools can't use, else None.
+
+    pyautogui validates almost none of this itself: a string coordinate is
+    reinterpreted as an image filename to hunt for on screen, and a bad button
+    raises a PyAutoGUIException the dispatch below doesn't catch, so both reach
+    the client as a bare 500 (issue #122). Coordinates are held to the
+    "integer" the tool schema advertises (tools/registry.py), and bools are
+    refused explicitly since `isinstance(True, int)` is true in Python.
+    """
+    if tool == "pilot_click":
+        for key in ("x", "y"):
+            value = args[key]
+            if isinstance(value, bool) or not isinstance(value, int):
+                return (
+                    f"invalid argument {key}: expected an integer, "
+                    f"got {type(value).__name__}"
+                )
+        button = args.get("button", "left")
+        if not isinstance(button, str) or button.lower() not in _CLICK_BUTTONS:
+            return (
+                "invalid argument button: expected one of "
+                f"{', '.join(_CLICK_BUTTONS)}"
+            )
+        if is_failsafe_corner(args["x"], args["y"]):
+            return (
+                f"invalid coordinates ({args['x']}, {args['y']}): screen corners are "
+                "reserved for pyautogui's fail-safe abort; aim away from the corner"
+            )
+    elif tool == "pilot_type":
+        text = args["text"]
+        if not isinstance(text, str):
+            return f"invalid argument text: expected a string, got {type(text).__name__}"
+    return None
 
 
 def create_mcp_app() -> FastAPI:
@@ -106,6 +146,14 @@ def create_mcp_app() -> FastAPI:
                 {"error": f"missing required argument(s): {', '.join(missing)}"},
                 status_code=400,
             )
+
+        # Argument-type guard for the two tools that drive the real mouse and
+        # keyboard. It lives here rather than in tools/input.py because the
+        # natural ValueError raised there would be caught by the handler below
+        # and misreported as a 404 "not found".
+        invalid = _invalid_input_argument(tool, args)
+        if invalid:
+            return JSONResponse({"error": invalid}, status_code=400)
 
         # Ordinary bad input -- a path that doesn't exist, a directory that got
         # renamed, a window that already closed -- makes the underlying tool

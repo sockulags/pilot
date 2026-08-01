@@ -13,6 +13,18 @@ def _freshness_block(tool: str) -> str | None:
     return None
 
 
+def is_failsafe_corner(x: int, y: int) -> bool:
+    """True when (x, y) is one of pyautogui's fail-safe corner points.
+
+    pyautogui reserves the screen corners as a kill switch: moving the cursor
+    onto one raises FailSafeException so a runaway script can be stopped by
+    hand. click() moves the mouse first and checks afterwards, so a caller that
+    aims at a corner relocates the cursor and then crashes. Callers use this to
+    refuse the coordinate before any movement happens (issue #122).
+    """
+    return bool(pyautogui.FAILSAFE) and (x, y) in pyautogui.FAILSAFE_POINTS
+
+
 # Raw-coordinate clicks (click/move_mouse) are higher-risk: they bypass the
 # element grounding and aim at fixed pixels, so a window switch silently retargets
 # them. They keep the upstream observation gate (agents.safety) but no window
