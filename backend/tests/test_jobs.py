@@ -70,6 +70,137 @@ class ComputeNextRunTests(unittest.TestCase):
         self.assertIsNone(compute_next_run(sched, _ts(2026, 6, 21, 0, 0)))
 
 
+class ValidScheduleTests(unittest.TestCase):
+    """The WS add_job boundary guard — what it accepts and what it turns away.
+
+    Never raises: every malformed shape must come back as False so the handler
+    can answer "Ogiltigt schema" instead of the tick crashing later.
+    """
+
+    def test_interval_requires_a_positive_period(self):
+        from jobs import valid_schedule
+
+        self.assertTrue(valid_schedule({"type": "interval", "interval_seconds": 60}))
+        self.assertFalse(valid_schedule({"type": "interval", "interval_seconds": 0}))
+        self.assertFalse(valid_schedule({"type": "interval", "interval_seconds": -60}))
+        self.assertFalse(valid_schedule({"type": "interval"}))
+
+    def test_interval_non_numeric_period_is_rejected_not_raised(self):
+        from jobs import valid_schedule
+
+        # int("abc") raises ValueError, int([60]) raises TypeError — the catch-all
+        # turns both into a plain False.
+        self.assertFalse(valid_schedule({"type": "interval", "interval_seconds": "abc"}))
+        self.assertFalse(valid_schedule({"type": "interval", "interval_seconds": [60]}))
+
+    def test_once_requires_a_parseable_date(self):
+        from jobs import valid_schedule
+
+        self.assertTrue(valid_schedule({"type": "once", "date": "2026-09-01", "time": "09:00"}))
+        self.assertFalse(valid_schedule({"type": "once"}))
+        self.assertFalse(valid_schedule({"type": "once", "date": "not-a-date", "time": "09:00"}))
+        self.assertFalse(valid_schedule({"type": "once", "date": "2026-13-40", "time": "09:00"}))
+
+    def test_once_rejects_an_out_of_range_time(self):
+        from jobs import valid_schedule
+
+        self.assertFalse(valid_schedule({"type": "once", "date": "2026-09-01", "time": "24:00"}))
+
+    def test_daily_time_must_be_in_range(self):
+        from jobs import valid_schedule
+
+        self.assertTrue(valid_schedule({"type": "daily", "time": "09:00"}))
+        self.assertFalse(valid_schedule({"type": "daily", "time": "24:00"}))
+        self.assertFalse(valid_schedule({"type": "daily", "time": "07:65"}))
+
+    def test_daily_missing_or_falsy_time_defaults_to_midnight(self):
+        from jobs import valid_schedule
+
+        # _parse_hhmm does str(time_str or "00:00"), so a falsy time is a default,
+        # not a rejection. Only a value that stringifies without a ":" is malformed:
+        # 730 becomes "730", the unpack raises, and the guard returns False.
+        self.assertTrue(valid_schedule({"type": "daily"}))
+        self.assertTrue(valid_schedule({"type": "daily", "time": None}))
+        self.assertFalse(valid_schedule({"type": "daily", "time": 730}))
+
+    def test_daily_accepts_single_digit_fields(self):
+        from jobs import valid_schedule
+
+        # Looser than the typed-command grammar's _valid_hhmm regex, which insists
+        # on two-digit minutes. "9:5" is unambiguously 09:05, so the WS guard lets
+        # it through rather than rejecting a computable time.
+        self.assertTrue(valid_schedule({"type": "daily", "time": "9:5"}))
+
+    def test_weekly_needs_a_non_empty_list_of_weekdays(self):
+        from jobs import valid_schedule
+
+        self.assertTrue(valid_schedule({"type": "weekly", "time": "09:00", "weekdays": [0, 2]}))
+        self.assertTrue(valid_schedule({"type": "weekly", "time": "09:00", "weekdays": (0, 2)}))
+        self.assertFalse(valid_schedule({"type": "weekly", "time": "09:00"}))
+        self.assertFalse(valid_schedule({"type": "weekly", "time": "09:00", "weekdays": []}))
+        self.assertFalse(valid_schedule({"type": "weekly", "time": "09:00", "weekdays": "mon"}))
+
+    def test_weekly_weekdays_must_be_ints_in_range(self):
+        from jobs import valid_schedule
+
+        self.assertFalse(valid_schedule({"type": "weekly", "time": "09:00", "weekdays": ["0"]}))
+        self.assertFalse(valid_schedule({"type": "weekly", "time": "09:00", "weekdays": [7]}))
+        self.assertFalse(valid_schedule({"type": "weekly", "time": "09:00", "weekdays": [-1]}))
+        self.assertFalse(valid_schedule({"type": "weekly", "time": "09:00", "weekdays": [0, 9]}))
+
+    def test_weekly_time_is_validated_too(self):
+        from jobs import valid_schedule
+
+        self.assertFalse(valid_schedule({"type": "weekly", "time": "24:00", "weekdays": [0]}))
+
+    def test_non_dict_and_unknown_type_are_rejected(self):
+        from jobs import valid_schedule
+
+        self.assertFalse(valid_schedule(None))
+        self.assertFalse(valid_schedule("not a dict"))
+        self.assertFalse(valid_schedule(["interval"]))
+        self.assertFalse(valid_schedule({"type": "bogus"}))
+        self.assertFalse(valid_schedule({}))
+
+
+class OnceTargetTests(unittest.TestCase):
+    def test_resolves_a_well_formed_date_and_time(self):
+        from jobs import _once_target
+
+        self.assertEqual(_ts(2026, 9, 1, 9, 0), _once_target({"date": "2026-09-01", "time": "09:00"}))
+        # Missing time defaults to midnight rather than failing.
+        self.assertEqual(_ts(2026, 9, 1, 0, 0), _once_target({"date": "2026-09-01"}))
+
+    def test_returns_none_instead_of_raising(self):
+        from jobs import _once_target
+
+        self.assertIsNone(_once_target({}))
+        self.assertIsNone(_once_target({"date": ""}))
+        self.assertIsNone(_once_target({"date": "not-a-date"}))
+        self.assertIsNone(_once_target({"date": "2026-13-40"}))
+        self.assertIsNone(_once_target({"date": "2026-09-01", "time": "24:00"}))
+
+
+class ParseHhmmTests(unittest.TestCase):
+    def test_parses_and_defaults(self):
+        from jobs import _parse_hhmm
+
+        self.assertEqual((9, 0), _parse_hhmm("09:00"))
+        self.assertEqual((23, 59), _parse_hhmm("23:59"))
+        self.assertEqual((0, 0), _parse_hhmm(None))
+
+    def test_raises_on_out_of_range_or_malformed(self):
+        from jobs import _parse_hhmm
+
+        for bad in ("24:00", "07:65", "-1:00"):
+            with self.assertRaises(ValueError):
+                _parse_hhmm(bad)
+        # A string with no ":" fails at the tuple unpack, still a ValueError.
+        for bad in ("730", "nine"):
+            with self.assertRaises(ValueError):
+                _parse_hhmm(bad)
+
+
 class JobStoreTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
