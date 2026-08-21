@@ -75,7 +75,7 @@ class WebSocketDispatchTests(unittest.TestCase):
             mock.patch.object(jobs_module, "JOBS_FILE", str(self.root / "jobs.json"))
         )
 
-        self._saved_hooks = {k: list(v) for k, v in connections._hooks.items()}
+        self._saved_hooks = dict(connections._hooks)
 
     def tearDown(self):
         connections._hooks.clear()
